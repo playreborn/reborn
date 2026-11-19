@@ -1,44 +1,59 @@
-//! Installing depots.
+//! Installing, updating and verifying depots.
 //!
 //! 1. **Plan:** every manifest entry is turned into a safe relative path
 //!    ([`crate::path`]); symlink targets must stay inside the install
 //!    directory. Anything unsafe aborts before a single byte is written.
-//! 2. **Download:** all chunks are fetched in parallel, decrypted,
-//!    decompressed and verified ([`crate::chunk`]), with retries on other
-//!    servers, and written into a **staging directory**.
-//! 3. **Verify:** every staged file with a SHA-1 in the manifest is hashed.
-//! 4. **Commit:** only now files are moved into the install directory.
-//!    Files flagged as user configuration are not overwritten if present.
+//! 2. **Classify:** files that are already installed and unchanged are left
+//!    alone. Without [`InstallOptions::verify_existing`], "unchanged" means the
+//!    previous manifest lists the same path with the same SHA-1 and the file
+//!    has the right size; with it, the installed file is hashed. Existing user
+//!    configuration files are kept.
+//! 3. **Build:** every other file is assembled in a **staging directory**.
+//!    Each chunk comes from the first source that has it with the right size
+//!    and checksum: the staging file itself (an interrupted earlier attempt),
+//!    the installed files (found via the chunk ID in the previous manifest or
+//!    at the same position), or the CDN (in parallel, with retries).
+//! 4. **Verify:** every built file with a SHA-1 is hashed. If a file that
+//!    reused local data fails, all its chunks are downloaded again once.
+//! 5. **Commit:** built files are moved into the install directory; files
+//!    and directories of the previous manifest that the new one no longer
+//!    has are removed.
 //!
-//! A failed or interrupted install never modifies the install directory;
-//! the staging directory is removed on success and reset on the next try.
-//! Later depots win if two depots contain the same path.
+//! A failed or interrupted run never modifies the install directory; the
+//! staging directory is kept so the next run can continue where it stopped,
+//! and is removed after a successful commit. Later depots win if two depots
+//! contain the same path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use sha1::{Digest, Sha1};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::DepotKey;
 use crate::cdn::{CdnClient, CdnHost};
+use crate::checksum::steam_adler32;
 use crate::chunk::process_chunk;
-use crate::manifest::{DepotManifest, ManifestChunk, ManifestFile, file_flags};
+use crate::manifest::{ChunkId, DepotManifest, ManifestChunk, ManifestFile, file_flags};
 use crate::path::{PathError, install_path, link_target};
 
-/// One depot to install: its key and its manifest with decrypted names.
+/// One depot to install: its key, the target manifest and, for updates,
+/// the manifest that is currently installed. Names must be decrypted.
 #[derive(Debug)]
 pub struct DepotDownload {
     /// Depot ID.
     pub depot_id: u32,
     /// The depot's AES key.
     pub key: DepotKey,
-    /// The manifest; [`DepotManifest::decrypt_filenames`] must have been called.
+    /// The manifest to install.
     pub manifest: DepotManifest,
+    /// The manifest that is installed now, if any. Used to find reusable
+    /// chunks and to remove files that no longer exist.
+    pub previous: Option<DepotManifest>,
 }
 
 /// Where to install.
@@ -47,7 +62,7 @@ pub struct InstallTarget {
     /// Final directory, e.g. `<library>/steamapps/common/<installdir>`.
     pub install_dir: PathBuf,
     /// Scratch directory on the same drive, e.g.
-    /// `<library>/steamapps/downloading/<appid>`. Deleted and recreated.
+    /// `<library>/steamapps/downloading/<appid>`.
     pub staging_dir: PathBuf,
 }
 
@@ -58,6 +73,9 @@ pub struct InstallOptions {
     pub concurrency: usize,
     /// Attempts per chunk (each on the next server).
     pub attempts: usize,
+    /// Hash installed files instead of trusting the previous manifest
+    /// ("verify integrity"). Broken files are repaired.
+    pub verify_existing: bool,
 }
 
 impl Default for InstallOptions {
@@ -65,16 +83,17 @@ impl Default for InstallOptions {
         Self {
             concurrency: 8,
             attempts: 5,
+            verify_existing: false,
         }
     }
 }
 
-/// Download progress.
+/// Progress of the build step.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Progress {
-    /// Uncompressed bytes written so far.
+    /// Uncompressed bytes done (downloaded or reused).
     pub bytes_done: u64,
-    /// Uncompressed bytes to write in total.
+    /// Uncompressed bytes to build in total.
     pub bytes_total: u64,
     /// Chunks done.
     pub chunks_done: usize,
@@ -82,11 +101,15 @@ pub struct Progress {
     pub chunks_total: usize,
 }
 
-/// Summary of a finished install.
+/// Summary of a finished run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstallReport {
-    /// Files written.
+    /// Files written (new, changed or repaired).
     pub files: usize,
+    /// Files that were already correct and left alone.
+    pub files_unchanged: usize,
+    /// Files of the previous version that were removed.
+    pub files_removed: usize,
     /// Directories created.
     pub directories: usize,
     /// Symlinks created.
@@ -95,7 +118,11 @@ pub struct InstallReport {
     pub symlinks_skipped: usize,
     /// Existing user configuration files that were kept.
     pub user_config_kept: usize,
-    /// Uncompressed bytes written.
+    /// Chunks downloaded from the CDN.
+    pub chunks_downloaded: usize,
+    /// Chunks taken from installed files or an earlier, interrupted attempt.
+    pub chunks_reused: usize,
+    /// Uncompressed bytes written into the install directory.
     pub bytes_written: u64,
     /// Bytes downloaded from the CDN.
     pub bytes_downloaded: u64,
@@ -114,12 +141,9 @@ pub enum InstallError {
         /// Why it was rejected.
         source: PathError,
     },
-    /// The manifest still has encrypted names.
+    /// A manifest still has encrypted names.
     #[error("depot {0}: file names are still encrypted")]
     NamesEncrypted(u32),
-    /// No content servers given.
-    #[error("no content servers to download from")]
-    NoServers,
     /// A chunk could not be downloaded or verified on any attempt.
     #[error("chunk {chunk} of depot {depot_id} failed after all attempts: {last_error}")]
     Chunk {
@@ -130,7 +154,7 @@ pub enum InstallError {
         /// The last error.
         last_error: String,
     },
-    /// A file's SHA-1 does not match the manifest.
+    /// A file's SHA-1 does not match the manifest even after a full download.
     #[error("{0} does not match its checksum after download")]
     FileHash(PathBuf),
     /// File system error while staging (install directory untouched).
@@ -142,7 +166,7 @@ pub enum InstallError {
         source: std::io::Error,
     },
     /// File system error while moving files into place. The install
-    /// directory may be partly updated; a new install fixes it.
+    /// directory may be partly updated; running again fixes it.
     #[error("{path}: {source}")]
     Commit {
         /// The path.
@@ -180,6 +204,9 @@ impl ChunkSource for CdnSource<'_> {
         chunk: &ManifestChunk,
         attempt: usize,
     ) -> Result<Vec<u8>, String> {
+        if self.servers.is_empty() {
+            return Err("no content servers".to_owned());
+        }
         // Spread load: start at a server derived from the chunk, then rotate.
         let start = usize::from(chunk.id.0[0]);
         let server = &self.servers[(start + attempt) % self.servers.len()];
@@ -203,13 +230,37 @@ enum Planned<'a> {
     Symlink(PathBuf),
 }
 
+/// The validated, merged view of all depots.
+struct Plan<'a> {
+    entries: BTreeMap<PathBuf, Planned<'a>>,
+    /// Files of the previous manifests, by path.
+    previous_files: HashMap<PathBuf, &'a ManifestFile>,
+    /// Where each chunk of the previous manifests lives in the installation.
+    previous_chunks: HashMap<ChunkId, (PathBuf, u64)>,
+    /// Files and links of the previous manifests that the new ones lack.
+    removed_files: Vec<PathBuf>,
+    /// Directories of the previous manifests that the new ones lack.
+    removed_directories: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
 struct ChunkTask<'a> {
     depot: usize,
     path: &'a Path,
     chunk: &'a ManifestChunk,
+    force_download: bool,
 }
 
-/// Installs the depots into `target`. See the module docs for the steps.
+enum Origin {
+    /// Already correct in the staging file.
+    Staged,
+    /// Copied from the installation; must be written to the staging file.
+    Reused(Vec<u8>),
+    /// Downloaded (bytes on the wire); must be written to the staging file.
+    Downloaded(Vec<u8>, usize),
+}
+
+/// Installs, updates or verifies the depots in `target`. See the module docs.
 pub async fn install(
     depots: &[DepotDownload],
     target: &InstallTarget,
@@ -219,38 +270,53 @@ pub async fn install(
 ) -> Result<InstallReport, InstallError> {
     let plan = plan(depots)?;
     let mut report = InstallReport::default();
-
-    // Fresh staging directory with all files pre-allocated.
+    let install_dir = &target.install_dir;
     let staging = &target.staging_dir;
-    remove_dir_if_exists(staging).await?;
-    create_dir(staging).await?;
-    for (path, entry) in &plan {
-        if let Planned::File(planned) = entry {
-            let staged = staging.join(path);
-            if let Some(parent) = staged.parent() {
-                create_dir(parent).await?;
-            }
-            let file = tokio::fs::File::create(&staged)
-                .await
-                .map_err(staging_error(&staged))?;
-            file.set_len(planned.file.size)
-                .await
-                .map_err(staging_error(&staged))?;
+
+    // Decide which files have to be built.
+    let mut to_build: Vec<(&PathBuf, &PlannedFile<'_>)> = Vec::new();
+    for (path, entry) in &plan.entries {
+        let Planned::File(planned) = entry else {
+            continue;
+        };
+        let destination = install_dir.join(path);
+        let exists = is_file(&destination).await;
+        if exists && planned.file.flags & file_flags::USER_CONFIG != 0 {
+            report.user_config_kept += 1;
+        } else if exists && is_unchanged(&plan, path, planned.file, &destination, options).await? {
+            report.files_unchanged += 1;
+        } else {
+            to_build.push((path, planned));
         }
     }
 
-    // Download all chunks in parallel and write them at their offsets.
-    let tasks: Vec<ChunkTask<'_>> = plan
+    // Staging files with the right length. Existing ones are kept: their
+    // content is reused where it still matches.
+    for (path, planned) in &to_build {
+        let staged = staging.join(path);
+        if let Some(parent) = staged.parent() {
+            create_dir(parent).await?;
+        }
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&staged)
+            .await
+            .map_err(staging_error(&staged))?;
+        file.set_len(planned.file.size)
+            .await
+            .map_err(staging_error(&staged))?;
+    }
+
+    let tasks: Vec<ChunkTask<'_>> = to_build
         .iter()
-        .filter_map(|(path, entry)| match entry {
-            Planned::File(planned) => Some((path, planned)),
-            _ => None,
-        })
         .flat_map(|(path, planned)| {
-            planned.file.chunks.iter().map(move |chunk| ChunkTask {
+            planned.file.chunks.iter().map(|chunk| ChunkTask {
                 depot: planned.depot,
-                path,
+                path: path.as_path(),
                 chunk,
+                force_download: false,
             })
         })
         .collect();
@@ -260,65 +326,82 @@ pub async fn install(
         ..Progress::default()
     };
     on_progress(progress);
+    let mut reused_files = BTreeSet::new();
+    build(
+        depots,
+        &plan,
+        target,
+        source,
+        options,
+        tasks,
+        &mut report,
+        &mut progress,
+        &mut reused_files,
+        &mut on_progress,
+    )
+    .await?;
 
-    let mut downloads = stream::iter(tasks)
-        .map(|task| async move {
-            let depot = &depots[task.depot];
-            let (data, downloaded) =
-                fetch_verified(source, depot, task.chunk, options.attempts).await?;
-            Ok::<_, InstallError>((task, data, downloaded))
-        })
-        .buffer_unordered(options.concurrency.max(1));
-    while let Some(result) = downloads.next().await {
-        let (task, data, downloaded) = result?;
-        write_at(&staging.join(task.path), task.chunk.offset, &data).await?;
-        report.bytes_downloaded += downloaded as u64;
-        progress.bytes_done += data.len() as u64;
-        progress.chunks_done += 1;
-        on_progress(progress);
+    // Verify built files; files that reused local data get one full re-download.
+    let mut retry = Vec::new();
+    for (path, planned) in &to_build {
+        if !hash_matches(&staging.join(path), planned.file).await? {
+            if reused_files.contains(path.as_path()) {
+                warn!(path = %path.display(), "reused data did not match, downloading the file again");
+                retry.push((*path, *planned));
+            } else {
+                return Err(InstallError::FileHash((*path).clone()));
+            }
+        }
     }
-
-    // Verify whole files.
-    for (path, entry) in &plan {
-        if let Planned::File(planned) = entry
-            && let Some(expected) = planned.file.sha_content
-        {
-            let staged = staging.join(path);
-            if sha1_of(&staged).await? != expected {
-                return Err(InstallError::FileHash(path.clone()));
+    if !retry.is_empty() {
+        let tasks: Vec<ChunkTask<'_>> = retry
+            .iter()
+            .flat_map(|(path, planned)| {
+                planned.file.chunks.iter().map(|chunk| ChunkTask {
+                    depot: planned.depot,
+                    path: path.as_path(),
+                    chunk,
+                    force_download: true,
+                })
+            })
+            .collect();
+        progress.bytes_total += tasks
+            .iter()
+            .map(|task| u64::from(task.chunk.size))
+            .sum::<u64>();
+        progress.chunks_total += tasks.len();
+        build(
+            depots,
+            &plan,
+            target,
+            source,
+            options,
+            tasks,
+            &mut report,
+            &mut progress,
+            &mut BTreeSet::new(),
+            &mut on_progress,
+        )
+        .await?;
+        for (path, planned) in &retry {
+            if !hash_matches(&staging.join(path), planned.file).await? {
+                return Err(InstallError::FileHash((*path).clone()));
             }
         }
     }
 
-    // Commit: move everything into place.
-    let install_dir = &target.install_dir;
+    // Commit.
     create_dir(install_dir).await.map_err(as_commit)?;
-    for (path, entry) in &plan {
+    for (path, entry) in &plan.entries {
         let destination = install_dir.join(path);
         match entry {
             Planned::Directory => {
-                create_dir(&destination).await.map_err(as_commit)?;
-                report.directories += 1;
+                if !destination.is_dir() {
+                    create_dir(&destination).await.map_err(as_commit)?;
+                    report.directories += 1;
+                }
             }
-            Planned::File(planned) => {
-                if let Some(parent) = destination.parent() {
-                    create_dir(parent).await.map_err(as_commit)?;
-                }
-                let is_user_config = planned.file.flags & file_flags::USER_CONFIG != 0;
-                if is_user_config && tokio::fs::try_exists(&destination).await.unwrap_or(false) {
-                    report.user_config_kept += 1;
-                    continue;
-                }
-                let staged = staging.join(path);
-                tokio::fs::rename(&staged, &destination)
-                    .await
-                    .map_err(commit_error(&destination))?;
-                if planned.file.is_executable() {
-                    make_executable(&destination).await?;
-                }
-                report.files += 1;
-                report.bytes_written += planned.file.size;
-            }
+            Planned::File(_) => {}
             Planned::Symlink(link) => {
                 if let Some(parent) = destination.parent() {
                     create_dir(parent).await.map_err(as_commit)?;
@@ -331,14 +414,171 @@ pub async fn install(
             }
         }
     }
+    for (path, planned) in &to_build {
+        let destination = install_dir.join(path);
+        if let Some(parent) = destination.parent() {
+            create_dir(parent).await.map_err(as_commit)?;
+        }
+        tokio::fs::rename(staging.join(path), &destination)
+            .await
+            .map_err(commit_error(&destination))?;
+        if planned.file.is_executable() {
+            make_executable(&destination).await?;
+        }
+        report.files += 1;
+        report.bytes_written += planned.file.size;
+    }
+    for path in &plan.removed_files {
+        let destination = install_dir.join(path);
+        match tokio::fs::symlink_metadata(&destination).await {
+            Ok(meta) if !meta.is_dir() => {
+                tokio::fs::remove_file(&destination)
+                    .await
+                    .map_err(commit_error(&destination))?;
+                report.files_removed += 1;
+            }
+            _ => {}
+        }
+    }
+    // Deepest first; only empty directories are removed.
+    for path in plan.removed_directories.iter().rev() {
+        let _ = tokio::fs::remove_dir(install_dir.join(path)).await;
+    }
     remove_dir_if_exists(staging).await?;
     debug!(?report, "install finished");
     Ok(report)
 }
 
+/// Builds the given chunks into their staging files.
+#[allow(clippy::too_many_arguments)]
+async fn build<'a>(
+    depots: &[DepotDownload],
+    plan: &Plan<'a>,
+    target: &InstallTarget,
+    source: &impl ChunkSource,
+    options: InstallOptions,
+    tasks: Vec<ChunkTask<'a>>,
+    report: &mut InstallReport,
+    progress: &mut Progress,
+    reused_files: &mut BTreeSet<&'a Path>,
+    on_progress: &mut impl FnMut(Progress),
+) -> Result<(), InstallError> {
+    let mut results = stream::iter(tasks)
+        .map(|task| async move {
+            let origin = obtain_chunk(depots, plan, target, source, options, task).await?;
+            Ok::<_, InstallError>((task, origin))
+        })
+        .buffer_unordered(options.concurrency.max(1));
+    while let Some(result) = results.next().await {
+        let (task, origin) = result?;
+        let staged = target.staging_dir.join(task.path);
+        match origin {
+            Origin::Staged => {
+                report.chunks_reused += 1;
+                reused_files.insert(task.path);
+            }
+            Origin::Reused(data) => {
+                write_at(&staged, task.chunk.offset, &data).await?;
+                report.chunks_reused += 1;
+                reused_files.insert(task.path);
+            }
+            Origin::Downloaded(data, wire_bytes) => {
+                write_at(&staged, task.chunk.offset, &data).await?;
+                report.chunks_downloaded += 1;
+                report.bytes_downloaded += wire_bytes as u64;
+            }
+        }
+        progress.bytes_done += u64::from(task.chunk.size);
+        progress.chunks_done += 1;
+        on_progress(*progress);
+    }
+    Ok(())
+}
+
+/// Finds the chunk locally or downloads it.
+async fn obtain_chunk(
+    depots: &[DepotDownload],
+    plan: &Plan<'_>,
+    target: &InstallTarget,
+    source: &impl ChunkSource,
+    options: InstallOptions,
+    task: ChunkTask<'_>,
+) -> Result<Origin, InstallError> {
+    let chunk = task.chunk;
+    if !task.force_download {
+        let staged = target.staging_dir.join(task.path);
+        if read_matching(&staged, chunk).await.is_some() {
+            return Ok(Origin::Staged);
+        }
+        let mut candidates = Vec::with_capacity(2);
+        if let Some((path, offset)) = plan.previous_chunks.get(&chunk.id) {
+            candidates.push((target.install_dir.join(path), *offset));
+        }
+        candidates.push((target.install_dir.join(task.path), chunk.offset));
+        for (path, offset) in candidates {
+            let at = ManifestChunk { offset, ..*chunk };
+            if let Some(data) = read_matching(&path, &at).await {
+                return Ok(Origin::Reused(data));
+            }
+        }
+    }
+    let depot = &depots[task.depot];
+    let (data, wire_bytes) = fetch_verified(source, depot, chunk, options.attempts).await?;
+    Ok(Origin::Downloaded(data, wire_bytes))
+}
+
+/// Reads `chunk.size` bytes at `chunk.offset` and returns them if size and
+/// checksum match the chunk.
+async fn read_matching(path: &Path, chunk: &ManifestChunk) -> Option<Vec<u8>> {
+    let mut file = tokio::fs::File::open(path).await.ok()?;
+    file.seek(SeekFrom::Start(chunk.offset)).await.ok()?;
+    let mut data = vec![0; chunk.size as usize];
+    file.read_exact(&mut data).await.ok()?;
+    (steam_adler32(&data) == chunk.checksum).then_some(data)
+}
+
+/// Whether an installed file can be kept as it is.
+async fn is_unchanged(
+    plan: &Plan<'_>,
+    path: &Path,
+    file: &ManifestFile,
+    destination: &Path,
+    options: InstallOptions,
+) -> Result<bool, InstallError> {
+    let size_matches = tokio::fs::metadata(destination)
+        .await
+        .is_ok_and(|meta| meta.len() == file.size);
+    if !size_matches {
+        return Ok(false);
+    }
+    if options.verify_existing {
+        return hash_matches(destination, file).await;
+    }
+    Ok(match (plan.previous_files.get(path), file.sha_content) {
+        (Some(previous), Some(sha)) => previous.sha_content == Some(sha),
+        _ => false,
+    })
+}
+
+/// Whether the file matches its manifest entry: SHA-1 if the manifest has
+/// one, otherwise all chunk checksums.
+async fn hash_matches(path: &Path, file: &ManifestFile) -> Result<bool, InstallError> {
+    match file.sha_content {
+        Some(expected) => Ok(sha1_of(path).await? == expected),
+        None => {
+            for chunk in &file.chunks {
+                if read_matching(path, chunk).await.is_none() {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+    }
+}
+
 /// Validates every entry and merges all depots into one plan.
-fn plan(depots: &[DepotDownload]) -> Result<BTreeMap<PathBuf, Planned<'_>>, InstallError> {
-    let mut plan = BTreeMap::new();
+fn plan(depots: &[DepotDownload]) -> Result<Plan<'_>, InstallError> {
+    let mut entries = BTreeMap::new();
     for (index, depot) in depots.iter().enumerate() {
         if depot.manifest.filenames_encrypted {
             return Err(InstallError::NamesEncrypted(depot.depot_id));
@@ -357,12 +597,51 @@ fn plan(depots: &[DepotDownload]) -> Result<BTreeMap<PathBuf, Planned<'_>>, Inst
             } else {
                 Planned::File(PlannedFile { depot: index, file })
             };
-            if plan.insert(path.clone(), entry).is_some() {
+            if entries.insert(path.clone(), entry).is_some() {
                 warn!(path = %path.display(), depot = depot.depot_id, "path provided by more than one depot, later depot wins");
             }
         }
     }
-    Ok(plan)
+
+    let mut previous_files = HashMap::new();
+    let mut previous_chunks = HashMap::new();
+    let mut removed_files = Vec::new();
+    let mut removed_directories = BTreeSet::new();
+    for depot in depots {
+        let Some(previous) = &depot.previous else {
+            continue;
+        };
+        if previous.filenames_encrypted {
+            return Err(InstallError::NamesEncrypted(depot.depot_id));
+        }
+        for file in &previous.files {
+            // An unsafe name in an old manifest is ignored, never acted on.
+            let Ok(path) = install_path(&file.name) else {
+                warn!(name = %file.name, "ignoring unsafe name in the previous manifest");
+                continue;
+            };
+            if !entries.contains_key(&path) {
+                if file.is_directory() {
+                    removed_directories.insert(path.clone());
+                } else {
+                    removed_files.push(path.clone());
+                }
+            }
+            for chunk in &file.chunks {
+                previous_chunks
+                    .entry(chunk.id)
+                    .or_insert_with(|| (path.clone(), chunk.offset));
+            }
+            previous_files.insert(path, file);
+        }
+    }
+    Ok(Plan {
+        entries,
+        previous_files,
+        previous_chunks,
+        removed_files,
+        removed_directories: removed_directories.into_iter().collect(),
+    })
 }
 
 async fn fetch_verified(
@@ -391,6 +670,12 @@ async fn fetch_verified(
         chunk: chunk.id.to_hex(),
         last_error,
     })
+}
+
+async fn is_file(path: &Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .is_ok_and(|meta| meta.is_file())
 }
 
 async fn write_at(path: &Path, offset: u64, data: &[u8]) -> Result<(), InstallError> {
@@ -497,18 +782,24 @@ fn as_commit(error: InstallError) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checksum::steam_adler32;
     use crate::chunk::tests::{key, sample, vzstd};
     use crate::crypto;
-    use crate::manifest::ChunkId;
-    use std::collections::HashMap;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// In-memory chunk store; `fail_first` makes the first N fetches fail.
+    /// In-memory chunk store that counts fetches; `fail_first` makes the
+    /// first N fetches fail.
     #[derive(Default)]
     struct MemorySource {
         chunks: HashMap<ChunkId, Vec<u8>>,
         fail_first: Mutex<usize>,
+        fetched: AtomicUsize,
+    }
+
+    impl MemorySource {
+        fn fetched(&self) -> usize {
+            self.fetched.swap(0, Ordering::SeqCst)
+        }
     }
 
     impl ChunkSource for MemorySource {
@@ -518,6 +809,7 @@ mod tests {
             chunk: &ManifestChunk,
             _attempt: usize,
         ) -> Result<Vec<u8>, String> {
+            self.fetched.fetch_add(1, Ordering::SeqCst);
             let fail = {
                 let mut remaining = self.fail_first.lock().unwrap();
                 let fail = *remaining > 0;
@@ -558,6 +850,10 @@ mod tests {
                 staging_dir: self.0.join("downloading").join("1"),
             }
         }
+
+        fn game(&self) -> PathBuf {
+            self.target().install_dir
+        }
     }
 
     impl Drop for TempDir {
@@ -566,8 +862,8 @@ mod tests {
         }
     }
 
-    /// Builds a file of `data`, split into chunks of `chunk_size`, and
-    /// stores the encrypted chunks in `source`.
+    /// Splits `data` into chunks of `chunk_size`, stores the encrypted
+    /// chunks in `source` (content-addressed like Steam) and returns the entry.
     fn file(
         name: &str,
         data: &[u8],
@@ -577,9 +873,7 @@ mod tests {
     ) -> ManifestFile {
         let mut chunks = Vec::new();
         for (index, piece) in data.chunks(chunk_size).enumerate() {
-            let mut id = [0u8; 20];
-            id[..8].copy_from_slice(&(source.chunks.len() as u64 + 1).to_le_bytes());
-            let id = ChunkId(id);
+            let id = ChunkId(Sha1::digest(piece).into());
             source.chunks.insert(
                 id,
                 crypto::encrypt(&vzstd(piece), &key(), [index as u8; 16]),
@@ -613,19 +907,24 @@ mod tests {
         }
     }
 
+    fn manifest(files: Vec<ManifestFile>) -> DepotManifest {
+        DepotManifest {
+            depot_id: 481,
+            manifest_id: 1,
+            creation_time: 0,
+            filenames_encrypted: false,
+            total_size: 0,
+            total_compressed_size: 0,
+            files,
+        }
+    }
+
     fn depot(files: Vec<ManifestFile>) -> DepotDownload {
         DepotDownload {
             depot_id: 481,
             key: key(),
-            manifest: DepotManifest {
-                depot_id: 481,
-                manifest_id: 1,
-                creation_time: 0,
-                filenames_encrypted: false,
-                total_size: 0,
-                total_compressed_size: 0,
-                files,
-            },
+            manifest: manifest(files),
+            previous: None,
         }
     }
 
@@ -633,7 +932,14 @@ mod tests {
         InstallOptions {
             concurrency: 4,
             attempts: 3,
+            verify_existing: false,
         }
+    }
+
+    async fn run(dir: &TempDir, depot: DepotDownload, source: &MemorySource) -> InstallReport {
+        install(&[depot], &dir.target(), source, options(), |_| {})
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -661,7 +967,7 @@ mod tests {
         .await
         .unwrap();
 
-        let game = dir.target().install_dir;
+        let game = dir.game();
         assert_eq!(
             std::fs::read(game.join("data").join("big.pak")).unwrap(),
             big
@@ -685,10 +991,8 @@ mod tests {
         let mut source = MemorySource::default();
         let files = vec![file("a.bin", &sample(10_000), 4096, 0, &mut source)];
         source.fail_first = Mutex::new(2);
-        install(&[depot(files)], &dir.target(), &source, options(), |_| {})
-            .await
-            .unwrap();
-        assert!(dir.target().install_dir.join("a.bin").is_file());
+        run(&dir, depot(files), &source).await;
+        assert!(dir.game().join("a.bin").is_file());
     }
 
     #[tokio::test]
@@ -699,7 +1003,7 @@ mod tests {
         files[0].chunks[1].checksum ^= 1;
         let result = install(&[depot(files)], &dir.target(), &source, options(), |_| {}).await;
         assert!(matches!(result, Err(InstallError::Chunk { .. })));
-        assert!(!dir.target().install_dir.exists());
+        assert!(!dir.game().exists());
     }
 
     #[tokio::test]
@@ -710,7 +1014,7 @@ mod tests {
         files[0].sha_content = Some([0; 20]);
         let result = install(&[depot(files)], &dir.target(), &source, options(), |_| {}).await;
         assert!(matches!(result, Err(InstallError::FileHash(_))));
-        assert!(!dir.target().install_dir.exists());
+        assert!(!dir.game().exists());
     }
 
     #[tokio::test]
@@ -723,7 +1027,7 @@ mod tests {
         ];
         let result = install(&[depot(files)], &dir.target(), &source, options(), |_| {}).await;
         assert!(matches!(result, Err(InstallError::UnsafePath { .. })));
-        assert!(!dir.target().install_dir.exists());
+        assert!(!dir.game().exists());
         assert!(!dir.target().staging_dir.exists());
     }
 
@@ -749,9 +1053,8 @@ mod tests {
     #[tokio::test]
     async fn keeps_existing_user_config() {
         let dir = TempDir::new("config");
-        let game = dir.target().install_dir;
-        std::fs::create_dir_all(&game).unwrap();
-        std::fs::write(game.join("settings.cfg"), b"my settings").unwrap();
+        std::fs::create_dir_all(dir.game()).unwrap();
+        std::fs::write(dir.game().join("settings.cfg"), b"my settings").unwrap();
 
         let mut source = MemorySource::default();
         let files = vec![file(
@@ -761,13 +1064,137 @@ mod tests {
             file_flags::USER_CONFIG,
             &mut source,
         )];
-        let report = install(&[depot(files)], &dir.target(), &source, options(), |_| {})
-            .await
-            .unwrap();
+        let report = run(&dir, depot(files), &source).await;
         assert_eq!(report.user_config_kept, 1);
+        assert_eq!(source.fetched(), 0, "nothing downloaded for a kept file");
         assert_eq!(
-            std::fs::read(game.join("settings.cfg")).unwrap(),
+            std::fs::read(dir.game().join("settings.cfg")).unwrap(),
             b"my settings"
         );
+    }
+
+    #[tokio::test]
+    async fn update_downloads_only_changed_chunks_and_removes_old_files() {
+        let dir = TempDir::new("update");
+        let mut source = MemorySource::default();
+        let kept = sample(50_000);
+        let changed_v1 = sample(40_000);
+        let mut changed_v2 = changed_v1.clone();
+        changed_v2[35_000] ^= 0xff; // only the last of four 10 KB chunks differs
+
+        let v1 = vec![
+            entry("old", file_flags::DIRECTORY, None),
+            file("kept.bin", &kept, 10_000, 0, &mut source),
+            file("changed.bin", &changed_v1, 10_000, 0, &mut source),
+            file("old\\gone.txt", b"bye", 1024, 0, &mut source),
+        ];
+        run(&dir, depot(v1.clone()), &source).await;
+        assert_eq!(source.fetched(), 5 + 4 + 1);
+        let kept_modified = std::fs::metadata(dir.game().join("kept.bin"))
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        let v2 = vec![
+            file("kept.bin", &kept, 10_000, 0, &mut source),
+            file("changed.bin", &changed_v2, 10_000, 0, &mut source),
+            file("new.txt", b"hello", 1024, 0, &mut source),
+        ];
+        let update = DepotDownload {
+            previous: Some(manifest(v1)),
+            ..depot(v2)
+        };
+        let report = run(&dir, update, &source).await;
+
+        assert_eq!(source.fetched(), 2, "one changed chunk and one new file");
+        assert_eq!((report.files, report.files_unchanged), (2, 1));
+        assert_eq!((report.chunks_downloaded, report.chunks_reused), (2, 3));
+        assert_eq!(report.files_removed, 1);
+        assert!(
+            !dir.game().join("old").exists(),
+            "empty old directory removed"
+        );
+        assert_eq!(
+            std::fs::read(dir.game().join("changed.bin")).unwrap(),
+            changed_v2
+        );
+        assert_eq!(
+            std::fs::metadata(dir.game().join("kept.bin"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            kept_modified,
+            "unchanged file not rewritten"
+        );
+    }
+
+    #[tokio::test]
+    async fn resumes_an_interrupted_download() {
+        let dir = TempDir::new("resume");
+        let mut source = MemorySource::default();
+        let data = sample(40_000);
+        let files = vec![file("a.bin", &data, 10_000, 0, &mut source)];
+
+        // Simulate an earlier attempt that finished the first two chunks.
+        let staged = dir.target().staging_dir.join("a.bin");
+        std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        let mut partial = data[..20_000].to_vec();
+        partial.resize(40_000, 0);
+        std::fs::write(&staged, &partial).unwrap();
+
+        let report = run(&dir, depot(files), &source).await;
+        assert_eq!(source.fetched(), 2);
+        assert_eq!(report.chunks_reused, 2);
+        assert_eq!(std::fs::read(dir.game().join("a.bin")).unwrap(), data);
+    }
+
+    #[tokio::test]
+    async fn verify_repairs_only_broken_chunks() {
+        let dir = TempDir::new("verify");
+        let mut source = MemorySource::default();
+        let data = sample(40_000);
+        let files = vec![
+            file("a.bin", &data, 10_000, 0, &mut source),
+            file("b.bin", b"intact", 1024, 0, &mut source),
+        ];
+        run(&dir, depot(files.clone()), &source).await;
+        source.fetched();
+
+        // Damage one chunk of a.bin.
+        let mut broken = data.clone();
+        broken[25_000] ^= 1;
+        std::fs::write(dir.game().join("a.bin"), &broken).unwrap();
+
+        let verify = DepotDownload {
+            previous: Some(manifest(files.clone())),
+            ..depot(files)
+        };
+        let options = InstallOptions {
+            verify_existing: true,
+            ..options()
+        };
+        let report = install(&[verify], &dir.target(), &source, options, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(source.fetched(), 1, "only the damaged chunk is downloaded");
+        assert_eq!((report.files, report.files_unchanged), (1, 1));
+        assert_eq!(std::fs::read(dir.game().join("a.bin")).unwrap(), data);
+    }
+
+    #[tokio::test]
+    async fn without_verify_a_damaged_file_with_same_hash_in_manifest_is_trusted() {
+        // Documents the trade-off: a normal update trusts unchanged entries.
+        let dir = TempDir::new("trust");
+        let mut source = MemorySource::default();
+        let files = vec![file("a.bin", b"original", 1024, 0, &mut source)];
+        run(&dir, depot(files.clone()), &source).await;
+        std::fs::write(dir.game().join("a.bin"), b"ORIGINAL").unwrap();
+
+        let update = DepotDownload {
+            previous: Some(manifest(files.clone())),
+            ..depot(files)
+        };
+        let report = run(&dir, update, &source).await;
+        assert_eq!(report.files_unchanged, 1);
     }
 }

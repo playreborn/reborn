@@ -42,7 +42,7 @@ zero-seeded Adler-32 before it is written.
    assembly, SHA-1 check per file, commit, `appmanifest_*.acf`;
    `reborn-cli install <appid>`. First live target: Spacewar (app 480,
    small and in every account's base package).
-4. **Update and verify**: manifest diff, reuse of unchanged chunks,
+4. **Update and verify** (done; real version update not yet seen live): manifest diff, reuse of unchanged chunks,
    resuming, verifying an existing install.
 
 ## Consequences

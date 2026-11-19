@@ -4,8 +4,10 @@
 //! library folder. The root key is `"AppState"`.
 
 use crate::Error;
-use crate::fields::{optional_number, optional_str, required_number, required_str, section};
-use crate::vdf::{self, Object};
+use crate::fields::{
+    key_path, optional_number, optional_str, parse_number, required_number, required_str, section,
+};
+use crate::vdf::{self, Object, Value};
 
 const ROOT: &str = "AppState";
 
@@ -31,6 +33,8 @@ pub struct AppManifest {
     pub last_updated: Option<u64>,
     /// `LastPlayed`, Unix timestamp in seconds.
     pub last_played: Option<u64>,
+    /// `InstalledDepots`: which manifest of each depot is installed.
+    pub installed_depots: Vec<InstalledDepot>,
 }
 
 impl AppManifest {
@@ -58,6 +62,7 @@ impl AppManifest {
             build_id: optional_number(state, ROOT, "buildid")?,
             last_updated: optional_number(state, ROOT, "LastUpdated")?,
             last_played: optional_number(state, ROOT, "LastPlayed")?,
+            installed_depots: read_installed_depots(state)?,
         })
     }
 
@@ -65,6 +70,40 @@ impl AppManifest {
     pub fn is_fully_installed(&self) -> bool {
         self.state_flags & Self::STATE_FULLY_INSTALLED != 0
     }
+}
+
+fn read_installed_depots(state: &Object) -> Result<Vec<InstalledDepot>, Error> {
+    let context = format!("{ROOT}/InstalledDepots");
+    let Some(depots) = state.get("InstalledDepots") else {
+        return Ok(Vec::new());
+    };
+    let Value::Object(depots) = depots else {
+        return Err(Error::WrongType {
+            key: context,
+            expected: "an object",
+        });
+    };
+    depots
+        .iter()
+        .map(|(depot_id, entry)| {
+            let path = key_path(&context, depot_id);
+            let depot_id = parse_number(depot_id, &path)?.ok_or_else(|| Error::InvalidNumber {
+                key: path.clone(),
+                value: depot_id.to_owned(),
+            })?;
+            let Value::Object(entry) = entry else {
+                return Err(Error::WrongType {
+                    key: path,
+                    expected: "an object",
+                });
+            };
+            Ok(InstalledDepot {
+                depot_id,
+                manifest_id: required_number(entry, &path, "manifest")?,
+                size: optional_number(entry, &path, "size")?.unwrap_or(0),
+            })
+        })
+        .collect()
 }
 
 /// One installed depot, as listed under `InstalledDepots`.
@@ -154,6 +193,45 @@ impl NewAppManifest {
     /// The file content in Steam's layout.
     pub fn to_text(&self) -> String {
         vdf::write(&self.to_vdf())
+    }
+
+    /// Updates an existing appmanifest document in place after an install
+    /// or update. Only the fields an install sets are changed; everything
+    /// else (`LauncherPath`, `InstallScripts`, `UserConfig`, keys Reborn does
+    /// not know, entries of other depots) is kept in its position. If the
+    /// document has no `AppState`, it is replaced by [`Self::to_vdf`].
+    pub fn apply_to(&self, document: &mut Object) {
+        let Some(state) = document.get_object_mut(ROOT) else {
+            *document = self.to_vdf();
+            return;
+        };
+        let number = |value: u64| value.to_string();
+        state.insert("name", self.name.as_str());
+        state.insert("StateFlags", AppManifest::STATE_FULLY_INSTALLED.to_string());
+        state.insert("installdir", self.install_dir.as_str());
+        state.insert("LastUpdated", number(self.last_updated));
+        state.insert("SizeOnDisk", number(self.size_on_disk));
+        state.insert("StagingSize", "0");
+        state.insert("buildid", number(self.build_id));
+        state.insert("LastOwner", number(self.last_owner));
+        state.insert("UpdateResult", "0");
+        state.insert("BytesToDownload", number(self.download_size));
+        state.insert("BytesDownloaded", number(self.download_size));
+        state.insert("BytesToStage", number(self.size_on_disk));
+        state.insert("BytesStaged", number(self.size_on_disk));
+        state.insert("TargetBuildID", number(self.build_id));
+
+        if state.get_object("InstalledDepots").is_none() {
+            state.insert("InstalledDepots", Object::new());
+        }
+        if let Some(depots) = state.get_object_mut("InstalledDepots") {
+            for depot in &self.installed_depots {
+                let mut entry = Object::new();
+                entry.push("manifest", number(depot.manifest_id));
+                entry.push("size", number(depot.size));
+                depots.insert(depot.depot_id.to_string(), entry);
+            }
+        }
     }
 }
 

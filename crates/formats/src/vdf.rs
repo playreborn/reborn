@@ -146,6 +146,15 @@ impl Object {
         self.get(key).and_then(Value::as_object)
     }
 
+    /// Mutable access to the first matching value if it is an object.
+    pub fn get_object_mut(&mut self, key: &str) -> Option<&mut Object> {
+        let index = self.position(key)?;
+        match &mut self.entries[index].1 {
+            Value::Object(object) => Some(object),
+            Value::String(_) => None,
+        }
+    }
+
     /// Appends an entry, even if the key already exists.
     pub fn push(&mut self, key: impl Into<String>, value: impl Into<Value>) {
         self.entries.push((key.into(), value.into()));

@@ -19,7 +19,7 @@ use reborn_content::chunk::process_chunk;
 use reborn_content::install::{CdnSource, DepotDownload, InstallOptions, InstallTarget};
 use reborn_content::manifest::DepotManifest;
 use reborn_content::path::install_path;
-use reborn_formats::{InstalledDepot, NewAppManifest};
+use reborn_formats::{AppManifest, InstalledDepot, NewAppManifest};
 use reborn_platform::secrets::{self, SecretKind};
 use reborn_platform::settings;
 use tracing_subscriber::EnvFilter;
@@ -82,7 +82,7 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
-    /// Download and install an app.
+    /// Download and install an app, or update it if it is already installed.
     ///
     /// Installs into Reborn's own library unless `--library` is given. The
     /// result has the Steam library layout (`steamapps/common/<folder>` and
@@ -94,6 +94,21 @@ enum Command {
         #[arg(long)]
         library: Option<PathBuf>,
         /// Branch to install.
+        #[arg(long, default_value = PUBLIC_BRANCH)]
+        branch: String,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
+    /// Check an installed app against its manifest and repair broken or
+    /// missing files (like "verify integrity of game files").
+    Verify {
+        /// App ID, e.g. 480 for Spacewar.
+        app_id: u32,
+        /// Library folder (the folder that contains `steamapps`).
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Branch to check against.
         #[arg(long, default_value = PUBLIC_BRANCH)]
         branch: String,
         /// Account to use (defaults to the last account that signed in).
@@ -132,7 +147,13 @@ async fn main() -> Result<()> {
             library,
             branch,
             account,
-        } => install(account, app_id, library, &branch).await,
+        } => install(account, app_id, library, &branch, false).await,
+        Command::Verify {
+            app_id,
+            library,
+            branch,
+            account,
+        } => install(account, app_id, library, &branch, true).await,
         Command::Logout { account } => logout(account),
     }
 }
@@ -361,11 +382,14 @@ async fn manifest(
     Ok(())
 }
 
+/// Installs, updates (`verify == false`) or verifies and repairs
+/// (`verify == true`) an app.
 async fn install(
     account: Option<String>,
     app_id: u32,
     library: Option<PathBuf>,
     branch: &str,
+    verify: bool,
 ) -> Result<()> {
     let session = session(account).await?;
     let app = session.app_details(app_id, branch).await?;
@@ -415,8 +439,38 @@ async fn install(
         staging_dir: steamapps.join("downloading").join(app_id.to_string()),
     };
 
+    // An existing installation tells us which manifests are installed now.
+    let acf_path = steamapps.join(format!("appmanifest_{app_id}.acf"));
+    let existing = read_app_manifest(&acf_path)?;
+    let installed_manifest = |depot_id: u32| {
+        existing.as_ref().and_then(|(_, manifest)| {
+            manifest
+                .installed_depots
+                .iter()
+                .find(|depot| depot.depot_id == depot_id)
+                .map(|depot| depot.manifest_id)
+        })
+    };
+    let up_to_date = target.install_dir.is_dir()
+        && depots.iter().all(|depot| {
+            depot.manifest_id.is_some() && installed_manifest(depot.depot_id) == depot.manifest_id
+        });
+    if up_to_date && !verify {
+        println!(
+            "{name} is up to date (build {}). Use `reborn-cli verify {app_id}` to check its files.",
+            app.build_id
+                .map_or_else(|| "?".to_owned(), |build| build.to_string())
+        );
+        return Ok(());
+    }
+
+    let action = match (verify, existing.is_some()) {
+        (true, _) => "Verifying",
+        (false, true) => "Updating",
+        (false, false) => "Installing",
+    };
     eprintln!(
-        "Installing {name} (app {app_id}, build {}) into {}",
+        "{action} {name} (app {app_id}, build {}) in {}",
         app.build_id
             .map_or_else(|| "?".to_owned(), |build| build.to_string()),
         target.install_dir.display()
@@ -441,11 +495,45 @@ async fn install(
         )
         .await
         .with_context(|| format!("depot {}", depot.depot_id))?;
+
+        // The installed manifest, to reuse its chunks and remove its leftovers.
+        let previous = match installed_manifest(depot.depot_id) {
+            Some(previous_id) if previous_id == manifest_id => Some(fetched.manifest.clone()),
+            Some(previous_id) => {
+                match fetch_depot(
+                    &session,
+                    &cdn,
+                    &servers,
+                    app_id,
+                    depot.depot_id,
+                    previous_id,
+                    branch,
+                )
+                .await
+                {
+                    Ok(previous) => Some(previous.manifest),
+                    Err(error) => {
+                        eprintln!(
+                            "  depot {}: installed manifest {previous_id} unavailable ({error:#}); \
+                             files of the old version will not be removed",
+                            depot.depot_id
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         eprintln!(
-            "  depot {}: {} files, {}",
+            "  depot {}: {} files, {}{}",
             depot.depot_id,
             fetched.manifest.files.len(),
-            human_size(fetched.manifest.content_size())
+            human_size(fetched.manifest.content_size()),
+            match installed_manifest(depot.depot_id) {
+                Some(previous_id) if previous_id != manifest_id =>
+                    format!(" (update from manifest {previous_id})"),
+                _ => String::new(),
+            }
         );
         installed_depots.push(InstalledDepot {
             depot_id: depot.depot_id,
@@ -456,6 +544,7 @@ async fn install(
             depot_id: depot.depot_id,
             key: fetched.key,
             manifest: fetched.manifest,
+            previous,
         });
     }
 
@@ -468,7 +557,10 @@ async fn install(
         &downloads,
         &target,
         &source,
-        InstallOptions::default(),
+        InstallOptions {
+            verify_existing: verify,
+            ..InstallOptions::default()
+        },
         |progress| {
             let percent = if progress.bytes_total == 0 {
                 100.0
@@ -501,20 +593,42 @@ async fn install(
             .unwrap_or(0),
         installed_depots,
     };
-    let acf_path = steamapps.join(format!("appmanifest_{app_id}.acf"));
+    // Update an existing appmanifest in place (keeps Steam's own fields),
+    // or write a new one.
+    let text = match existing {
+        Some((mut document, _)) => {
+            manifest.apply_to(&mut document);
+            reborn_formats::vdf::write(&document)
+        }
+        None => manifest.to_text(),
+    };
     let temporary = steamapps.join(format!("appmanifest_{app_id}.acf.tmp"));
-    std::fs::write(&temporary, manifest.to_text())
-        .with_context(|| format!("writing {}", temporary.display()))?;
+    std::fs::write(&temporary, text).with_context(|| format!("writing {}", temporary.display()))?;
     std::fs::rename(&temporary, &acf_path)
         .with_context(|| format!("writing {}", acf_path.display()))?;
 
+    let done = match action {
+        "Verifying" => "Verified",
+        "Updating" => "Updated",
+        _ => "Installed",
+    };
     println!(
-        "Installed {name}: {} files, {} written, {} downloaded in {:.1} s",
+        "{done} {name} in {:.1} s: {} files written, {} unchanged, {} removed; \
+         {} chunks downloaded ({}), {} reused",
+        started.elapsed().as_secs_f64(),
         report.files,
-        human_size(report.bytes_written),
+        report.files_unchanged,
+        report.files_removed,
+        report.chunks_downloaded,
         human_size(report.bytes_downloaded),
-        started.elapsed().as_secs_f64()
+        report.chunks_reused,
     );
+    if report.user_config_kept > 0 {
+        println!(
+            "  {} existing user config files kept",
+            report.user_config_kept
+        );
+    }
     if report.symlinks_skipped > 0 {
         println!(
             "  {} symlinks were skipped (not supported here)",
@@ -524,6 +638,23 @@ async fn install(
     println!("  Game folder: {}", target.install_dir.display());
     println!("  Steam manifest: {}", acf_path.display());
     Ok(())
+}
+
+/// Reads an existing appmanifest: the raw document (to update it in place)
+/// and its typed view. `None` if there is none.
+fn read_app_manifest(
+    path: &std::path::Path,
+) -> Result<Option<(reborn_formats::vdf::Object, AppManifest)>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    let document =
+        reborn_formats::vdf::parse(&text).with_context(|| format!("reading {}", path.display()))?;
+    let manifest =
+        AppManifest::from_vdf(&document).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Some((document, manifest)))
 }
 
 /// Content servers that may serve the app, best first.

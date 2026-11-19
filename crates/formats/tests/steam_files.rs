@@ -3,7 +3,9 @@
 //! The samples follow the exact layout Steam writes, but every value that
 //! could identify a user (content IDs, Steam IDs, paths) is synthetic.
 
-use reborn_formats::{AppManifest, Error, LibraryApp, LibraryFolders, vdf};
+use reborn_formats::{
+    AppManifest, Error, InstalledDepot, LibraryApp, LibraryFolders, NewAppManifest, vdf,
+};
 
 const LIBRARY_FOLDERS: &str = include_str!("data/libraryfolders.vdf");
 const LIBRARY_FOLDERS_LEGACY: &str = include_str!("data/libraryfolders_legacy.vdf");
@@ -73,9 +75,61 @@ fn reads_app_manifest() {
             build_id: Some(12_345_678),
             last_updated: Some(1_700_000_000),
             last_played: Some(0),
+            installed_depots: vec![InstalledDepot {
+                depot_id: 228983,
+                manifest_id: 1_000_000_000_000_000_003,
+                size: 1_234_567,
+            }],
         }
     );
     assert!(manifest.is_fully_installed());
+}
+
+#[test]
+fn updating_a_manifest_keeps_unknown_fields() {
+    let mut document = vdf::parse(APP_MANIFEST).unwrap();
+    let update = NewAppManifest {
+        app_id: 228980,
+        name: "Steamworks Common Redistributables".to_owned(),
+        install_dir: "Steamworks Shared".to_owned(),
+        build_id: 99,
+        last_owner: 1,
+        size_on_disk: 5,
+        download_size: 3,
+        last_updated: 1_800_000_000,
+        installed_depots: vec![InstalledDepot {
+            depot_id: 228984,
+            manifest_id: 42,
+            size: 5,
+        }],
+    };
+    update.apply_to(&mut document);
+
+    let state = document.get_object("AppState").unwrap();
+    // Untouched fields stay, in their original position.
+    assert!(
+        state
+            .get_str("LauncherPath")
+            .unwrap()
+            .ends_with("steam.exe")
+    );
+    let keys: Vec<_> = state.iter().map(|(key, _)| key).collect();
+    assert_eq!(keys[..4], ["appid", "universe", "LauncherPath", "name"]);
+    assert_eq!(
+        state.get_object("UserConfig").unwrap().get_str("language"),
+        Some("english")
+    );
+    // Updated fields.
+    assert_eq!(state.get_str("buildid"), Some("99"));
+    assert_eq!(state.get_str("TargetBuildID"), Some("99"));
+    // Depot entries: the existing one is kept, the installed one added.
+    let manifest = AppManifest::from_vdf(&document).unwrap();
+    let depots: Vec<_> = manifest
+        .installed_depots
+        .iter()
+        .map(|depot| (depot.depot_id, depot.manifest_id))
+        .collect();
+    assert_eq!(depots, [(228983, 1_000_000_000_000_000_003), (228984, 42)]);
 }
 
 #[test]

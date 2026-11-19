@@ -83,8 +83,30 @@ See ADR 0013.
   the official client (2026-11-19, keys and non-personal values only);
   staging folder name as used by the official client (`downloading`).
 - **Not yet:** install scripts (`installscript.vdf`, e.g. redistributables),
-  `LauncherPath`, updates of existing installs (stage 4).
+  `LauncherPath`.
 - **Verified:** yes (2026-11-19, live: Spacewar installed by Reborn into the
   official client's library while it was closed; the client then listed it as
   installed without downloading it again and "verify integrity of game files"
   reported all files as valid). Offline: 7 install tests.
+
+### Update, resume and verify
+
+- **What:** The installed manifest ID comes from `InstalledDepots` in the
+  existing appmanifest; that manifest is downloaded like the new one. For
+  every chunk of a changed file, Reborn uses the first source that has it
+  with the right size and Adler-32: the staging file (resume), the installed
+  file found via the chunk ID in the previous manifest or at the same
+  offset (reuse), then the CDN. Files with the same SHA-1 in both manifests
+  and the right size are left alone; `verify` hashes them instead. A file
+  that reused local data and fails its SHA-1 is downloaded completely once
+  more. Files and empty directories of the previous manifest that the new
+  one lacks are removed. The appmanifest is updated in place, keeping
+  Steam's own fields.
+- **Source:** Reborn's own design; chunk IDs are content hashes (SHA-1) in
+  the manifest format (SteamKit2 `Types/DepotManifest.cs`), which makes
+  them usable as reuse keys.
+- **Verified:** offline (update, resume, verify/repair, trust trade-off
+  tests). Live (2026-11-19, Spacewar): second `install` reports up to date,
+  `verify` keeps all 8 files, and a file with appended bytes is repaired from
+  its own still-valid chunk without downloading. A real version update has
+  not been seen live yet.

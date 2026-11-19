@@ -22,6 +22,11 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
     { id = "RUSTSEC-2026-0371", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
     { id = "RUSTSEC-2026-0372", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
+    # Unmaintained (no known vulnerability), pulled in by the GUI framework:
+    # paste via wgpu-hal/metal (macOS backend, proc-macro), ttf-parser via
+    # cosmic-text/fontdb. Revisit with iced updates.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc-macro via iced/wgpu; not vulnerable; revisit with iced" },
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained font parser via iced/cosmic-text; not vulnerable; revisit with iced" },
 ]
 
 [licenses]
@@ -48,6 +53,8 @@ allow = [
     "CDLA-Permissive-2.0",
     # interprocess (local sockets for IPC): "0BSD OR Apache-2.0".
     "0BSD",
+    # clipboard-win / error-code (Windows clipboard in iced): permissive.
+    "BSL-1.0",
 ]
 # Our own GPL crates. GPL is allowed ONLY for these, so a GPL dependency can
 # never sneak into the MIT/Apache protocol crates.
@@ -58,6 +65,7 @@ exceptions = [
     { allow = ["GPL-3.0-or-later"], crate = "reborn-testkit" },
     { allow = ["GPL-3.0-or-later"], crate = "rebornd" },
     { allow = ["GPL-3.0-or-later"], crate = "reborn-cli" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn" },
 ]
 
 [bans]

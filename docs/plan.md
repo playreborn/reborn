@@ -511,7 +511,7 @@ Etappen (Stand 2026-11-19):
 
 1. **`reborn-core`** (erledigt): Anmelden, Bibliothek, Installieren/Aktualisieren/Prüfen als gemeinsame Logik für CLI, Daemon und GUI; Fortschritt über Ereignisse statt Konsolenausgabe.
 2. **`rebornd` + `reborn-ipc`** (erledigt, live geprüft 2026-11-19): lokale Schnittstelle (ADR 0008), Download-Warteschlange, Abbrechen, Fortschrittsereignisse; `reborn-cli daemon …` als erste Nutzerin. Offen: Named Pipe unter Windows auf den eigenen Benutzer beschränken.
-3. **GUI `reborn`** mit Iced 0.14 (ADR 0009): Login, Bibliothek, Details, Downloads, Einstellungen.
+3. **GUI `reborn`** mit Iced 0.14 (ADR 0009): erste Version gebaut und live geprüft (2026-11-19) mit Bibliothek (installiert/nicht installiert, Installieren/Aktualisieren/Prüfen, Suche) und Downloads (Fortschritt, Abbrechen); startet `rebornd` bei Bedarf selbst. Beim Test gefunden und behoben: Zwischendateien wurden in voller Größe vorbelegt (83 GB für einen abgebrochenen Download); sie wachsen jetzt nur mit den Daten (live geprüft 2026-11-20). Offen: Login in der GUI (auch per QR), Einstellungen, Spieldetails mit Artwork.
 4. **Spiele starten**, Linux mit Proton; Kompatibilitätsdatenbank → Release 0.1.
 
 ### M3 – Social → Release 0.2

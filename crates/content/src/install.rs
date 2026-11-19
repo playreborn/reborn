@@ -291,29 +291,18 @@ pub async fn install(
         }
     }
 
-    // Staging files with the right length. Existing ones are kept: their
-    // content is reused where it still matches.
-    for (path, planned) in &to_build {
-        let staged = staging.join(path);
-        if let Some(parent) = staged.parent() {
-            create_dir(parent).await?;
-        }
-        let file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&staged)
-            .await
-            .map_err(staging_error(&staged))?;
-        file.set_len(planned.file.size)
-            .await
-            .map_err(staging_error(&staged))?;
-    }
-
+    // Staging files are created lazily by the first chunk written into them
+    // and only grow as data arrives: preallocating every file at full size
+    // would reserve the whole game on disk up front (83 GB for a cancelled
+    // download in a live test). Existing staging files are kept: their
+    // content is reused where it still matches. Chunks are queued front to
+    // back within each file, so a file never jumps ahead to a late offset.
     let tasks: Vec<ChunkTask<'_>> = to_build
         .iter()
         .flat_map(|(path, planned)| {
-            planned.file.chunks.iter().map(|chunk| ChunkTask {
+            let mut chunks: Vec<&ManifestChunk> = planned.file.chunks.iter().collect();
+            chunks.sort_by_key(|chunk| chunk.offset);
+            chunks.into_iter().map(|chunk| ChunkTask {
                 depot: planned.depot,
                 path: path.as_path(),
                 chunk,
@@ -341,6 +330,12 @@ pub async fn install(
         &mut on_progress,
     )
     .await?;
+
+    // Give every built file its exact final size: this creates files without
+    // chunks (empty or all zeros) and cuts leftovers of an older staging file.
+    for (path, planned) in &to_build {
+        set_final_size(&staging.join(path), planned.file.size).await?;
+    }
 
     // Verify built files; files that reused local data get one full re-download.
     let mut retry = Vec::new();
@@ -703,12 +698,29 @@ async fn is_file(path: &Path) -> bool {
         .is_ok_and(|meta| meta.is_file())
 }
 
+/// Opens a staging file for writing, creating it (and its directory) if needed.
+async fn open_staged(path: &Path) -> Result<tokio::fs::File, InstallError> {
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    match options.open(path).await {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = path.parent() {
+                create_dir(parent).await?;
+            }
+            options.open(path).await.map_err(staging_error(path))
+        }
+        Err(error) => Err(staging_error(path)(error)),
+    }
+}
+
+async fn set_final_size(path: &Path, size: u64) -> Result<(), InstallError> {
+    let file = open_staged(path).await?;
+    file.set_len(size).await.map_err(staging_error(path))
+}
+
 async fn write_at(path: &Path, offset: u64, data: &[u8]) -> Result<(), InstallError> {
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .await
-        .map_err(staging_error(path))?;
+    let mut file = open_staged(path).await?;
     file.seek(SeekFrom::Start(offset))
         .await
         .map_err(staging_error(path))?;
@@ -1150,6 +1162,73 @@ mod tests {
                 .unwrap(),
             kept_modified,
             "unchanged file not rewritten"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_download_does_not_reserve_the_full_size() {
+        // Regression: staging files used to be preallocated at full size,
+        // so a cancelled 83 GB game kept 83 GB of disk space reserved.
+        let dir = TempDir::new("lazy");
+        let mut source = MemorySource::default();
+        let big = sample(40_000);
+        let mut files = vec![
+            file("a.bin", &big, 10_000, 0, &mut source),
+            file("b.bin", &sample(30_000), 10_000, 0, &mut source),
+        ];
+        files[0].chunks[2].checksum ^= 1; // the third chunk of a.bin is broken
+
+        let sequential = InstallOptions {
+            concurrency: 1,
+            attempts: 1,
+            verify_existing: false,
+        };
+        let result = install(&[depot(files)], &dir.target(), &source, sequential, |_| {}).await;
+        assert!(matches!(result, Err(InstallError::Chunk { .. })));
+
+        let staging = dir.target().staging_dir;
+        let staged = std::fs::metadata(staging.join("a.bin")).unwrap().len();
+        assert_eq!(staged, 20_000, "only the two chunks written so far");
+        assert!(
+            !staging.join("b.bin").exists(),
+            "untouched files are not created"
+        );
+    }
+
+    #[tokio::test]
+    async fn chunks_are_written_front_to_back() {
+        // A manifest may list a file's chunks in any order; writing the last
+        // chunk first would grow the staging file to almost its full size.
+        let dir = TempDir::new("order");
+        let mut source = MemorySource::default();
+        let mut files = vec![file("a.bin", &sample(40_000), 10_000, 0, &mut source)];
+        files[0].chunks.reverse();
+        files[0].chunks[2].checksum ^= 1; // the chunk at offset 10_000 is broken
+
+        let sequential = InstallOptions {
+            concurrency: 1,
+            attempts: 1,
+            verify_existing: false,
+        };
+        let result = install(&[depot(files)], &dir.target(), &source, sequential, |_| {}).await;
+        assert!(matches!(result, Err(InstallError::Chunk { .. })));
+
+        let staged = std::fs::metadata(dir.target().staging_dir.join("a.bin"))
+            .unwrap()
+            .len();
+        assert_eq!(staged, 10_000, "only the first chunk was written");
+    }
+
+    #[tokio::test]
+    async fn files_without_chunks_get_their_size() {
+        let dir = TempDir::new("zeros");
+        let mut zeros = entry("zeros.bin", 0, None);
+        zeros.size = 4096;
+        zeros.sha_content = Some(Sha1::digest(vec![0u8; 4096]).into());
+        run(&dir, depot(vec![zeros]), &MemorySource::default()).await;
+        assert_eq!(
+            std::fs::read(dir.game().join("zeros.bin")).unwrap(),
+            vec![0u8; 4096]
         );
     }
 

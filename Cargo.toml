@@ -39,6 +39,8 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 # Stream helpers for multi-part Steam responses.
 futures-util = "0.3"
+# GUI (ADR 0009). The tokio feature runs tasks on the same runtime as the IPC client.
+iced = { version = "0.14", features = ["tokio"] }
 # Local sockets (named pipes / Unix sockets) for rebornd's IPC. See ADR 0008.
 interprocess = { version = "2.4", features = ["tokio"] }
 # OS credential stores (Windows Credential Manager, Secret Service). See ADR 0010.

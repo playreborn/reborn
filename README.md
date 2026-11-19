@@ -51,8 +51,15 @@ On Windows you also need the Visual Studio C++ Build Tools.
 ```sh
 cargo build --workspace
 cargo run -p reborn-cli -- --help
-cargo run -p rebornd
+cargo run -p rebornd      # background daemon
+cargo run -p reborn       # desktop app (starts rebornd if needed)
 ```
+
+The desktop app starts the `rebornd` binary next to it, and `cargo run -p
+reborn` does not rebuild that binary. After changing daemon or engine code,
+run `cargo build --workspace` (and stop a running daemon with
+`cargo run -p reborn-cli -- daemon shutdown`) so the app does not start an
+old daemon.
 
 ## Contributing
 

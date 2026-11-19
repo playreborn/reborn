@@ -1,6 +1,6 @@
 [package]
 name = "reborn-formats"
-description = "Parsers and writers for Steam's local file formats (KeyValues/VDF, ACF, appinfo, depot manifests)."
+description = "Parser and writer for Steam's text KeyValues files (VDF/ACF), with typed readers for app manifests and library folders. Part of Reborn."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,12 @@ authors.workspace = true
 repository.workspace = true
 license = "MIT OR Apache-2.0"
 publish = true
+readme = "README.md"
+keywords = ["steam", "vdf", "keyvalues", "acf", "parser"]
+categories = ["parser-implementations"]
 
 [dependencies]
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -8,9 +8,13 @@ test ever has to talk to Valve's live servers.
 ```
 fixtures/
 ├── cm/        # recorded CM messages per flow (auth, pics, social, ...)
-├── formats/   # sample VDF/ACF/appinfo files and depot manifests
+├── formats/   # larger format samples (appinfo, depot manifests) once needed
 └── raw/       # unredacted recordings, git-ignored, NEVER commit
 ```
+
+Small samples that belong to one crate live next to its tests instead
+(e.g. `crates/formats/tests/data/`), so the crate stays self-contained when
+published.
 
 ## Rules
 

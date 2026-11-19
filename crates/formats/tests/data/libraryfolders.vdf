@@ -1,0 +1,29 @@
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"C:\\Program Files (x86)\\Steam"
+		"label"		""
+		"contentid"		"1000000000000000001"
+		"totalsize"		"0"
+		"update_clean_bytes_tally"		"123456"
+		"time_last_update_verified"		"1700000000"
+		"apps"
+		{
+			"228980"		"1234567"
+			"730"		"40000000000"
+		}
+	}
+	"1"
+	{
+		"path"		"D:\\SteamLibrary"
+		"label"		"Games"
+		"contentid"		"1000000000000000002"
+		"totalsize"		"2000000000000"
+		"update_clean_bytes_tally"		"0"
+		"time_last_update_verified"		"1700000001"
+		"apps"
+		{
+		}
+	}
+}

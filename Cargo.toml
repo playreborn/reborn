@@ -20,6 +20,15 @@ reborn-platform = { path = "crates/platform", version = "0.1.0" }
 
 # External crates. Add new ones here first and justify them in the PR.
 anyhow = "1"
+# Content engine (ADR 0013): AES-256 ECB/CBC for depot chunks and file names.
+# aes 0.8 matches steam-vent's crypto and our MSRV.
+aes = "0.8"
+base64 = "0.22"
+cbc = { version = "0.1", features = ["alloc"] }
+ecb = { version = "0.1", features = ["alloc"] }
+lzma-rs = "0.3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+zstd = "0.14"
 clap = { version = "4", features = ["derive"] }
 # Platform config/data directories (XDG on Linux, %APPDATA% on Windows).
 directories = "6"
@@ -31,6 +40,7 @@ keyring = "4"
 rpassword = "7"
 # Steam CM protocol client and its generated protobufs. See ADR 0007.
 steam-vent = "0.5"
+steam-vent-proto-common = "0.5"
 steam-vent-proto-steam = "0.5"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

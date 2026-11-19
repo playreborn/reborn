@@ -18,3 +18,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0010](0010-credential-storage.md) | Credential storage | Accepted |
 | 0011 | Origin of protobuf definitions | Planned (M0) |
 | 0012 | Shim approach (vtables, versions, IPC) | Planned (M4) |
+| [0013](0013-own-content-engine.md) | Own content engine, steamroom and SteamKit2 as references | Accepted |

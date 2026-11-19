@@ -42,6 +42,7 @@ testkit: dev-dependency only
 - `crates/cm`: CM connection, login, sessions, service calls. MIT OR Apache-2.0.
   Wraps steam-vent (ADR 0007); only this crate may depend on steam-vent.
 - `crates/content`: CDN, depots, chunks, verification, staged installs. MIT OR Apache-2.0.
+  May use `steam-vent-proto-*` for protobuf types only, never the steam-vent client (ADR 0013).
 - `crates/core`: domain logic (accounts, library, queue, launch). GPL-3.0-or-later.
 - `crates/platform`: OS integration (paths, keyring, processes, Proton). GPL-3.0-or-later.
 - `crates/ipc`: frontend ↔ daemon API types. GPL-3.0-or-later.

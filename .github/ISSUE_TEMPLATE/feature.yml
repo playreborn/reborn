@@ -1,0 +1,34 @@
+name: Feature request / RFC
+description: Propose a feature or a larger change.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reborn aims to stay minimal. Please check the scope in `docs/plan.md`
+        (section 5) and the red lines in `AGENTS.md` before proposing a feature.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What do you want to do that Reborn does not support?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should it work? For larger changes, describe the design and affected crates.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This does not cross any red line in AGENTS.md.
+          required: true

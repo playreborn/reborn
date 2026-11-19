@@ -1,0 +1,47 @@
+# cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# The allow list is meant for future dependencies too; don't warn about
+# entries no current dependency uses.
+unused-allowed-license = "allow"
+# Permissive licenses that are compatible with both our MIT/Apache crates
+# and our GPL-3.0-or-later applications.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# Our own GPL crates. GPL is allowed ONLY for these, so a GPL dependency can
+# never sneak into the MIT/Apache protocol crates.
+exceptions = [
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-core" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-platform" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-ipc" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-testkit" },
+    { allow = ["GPL-3.0-or-later"], crate = "rebornd" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-cli" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

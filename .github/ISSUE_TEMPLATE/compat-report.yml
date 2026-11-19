@@ -1,0 +1,48 @@
+name: Compatibility report
+description: Tell us how well a specific game works with Reborn. No programming needed.
+labels: ["compat", "needs-triage"]
+body:
+  - type: input
+    id: game
+    attributes:
+      label: Game name
+    validations:
+      required: true
+  - type: input
+    id: appid
+    attributes:
+      label: App ID
+      description: The number in the game's store URL, e.g. store.steampowered.com/app/<App ID>/
+    validations:
+      required: true
+  - type: dropdown
+    id: level
+    attributes:
+      label: Compatibility level
+      options:
+        - "0 - does not start"
+        - "1 - starts only with the official client as fallback"
+        - "2 - starts without the official client, singleplayer playable"
+        - "3 - additionally achievements and cloud work"
+        - "4 - additionally multiplayer works"
+        - "5 - no known differences to the official client"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, Linux (native), Linux (Proton), SteamOS (desktop mode)]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Reborn version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What works, what does not, workarounds, Proton version, launch options.

@@ -1,0 +1,15 @@
+[package]
+name = "reborn-proto"
+description = "Generated Steam protocol definitions (protobuf messages, EMsg, enums) for Reborn."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "MIT OR Apache-2.0"
+publish = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in Reborn does not work as expected.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste tokens, passwords, e-mail addresses or unredacted logs.
+        Steam IDs and account names should be replaced with placeholders.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `reborn-cli ...`
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Reborn version or commit
+      placeholder: "0.0.1 / abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, Linux, SteamOS (desktop mode), Other]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (redacted)
+      description: Run with `-vv` or `RUST_LOG=debug` and check the output for secrets before pasting.
+      render: text

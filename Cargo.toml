@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Reborn contributors"]
+repository = "https://github.com/playreborn/reborn"
+
+[workspace.dependencies]
+# Internal crates are added here once a crate actually uses another one.
+# Always give path AND version, so the crate can be published and cargo-deny
+# does not treat it as a wildcard dependency, e.g.:
+# reborn-proto = { path = "crates/proto", version = "0.0.1" }
+
+# External crates. Add new ones here first and justify them in the PR.
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

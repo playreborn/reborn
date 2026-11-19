@@ -1,0 +1,18 @@
+[package]
+name = "reborn-cli"
+description = "Command-line frontend for Reborn, a native, open-source client for your Steam library."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "GPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

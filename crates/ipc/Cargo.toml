@@ -1,0 +1,15 @@
+[package]
+name = "reborn-ipc"
+description = "API types shared between the Reborn daemon (rebornd) and its frontends."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "GPL-3.0-or-later"
+publish = true
+
+[dependencies]
+
+[lints]
+workspace = true

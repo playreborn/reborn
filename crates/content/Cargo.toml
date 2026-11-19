@@ -1,0 +1,15 @@
+[package]
+name = "reborn-content"
+description = "Steam content engine: CDN access, depot manifests, chunk handling, verification and staged installs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "MIT OR Apache-2.0"
+publish = true
+
+[dependencies]
+
+[lints]
+workspace = true

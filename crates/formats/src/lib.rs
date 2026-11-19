@@ -1,6 +1,7 @@
 //! Parsers and writers for Steam's local file formats.
 //!
 //! - [`vdf`]: text KeyValues (VDF/ACF), parsing and writing.
+//! - [`binary`]: binary KeyValues (PICS package info, `appinfo.vdf` entries), reading.
 //! - [`AppManifest`]: typed read access to `steamapps/appmanifest_<appid>.acf`.
 //! - [`LibraryFolders`]: typed read access to `steamapps/libraryfolders.vdf`.
 //!
@@ -19,10 +20,11 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Planned: binary KeyValues (`appinfo.vdf`) and depot manifests.
+//! Planned: the `appinfo.vdf` file container and depot manifests.
 #![forbid(unsafe_code)]
 
 pub mod app_manifest;
+pub mod binary;
 mod fields;
 pub mod library_folders;
 pub mod vdf;

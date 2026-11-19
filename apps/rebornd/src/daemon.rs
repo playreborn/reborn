@@ -2,17 +2,20 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
 use reborn_cm::{PUBLIC_BRANCH, Session};
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_ipc::protocol::{
-    Event, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp, Request, Response,
+    Event, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp, Request, Response,
+    Secret,
 };
 use reborn_platform::settings;
-use tokio::sync::{Notify, broadcast};
+use tokio::sync::{Notify, broadcast, oneshot};
 use tracing::{info, warn};
 
 /// How often progress events are sent at most.
@@ -66,10 +69,20 @@ impl Jobs {
     }
 }
 
+/// A password sign-in that is still running (ADR 0014).
+struct PendingSignIn {
+    id: u64,
+    /// Taken by the first `submit_guard_code`.
+    code: Option<oneshot::Sender<reborn_cm::Secret>>,
+    cancel: Arc<Notify>,
+}
+
 /// Shared daemon state.
 pub struct Daemon {
     events: broadcast::Sender<Event>,
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
+    sign_in: Mutex<Option<PendingSignIn>>,
+    next_sign_in: AtomicU64,
     jobs: Mutex<Jobs>,
     job_added: Notify,
     shutdown: Notify,
@@ -80,6 +93,8 @@ impl Daemon {
         Self {
             events: broadcast::channel(256).0,
             session: tokio::sync::Mutex::new(None),
+            sign_in: Mutex::new(None),
+            next_sign_in: AtomicU64::new(1),
             jobs: Mutex::new(Jobs {
                 next_id: 1,
                 ..Jobs::default()
@@ -101,6 +116,12 @@ impl Daemon {
 
     fn jobs(&self) -> MutexGuard<'_, Jobs> {
         self.jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn pending_sign_in(&self) -> MutexGuard<'_, Option<PendingSignIn>> {
+        self.sign_in
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -138,12 +159,20 @@ impl Daemon {
     pub async fn handle(&self, request: Request) -> Response {
         match request {
             Request::Hello { .. } => hello(),
-            Request::Status => Response::Status {
-                daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
-                account: reborn_core::account::resolve_account(None).ok(),
-                signed_in: self.session.lock().await.is_some(),
-                active_jobs: self.jobs().active(),
-            },
+            Request::Status => {
+                let account = reborn_core::account::resolve_account(None).ok();
+                // A keyring error only means we cannot tell; report no login.
+                let stored_login = account.as_deref().is_some_and(|account| {
+                    reborn_core::account::has_stored_login(account).unwrap_or(false)
+                });
+                Response::Status {
+                    daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    account,
+                    signed_in: self.session.lock().await.is_some(),
+                    active_jobs: self.jobs().active(),
+                    stored_login,
+                }
+            }
             Request::Library => match self.library().await {
                 Ok(apps) => Response::Library { apps },
                 Err(error) => {
@@ -184,10 +213,140 @@ impl Daemon {
                 self.shutdown.notify_waiters();
                 Response::Ok
             }
+            Request::SignIn { account, password } => self.sign_in(account, password).await,
+            Request::SubmitGuardCode { code } => self.submit_guard_code(&code),
+            Request::CancelSignIn => self.cancel_sign_in(),
+            Request::SignOut => self.sign_out().await,
             _ => Response::Error {
                 message: "request not supported by this daemon".to_owned(),
             },
         }
+    }
+
+    /// Signs in with password and Steam Guard. Steam Guard challenges go
+    /// out as [`Event::SteamGuard`]; the code comes back through
+    /// [`Daemon::submit_guard_code`]. The password is only held for the
+    /// duration of this call and never logged.
+    async fn sign_in(&self, account: String, password: Secret) -> Response {
+        let account = account.trim().to_owned();
+        if account.is_empty() || password.expose().is_empty() {
+            return Response::Error {
+                message: "enter account name and password".to_owned(),
+            };
+        }
+        let (prompt, handle) = GuardPrompt::new();
+        let GuardPromptHandle { challenge, code } = handle;
+        let cancel = Arc::new(Notify::new());
+        let id = self.next_sign_in.fetch_add(1, Ordering::Relaxed);
+        let replaced = self.pending_sign_in().replace(PendingSignIn {
+            id,
+            code: Some(code),
+            cancel: Arc::clone(&cancel),
+        });
+        if let Some(old) = replaced {
+            old.cancel.notify_one();
+        }
+
+        info!(%account, "signing in with password");
+        let password = reborn_cm::Secret::new(password.expose());
+        let login = reborn_core::account::sign_in_with_password(&account, &password, prompt);
+        let forward_challenge = async {
+            if let Ok(challenge) = challenge.await {
+                self.emit(Event::SteamGuard {
+                    code: challenge.code.map(|kind| match kind {
+                        GuardCodeKind::Email => GuardCode::Email,
+                        GuardCodeKind::Authenticator => GuardCode::Authenticator,
+                    }),
+                    confirm_in_app: challenge.confirm_in_app,
+                    hint: challenge.hint,
+                });
+            }
+            std::future::pending::<()>().await;
+        };
+        let result = tokio::select! {
+            result = login => Some(result),
+            () = cancel.notified() => None,
+            () = forward_challenge => None,
+        };
+        {
+            let mut pending = self.pending_sign_in();
+            if pending.as_ref().is_some_and(|pending| pending.id == id) {
+                *pending = None;
+            }
+        }
+
+        match result {
+            None => Response::Error {
+                message: "sign-in cancelled".to_owned(),
+            },
+            Some(Err(error)) => {
+                info!(%account, %error, "sign-in failed");
+                error_response(&error)
+            }
+            Some(Ok(session)) => {
+                info!(%account, "signed in to Steam");
+                *self.session.lock().await = Some(Arc::new(session));
+                self.emit(Event::SignedIn {
+                    account: account.clone(),
+                });
+                Response::SignedIn { account }
+            }
+        }
+    }
+
+    fn submit_guard_code(&self, code: &Secret) -> Response {
+        let sender = self
+            .pending_sign_in()
+            .as_mut()
+            .and_then(|pending| pending.code.take());
+        let Some(sender) = sender else {
+            return Response::Error {
+                message: "no sign-in is waiting for a Steam Guard code".to_owned(),
+            };
+        };
+        match sender.send(reborn_cm::Secret::new(code.expose())) {
+            Ok(()) => Response::Ok,
+            Err(_) => Response::Error {
+                message: "the sign-in no longer waits for a code".to_owned(),
+            },
+        }
+    }
+
+    fn cancel_sign_in(&self) -> Response {
+        match self.pending_sign_in().take() {
+            Some(pending) => {
+                pending.cancel.notify_one();
+                Response::Ok
+            }
+            None => Response::Error {
+                message: "no sign-in is running".to_owned(),
+            },
+        }
+    }
+
+    /// Removes the stored login of the current account and drops the session.
+    async fn sign_out(&self) -> Response {
+        if self.jobs().active() > 0 {
+            return Response::Error {
+                message: "cancel the downloads first, then sign out".to_owned(),
+            };
+        }
+        let mut session = self.session.lock().await;
+        let account = match session.as_ref() {
+            Some(session) => session.account().to_owned(),
+            None => match reborn_core::account::resolve_account(None) {
+                Ok(account) => account,
+                Err(error) => return error_response(&error),
+            },
+        };
+        if let Err(error) = reborn_core::account::sign_out(&account) {
+            return error_response(&error);
+        }
+        *session = None;
+        drop(session);
+        info!(%account, "signed out");
+        self.emit(Event::SignedOut);
+        Response::Ok
     }
 
     async fn library(&self) -> Result<Vec<OwnedApp>, CoreError> {
@@ -471,6 +630,80 @@ mod tests {
             panic!("expected status");
         };
         assert_eq!((active_jobs, signed_in), (1, false));
+    }
+
+    #[tokio::test]
+    async fn sign_in_needs_account_and_password() {
+        let daemon = Daemon::new();
+        let response = daemon
+            .handle(Request::SignIn {
+                account: " ".to_owned(),
+                password: Secret::new("x"),
+            })
+            .await;
+        assert!(matches!(response, Response::Error { .. }));
+        assert!(daemon.pending_sign_in().is_none());
+    }
+
+    #[tokio::test]
+    async fn guard_code_goes_to_the_waiting_sign_in_once() {
+        let daemon = Daemon::new();
+        let (code, received) = oneshot::channel();
+        *daemon.pending_sign_in() = Some(PendingSignIn {
+            id: 1,
+            code: Some(code),
+            cancel: Arc::new(Notify::new()),
+        });
+        let submit = || Request::SubmitGuardCode {
+            code: Secret::new("AB12C"),
+        };
+        assert_eq!(daemon.handle(submit()).await, Response::Ok);
+        assert_eq!(received.await.unwrap().expose(), "AB12C");
+        assert!(matches!(
+            daemon.handle(submit()).await,
+            Response::Error { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn codes_and_cancels_without_a_sign_in_are_refused() {
+        let daemon = Daemon::new();
+        let code = Request::SubmitGuardCode {
+            code: Secret::new("AB12C"),
+        };
+        assert!(matches!(daemon.handle(code).await, Response::Error { .. }));
+        assert!(matches!(
+            daemon.handle(Request::CancelSignIn).await,
+            Response::Error { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancel_wakes_the_waiting_sign_in() {
+        let daemon = Daemon::new();
+        let cancel = Arc::new(Notify::new());
+        *daemon.pending_sign_in() = Some(PendingSignIn {
+            id: 1,
+            code: None,
+            cancel: Arc::clone(&cancel),
+        });
+        assert_eq!(daemon.handle(Request::CancelSignIn).await, Response::Ok);
+        // notify_one stores a permit, so a later wait returns at once.
+        tokio::time::timeout(Duration::from_secs(1), cancel.notified())
+            .await
+            .unwrap();
+        assert!(daemon.pending_sign_in().is_none());
+    }
+
+    #[tokio::test]
+    async fn sign_out_is_refused_while_downloads_run() {
+        // Refused before touching the keyring.
+        let daemon = Daemon::new();
+        daemon.handle(install(480)).await;
+        assert!(matches!(
+            daemon.handle(Request::SignOut).await,
+            Response::Error { .. }
+        ));
     }
 
     #[test]

@@ -18,6 +18,9 @@
 //!   ([`Session::depot_key`], [`Session::manifest_request_code`],
 //!   [`Session::content_servers`]).
 //!
+//! - answering Steam Guard from a frontend through
+//!   [`confirmation::GuardPrompt`] (ADR 0014).
+//!
 //! Not yet: QR-code login (needs upstream support in `steam-vent`).
 #![forbid(unsafe_code)]
 
@@ -26,6 +29,7 @@ mod content;
 mod guard;
 mod library;
 mod pics;
+mod prompt;
 mod secret;
 mod session;
 
@@ -37,9 +41,13 @@ pub use session::{Error, PasswordLogin, Session, login_with_password, login_with
 
 /// Ways to confirm a login with Steam Guard.
 ///
-/// These are re-exported from `steam-vent` for now; frontends combine them
-/// with [`AuthConfirmationHandler::or`](confirmation::AuthConfirmationHandler::or).
+/// The console and device handlers are re-exported from `steam-vent` for
+/// now; frontends combine them with
+/// [`AuthConfirmationHandler::or`](confirmation::AuthConfirmationHandler::or).
+/// [`GuardPrompt`](confirmation::GuardPrompt) lets a frontend answer from
+/// elsewhere, e.g. over IPC.
 pub mod confirmation {
+    pub use crate::prompt::{GuardChallenge, GuardCodeKind, GuardPrompt, GuardPromptHandle};
     pub use steam_vent::auth::{
         AuthConfirmationHandler, ConsoleAuthConfirmationHandler, DeviceConfirmationHandler,
     };

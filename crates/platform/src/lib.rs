@@ -3,6 +3,7 @@
 //! - [`secrets`]: refresh tokens and Steam Guard data in the OS credential
 //!   store (Windows Credential Manager, Secret Service on Linux).
 //! - [`settings`]: small non-secret settings such as the default account.
+//! - [`user`]: the identity of the current OS user.
 //!
 //! Planned: locating Steam installations and library folders, process
 //! launching and supervision (Windows Job Objects), Proton and Steam Linux
@@ -15,3 +16,4 @@
 
 pub mod secrets;
 pub mod settings;
+pub mod user;

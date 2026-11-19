@@ -48,9 +48,22 @@ async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
                 break;
             }
         };
-        let response = if greeted {
-            daemon.handle(frame.request).await
-        } else {
+        if greeted {
+            // Requests run concurrently, so a frontend can answer the Steam
+            // Guard prompt while its sign-in request is still pending.
+            let daemon = Arc::clone(&daemon);
+            let frames = frames.clone();
+            tokio::spawn(async move {
+                let response = daemon.handle(frame.request).await;
+                // The frontend may be gone by now; nothing to do then.
+                let _ = frames.send(ServerFrame::Response {
+                    id: frame.id,
+                    response,
+                });
+            });
+            continue;
+        }
+        let response = {
             match frame.request {
                 Request::Hello { major, client, .. } => {
                     if major == PROTOCOL_MAJOR {

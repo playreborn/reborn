@@ -3810,11 +3810,13 @@ name = "reborn-ipc"
 version = "0.1.0"
 dependencies = [
  "interprocess",
+ "reborn-platform",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "widestring",
 ]
 
 [[package]]
@@ -3825,6 +3827,7 @@ dependencies = [
  "keyring",
  "reborn-cm",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

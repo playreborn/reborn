@@ -17,5 +17,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+widestring.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+# The current user's SID for the pipe access tests.
+reborn-platform.workspace = true
+
 [lints]
 workspace = true

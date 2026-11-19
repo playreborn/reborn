@@ -18,6 +18,11 @@ pub fn resolve_account(account: Option<String>) -> Result<String, CoreError> {
     }
 }
 
+/// Whether a login (refresh token) for the account is stored on this computer.
+pub fn has_stored_login(account: &str) -> Result<bool, CoreError> {
+    Ok(secrets::load(SecretKind::RefreshToken, account)?.is_some())
+}
+
 /// Signs in with the stored refresh token of the account (or the default account).
 pub async fn sign_in(account: Option<String>) -> Result<Session, CoreError> {
     let account = resolve_account(account)?;

@@ -13,9 +13,10 @@ it is accepted; a new ADR supersedes it instead.
 | 0005 | Steam file formats as source of truth for installs | Planned |
 | 0006 | CM transport: WebSocket first | Planned |
 | [0007](0007-steam-vent-as-cm-base.md) | steam-vent as the base of `reborn-cm` | Accepted |
-| [0008](0008-ipc-format.md) | IPC between rebornd and its frontends | Accepted |
+| [0008](0008-ipc-format.md) | IPC between rebornd and its frontends | Accepted (Windows pipe access and secrets: see 0014) |
 | [0009](0009-iced-gui.md) | Iced as GUI framework | Accepted |
 | [0010](0010-credential-storage.md) | Credential storage | Accepted |
 | 0011 | Origin of protobuf definitions | Planned (M0) |
 | 0012 | Shim approach (vtables, versions, IPC) | Planned (M4) |
 | [0013](0013-own-content-engine.md) | Own content engine, steamroom and SteamKit2 as references | Accepted |
+| [0014](0014-sign-in-through-the-daemon.md) | Sign-in through the daemon | Accepted |

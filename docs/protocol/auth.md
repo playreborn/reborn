@@ -29,6 +29,15 @@ v0.5.0 unless noted.
 - **Source:** steam-vent `src/auth/mod.rs` (`submit_confirmation`),
   `src/auth/confirmation.rs`
 - **Verified:** yes (2026-11-19, live with a test account; Reborn commit after `5e8b4c6`)
+- **From a frontend (ADR 0014):** `reborn-cm`'s `GuardPrompt` reports the
+  allowed confirmations and waits for the code from the daemon; the code
+  goes through steam-vent's `UserProvidedAuthConfirmationHandler`, so the
+  request on the wire is the same as for a code typed into the CLI.
+  steam-vent races the handler against token polling
+  (`src/connection/unauthenticated.rs`, `Connection::login`), so approval in
+  the mobile app still ends the login while the code prompt is open.
+  Sign-in through the desktop app live-verified 2026-11-20 with a test account
+  (approval in the mobile app; the code path is covered by unit tests only).
 
 ### Token polling
 

@@ -7,6 +7,7 @@
 //!
 //! The first request on a connection must be [`Request::Hello`].
 
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,33 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 0;
+pub const PROTOCOL_MINOR: u16 = 1;
+
+/// A password or Steam Guard code on its way to the daemon.
+///
+/// Serialized as a plain JSON string, but `Debug` prints `<redacted>` so it
+/// cannot end up in logs. There is no `Display`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    /// Wraps a secret value.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// The raw value. Never log or print it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Secret(<redacted>)")
+    }
+}
 
 /// A request with the id its response will carry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -86,6 +113,25 @@ pub enum Request {
     Jobs,
     /// Stop the daemon (running jobs are cancelled and resume next time).
     Shutdown,
+    /// Sign in with account name and password (ADR 0014). While Steam
+    /// Guard waits, the daemon sends [`Event::SteamGuard`]; answer it with
+    /// [`Request::SubmitGuardCode`]. A new sign-in cancels a waiting one.
+    SignIn {
+        /// Steam account name (the login name, not the profile name).
+        account: String,
+        /// Password.
+        password: Secret,
+    },
+    /// The Steam Guard code for the waiting sign-in.
+    SubmitGuardCode {
+        /// The code.
+        code: Secret,
+    },
+    /// Give up the waiting sign-in.
+    CancelSignIn,
+    /// Remove the stored login of the current account from this computer.
+    /// Refused while downloads are queued or running.
+    SignOut,
 }
 
 /// Answers from the daemon.
@@ -112,6 +158,10 @@ pub enum Response {
         signed_in: bool,
         /// Jobs waiting or running.
         active_jobs: usize,
+        /// Whether a login (refresh token) is stored for `account`.
+        /// Added in protocol 1.1.
+        #[serde(default)]
+        stored_login: bool,
     },
     /// Answer to [`Request::Library`].
     Library {
@@ -134,6 +184,11 @@ pub enum Response {
     Jobs {
         /// Jobs, oldest first.
         jobs: Vec<Job>,
+    },
+    /// Answer to [`Request::SignIn`]: Steam accepted the login.
+    SignedIn {
+        /// The account.
+        account: String,
     },
     /// The request was carried out.
     Ok,
@@ -279,6 +334,32 @@ pub enum Event {
     },
     /// The daemon is shutting down.
     ShuttingDown,
+    /// The waiting sign-in needs Steam Guard.
+    SteamGuard {
+        /// The code to enter, if a code is accepted.
+        code: Option<GuardCode>,
+        /// Whether approving the login in the Steam mobile app works.
+        confirm_in_app: bool,
+        /// Steam's hint for the code, e.g. the domain of the email address.
+        hint: String,
+    },
+    /// An account signed in.
+    SignedIn {
+        /// The account.
+        account: String,
+    },
+    /// The stored login was removed.
+    SignedOut,
+}
+
+/// Which Steam Guard code is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardCode {
+    /// A code Steam sent by email.
+    Email,
+    /// A code from the Steam Guard authenticator (mobile app).
+    Authenticator,
 }
 
 #[cfg(test)]
@@ -329,6 +410,52 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Response::Ok).unwrap(),
             r#"{"type":"ok"}"#
+        );
+    }
+
+    #[test]
+    fn secrets_are_plain_strings_on_the_wire_but_hidden_in_debug() {
+        let request = Request::SignIn {
+            account: "someone".to_owned(),
+            password: Secret::new("hunter2"),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"sign_in","account":"someone","password":"hunter2"}"#
+        );
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        let printed = format!(
+            "{request:?} {:#?}",
+            Request::SubmitGuardCode {
+                code: Secret::new("AB12C")
+            }
+        );
+        assert!(
+            !printed.contains("hunter2") && !printed.contains("AB12C"),
+            "{printed}"
+        );
+    }
+
+    #[test]
+    fn status_from_a_1_0_daemon_still_parses() {
+        let json = r#"{"type":"status","daemon_version":"0.1.0","account":null,"signed_in":false,"active_jobs":0}"#;
+        let Response::Status { stored_login, .. } = serde_json::from_str(json).unwrap() else {
+            panic!("expected status");
+        };
+        assert!(!stored_login);
+    }
+
+    #[test]
+    fn steam_guard_event_json() {
+        let event = Event::SteamGuard {
+            code: Some(GuardCode::Authenticator),
+            confirm_in_app: true,
+            hint: String::new(),
+        };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"type":"steam_guard","code":"authenticator","confirm_in_app":true,"hint":""}"#
         );
     }
 

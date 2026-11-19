@@ -60,6 +60,12 @@ thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Windows only: the current user's SID for the named pipe's access list (ADR 0014).
+# Same version interprocess already uses.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+# Windows only: UTF-16 strings for the pipe's security descriptor (ADR 0014).
+# Same version interprocess already uses.
+widestring = "1"
 
 [workspace.lints.rust]
 missing_docs = "warn"

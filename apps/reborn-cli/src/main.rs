@@ -576,13 +576,14 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             account,
             signed_in,
             active_jobs,
+            stored_login,
         } => println!(
             "rebornd {daemon_version}: account {}, {}, {active_jobs} active jobs",
             account.as_deref().unwrap_or("(none)"),
-            if signed_in {
-                "signed in"
-            } else {
-                "not signed in yet"
+            match (signed_in, stored_login) {
+                (true, _) => "signed in",
+                (false, true) => "not signed in yet (login stored)",
+                (false, false) => "no stored login",
             }
         ),
         Response::Library { mut apps } => {

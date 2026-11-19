@@ -197,10 +197,46 @@ pub(crate) fn package_app_ids(buffer: &[u8]) -> Result<Vec<u32>, PicsError> {
         .unwrap_or_default())
 }
 
+/// A PICS app info buffer as KeyValues (root key `appinfo`).
+pub(crate) fn parse_app_document(buffer: &[u8]) -> Result<vdf::Object, PicsError> {
+    let text = std::str::from_utf8(buffer).map_err(|_| PicsError::NotUtf8)?;
+    Ok(vdf::parse(text.trim_end_matches('\0'))?)
+}
+
+/// The full app info document of one app, using its access token if any.
+pub(crate) async fn app_document(
+    connection: &Connection,
+    app_id: u32,
+) -> Result<vdf::Object, Error> {
+    let tokens = app_access_tokens(connection, &[app_id]).await?;
+    let request = CMsgClientPICSProductInfoRequest {
+        apps: vec![request::AppInfo {
+            appid: Some(app_id),
+            access_token: tokens.get(&app_id).copied(),
+            ..request::AppInfo::default()
+        }],
+        meta_data_only: Some(false),
+        ..CMsgClientPICSProductInfoRequest::default()
+    };
+    for response in product_info(connection, request).await? {
+        for app in response.apps {
+            if app.appid != Some(app_id) {
+                continue;
+            }
+            let Some(buffer) = app.buffer.filter(|buffer| !buffer.is_empty()) else {
+                // Steam may offer large app infos only over HTTP (http_host).
+                return Err(Error::AppInfoUnavailable(app_id));
+            };
+            return parse_app_document(&buffer)
+                .map_err(|error| Error::AppInfo(app_id, error.to_string()));
+        }
+    }
+    Err(Error::AppInfoUnavailable(app_id))
+}
+
 /// Name and type from a PICS app info buffer.
 pub(crate) fn parse_app_info(buffer: &[u8]) -> Result<AppInfo, PicsError> {
-    let text = std::str::from_utf8(buffer).map_err(|_| PicsError::NotUtf8)?;
-    let document = vdf::parse(text.trim_end_matches('\0'))?;
+    let document = parse_app_document(buffer)?;
     let common = document
         .get_object("appinfo")
         .and_then(|info| info.get_object("common"));

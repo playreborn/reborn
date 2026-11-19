@@ -12,6 +12,7 @@ license = "GPL-3.0-or-later"
 anyhow.workspace = true
 clap.workspace = true
 reborn-cm.workspace = true
+reborn-content.workspace = true
 reborn-platform.workspace = true
 rpassword.workspace = true
 tokio.workspace = true

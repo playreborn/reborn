@@ -15,6 +15,7 @@ repository = "https://github.com/playreborn/reborn"
 # does not treat it as a wildcard dependency, e.g.:
 # reborn-proto = { path = "crates/proto", version = "0.1.0" }
 reborn-cm = { path = "crates/cm", version = "0.1.0" }
+reborn-content = { path = "crates/content", version = "0.1.0" }
 reborn-formats = { path = "crates/formats", version = "0.1.0" }
 reborn-platform = { path = "crates/platform", version = "0.1.0" }
 
@@ -27,6 +28,8 @@ base64 = "0.22"
 cbc = { version = "0.1", features = ["alloc"] }
 ecb = { version = "0.1", features = ["alloc"] }
 lzma-rs = "0.3"
+# HTTP for content servers; same major version as steam-vent uses.
+reqwest = "0.13"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 zstd = "0.14"
 clap = { version = "4", features = ["derive"] }

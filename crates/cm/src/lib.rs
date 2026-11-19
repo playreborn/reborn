@@ -12,17 +12,25 @@
 //!   ([`login_with_password`]),
 //! - login with a stored refresh token ([`login_with_token`]),
 //! - listing the owned apps from the account's licenses via PICS
-//!   ([`Session::owned_apps`]).
+//!   ([`Session::owned_apps`]),
+//! - app details with depots ([`Session::app_details`]),
+//! - depot keys, manifest request codes and content servers
+//!   ([`Session::depot_key`], [`Session::manifest_request_code`],
+//!   [`Session::content_servers`]).
 //!
 //! Not yet: QR-code login (needs upstream support in `steam-vent`).
 #![forbid(unsafe_code)]
 
+mod apps;
+mod content;
 mod guard;
 mod library;
 mod pics;
 mod secret;
 mod session;
 
+pub use apps::{AppDetails, DepotInfo, PUBLIC_BRANCH, Platform};
+pub use content::{ContentServer, DepotDecryptionKey};
 pub use library::OwnedApp;
 pub use secret::Secret;
 pub use session::{Error, PasswordLogin, Session, login_with_password, login_with_token};

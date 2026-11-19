@@ -50,6 +50,24 @@ pub enum Error {
     /// Steam did not send the account's license list after logon.
     #[error("Steam did not send the license list in time")]
     LicenseListTimeout,
+    /// Steam sent no app info for this app (unknown app, no access, or only
+    /// offered over HTTP, which is not supported yet).
+    #[error("no app info available for app {0}")]
+    AppInfoUnavailable(u32),
+    /// The app info could not be read.
+    #[error("app info of app {0} is malformed: {1}")]
+    AppInfo(u32, String),
+    /// Steam refused a request, with the EResult code it returned.
+    #[error("Steam refused the {what} request (EResult {code})")]
+    Refused {
+        /// Which request.
+        what: &'static str,
+        /// The EResult code.
+        code: i32,
+    },
+    /// A response lacks a field that is required.
+    #[error("Steam's {0} response is missing data")]
+    IncompleteResponse(&'static str),
 }
 
 /// An authenticated connection to Steam.

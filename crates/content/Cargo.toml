@@ -15,6 +15,7 @@ base64.workspace = true
 cbc.workspace = true
 ecb.workspace = true
 lzma-rs.workspace = true
+reqwest.workspace = true
 steam-vent-proto-common.workspace = true
 steam-vent-proto-steam.workspace = true
 thiserror.workspace = true

@@ -29,7 +29,8 @@ use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use futures_util::{StreamExt, stream};
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use sha1::{Digest, Sha1};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing::{debug, warn};
@@ -463,13 +464,24 @@ async fn build<'a>(
     reused_files: &mut BTreeSet<&'a Path>,
     on_progress: &mut impl FnMut(Progress),
 ) -> Result<(), InstallError> {
-    let mut results = stream::iter(tasks)
-        .map(|task| async move {
-            let origin = obtain_chunk(depots, plan, target, source, options, task).await?;
-            Ok::<_, InstallError>((task, origin))
-        })
-        .buffer_unordered(options.concurrency.max(1));
-    while let Some(result) = results.next().await {
+    // An explicit FuturesUnordered of a named async fn instead of
+    // `stream::iter(..).map(|t| async move ..).buffer_unordered(..)`: the
+    // closure form trips rustc's higher-ranked `Send` inference (rust-lang
+    // issue 64552), which makes the whole install future unusable in
+    // `tokio::spawn` (the daemon runs installs in a task).
+    let concurrency = options.concurrency.max(1);
+    let mut pending_tasks = tasks.into_iter();
+    let mut in_flight = FuturesUnordered::new();
+    loop {
+        while in_flight.len() < concurrency {
+            let Some(task) = pending_tasks.next() else {
+                break;
+            };
+            in_flight.push(obtain_task(depots, plan, target, source, options, task));
+        }
+        let Some(result) = in_flight.next().await else {
+            break;
+        };
         let (task, origin) = result?;
         let staged = target.staging_dir.join(task.path);
         match origin {
@@ -493,6 +505,19 @@ async fn build<'a>(
         on_progress(*progress);
     }
     Ok(())
+}
+
+/// [`obtain_chunk`] paired with its task.
+async fn obtain_task<'a>(
+    depots: &[DepotDownload],
+    plan: &Plan<'_>,
+    target: &InstallTarget,
+    source: &impl ChunkSource,
+    options: InstallOptions,
+    task: ChunkTask<'a>,
+) -> Result<(ChunkTask<'a>, Origin), InstallError> {
+    let origin = obtain_chunk(depots, plan, target, source, options, task).await?;
+    Ok((task, origin))
 }
 
 /// Finds the chunk locally or downloads it.

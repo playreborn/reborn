@@ -1,10 +1,19 @@
-//! API types shared between `rebornd` and its frontends.
+//! The local API between `rebornd` and its frontends (ADR 0008).
 //!
-//! Planned: versioned request/response messages and an event stream
-//! (download progress, friend status, game status) over a local socket
-//! (named pipe on Windows, Unix socket on Linux). Community frontends build
-//! on this crate, so its public API only changes through an ADR.
+//! - [`protocol`]: requests, responses and events, serialized as JSON.
+//! - [`frame`]: one JSON object per line on the wire.
+//! - [`socket`]: where the daemon listens (per-user named pipe or Unix socket).
+//! - [`Client`]: connects, says hello, sends requests and receives events.
 //!
-//! **Status:** skeleton, nothing implemented yet (milestone M2, see
-//! `docs/plan.md` section 6.2).
+//! Community frontends can use this crate, or speak the same JSON directly:
+//! connect to the socket, send `{"id":1,"request":{"type":"hello",...}}`
+//! and read one JSON object per line.
 #![forbid(unsafe_code)]
+
+mod client;
+pub mod frame;
+pub mod protocol;
+pub mod socket;
+
+pub use client::{Client, ClientError};
+pub use protocol::{Event, PROTOCOL_MAJOR, PROTOCOL_MINOR, Request, Response};

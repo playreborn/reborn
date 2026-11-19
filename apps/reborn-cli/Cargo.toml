@@ -14,6 +14,7 @@ clap.workspace = true
 reborn-cm.workspace = true
 reborn-content.workspace = true
 reborn-core.workspace = true
+reborn-ipc.workspace = true
 rpassword.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true

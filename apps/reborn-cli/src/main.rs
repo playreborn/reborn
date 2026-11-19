@@ -114,6 +114,9 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Talk to a running `rebornd` instead of doing the work here.
+    #[command(subcommand)]
+    Daemon(DaemonCommand),
     /// Remove the stored login of an account from this computer.
     Logout {
         /// Account to sign out (defaults to the last account that signed in).
@@ -153,6 +156,7 @@ async fn main() -> Result<()> {
             branch,
             account,
         } => install(account, app_id, library, branch, true).await,
+        Command::Daemon(command) => daemon(command).await,
         Command::Logout { account } => logout(account),
     }
 }
@@ -482,6 +486,198 @@ fn print_event(event: InstallEvent) {
         }
         _ => {}
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommand {
+    /// Version, account and active jobs of the daemon.
+    Status,
+    /// Apps owned by the daemon's account.
+    Library,
+    /// Apps installed in a library folder.
+    Installed {
+        /// Library folder (defaults to Reborn's own library).
+        #[arg(long)]
+        library: Option<PathBuf>,
+    },
+    /// Queue an install, update or verification and follow its progress.
+    Install {
+        /// App ID.
+        app_id: u32,
+        /// Library folder (defaults to Reborn's own library).
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Branch (defaults to `public`).
+        #[arg(long)]
+        branch: Option<String>,
+        /// Verify and repair instead of a normal install/update.
+        #[arg(long)]
+        verify: bool,
+        /// Only queue the job, do not follow its progress.
+        #[arg(long)]
+        detach: bool,
+    },
+    /// List the daemon's jobs.
+    Jobs,
+    /// Cancel a queued or running job (a cancelled download resumes later).
+    Cancel {
+        /// Job ID.
+        job_id: u64,
+    },
+    /// Print events from the daemon until Ctrl+C.
+    Watch,
+    /// Stop the daemon.
+    Shutdown,
+}
+
+async fn daemon(command: DaemonCommand) -> Result<()> {
+    use reborn_ipc::protocol::{Event, JobResult, JobState};
+    use reborn_ipc::{Client, Request, Response};
+
+    let client = Client::connect(concat!("reborn-cli ", env!("CARGO_PKG_VERSION"))).await?;
+    let request = match &command {
+        DaemonCommand::Status => Request::Status,
+        DaemonCommand::Library => Request::Library,
+        DaemonCommand::Installed { library } => Request::Installed {
+            library: library.clone(),
+        },
+        DaemonCommand::Install {
+            app_id,
+            library,
+            branch,
+            verify,
+            ..
+        } => Request::Install {
+            app_id: *app_id,
+            library: library.clone(),
+            branch: branch.clone(),
+            verify: *verify,
+        },
+        DaemonCommand::Jobs => Request::Jobs,
+        DaemonCommand::Cancel { job_id } => Request::Cancel { job_id: *job_id },
+        DaemonCommand::Watch => {
+            eprintln!(
+                "Connected to rebornd {}. Waiting for events (Ctrl+C to stop).",
+                client.daemon_version()
+            );
+            while let Some(event) = client.next_event().await {
+                println!("{event:?}");
+            }
+            return Ok(());
+        }
+        DaemonCommand::Shutdown => Request::Shutdown,
+    };
+
+    let response = client.request(request).await?;
+    match response {
+        Response::Error { message } => bail!("rebornd: {message}"),
+        Response::Status {
+            daemon_version,
+            account,
+            signed_in,
+            active_jobs,
+        } => println!(
+            "rebornd {daemon_version}: account {}, {}, {active_jobs} active jobs",
+            account.as_deref().unwrap_or("(none)"),
+            if signed_in {
+                "signed in"
+            } else {
+                "not signed in yet"
+            }
+        ),
+        Response::Library { mut apps } => {
+            apps.sort_by_cached_key(|app| app.name.to_lowercase());
+            for app in &apps {
+                println!("{:>8}  {:<11}  {}", app.app_id, app.app_type, app.name);
+            }
+            println!("{} apps", apps.len());
+        }
+        Response::Installed { library, apps } => {
+            println!("Library {}", library.display());
+            for app in &apps {
+                println!(
+                    "{:>8}  build {:<10}  {:>10}  {}{}",
+                    app.app_id,
+                    app.build_id.map(|b| b.to_string()).unwrap_or_default(),
+                    app.size_on_disk.map(human_size).unwrap_or_default(),
+                    app.name.as_deref().unwrap_or(&app.install_dir),
+                    if app.fully_installed {
+                        ""
+                    } else {
+                        " (incomplete)"
+                    }
+                );
+            }
+            println!("{} installed", apps.len());
+        }
+        Response::Jobs { jobs } => {
+            for job in &jobs {
+                let state = match &job.state {
+                    JobState::Queued => "queued".to_owned(),
+                    JobState::Running {
+                        bytes_done,
+                        bytes_total,
+                    } => format!(
+                        "running {} / {}",
+                        human_size(*bytes_done),
+                        human_size(*bytes_total)
+                    ),
+                    JobState::Finished { result } => format!("finished: {result:?}"),
+                };
+                println!(
+                    "job {:>3}  app {:>8}  {:?}  {}  {state}",
+                    job.job_id,
+                    job.app_id,
+                    job.kind,
+                    job.name.as_deref().unwrap_or("")
+                );
+            }
+            if jobs.is_empty() {
+                println!("no jobs");
+            }
+        }
+        Response::JobQueued { job_id } => {
+            println!("Queued job {job_id}.");
+            let follow = matches!(command, DaemonCommand::Install { detach: false, .. });
+            if !follow {
+                return Ok(());
+            }
+            while let Some(event) = client.next_event().await {
+                match event {
+                    Event::JobStarted {
+                        job_id: id, name, ..
+                    } if id == job_id => {
+                        eprintln!("Started: {name}");
+                    }
+                    Event::JobProgress {
+                        job_id: id,
+                        bytes_done,
+                        bytes_total,
+                    } if id == job_id => eprint!(
+                        "\r  {} / {}   ",
+                        human_size(bytes_done),
+                        human_size(bytes_total)
+                    ),
+                    Event::JobFinished { job_id: id, result } if id == job_id => {
+                        eprintln!();
+                        match result {
+                            JobResult::Failed { message } => {
+                                bail!("job {job_id} failed: {message}")
+                            }
+                            other => println!("Job {job_id} finished: {other:?}"),
+                        }
+                        return Ok(());
+                    }
+                    Event::ShuttingDown => bail!("rebornd is shutting down"),
+                    _ => {}
+                }
+            }
+            bail!("connection to rebornd closed");
+        }
+        Response::Ok => println!("ok"),
+        other => println!("{other:?}"),
+    }
+    Ok(())
 }
 
 fn logout(account: Option<String>) -> Result<()> {

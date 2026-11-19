@@ -37,6 +37,11 @@ requests, responses and pushed events (download progress, job finished).
 
 ## Consequences
 
-- No network port; only the local user can connect.
+- Known gap (2026-11-19): on Windows the named pipe uses the default
+  security descriptor, which lets other local users open it for reading.
+  A descriptor limited to the current user is a follow-up. No secrets
+  travel over IPC.
+- No network port. On Linux only the local user can connect (socket file
+  with mode 0600); on Windows see the gap above.
 - Message types are the daemon's public API: changes go through an ADR,
   additions bump the minor protocol version.

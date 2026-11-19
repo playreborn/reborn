@@ -10,6 +10,11 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+interprocess.workspace = true
+reborn-cm.workspace = true
+reborn-core.workspace = true
+reborn-ipc.workspace = true
+reborn-platform.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

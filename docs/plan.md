@@ -510,7 +510,7 @@ Grundsatz: **das Riskanteste zuerst.** Jeder Meilenstein endet mit etwas, das ma
 Etappen (Stand 2026-11-19):
 
 1. **`reborn-core`** (erledigt): Anmelden, Bibliothek, Installieren/Aktualisieren/Prüfen als gemeinsame Logik für CLI, Daemon und GUI; Fortschritt über Ereignisse statt Konsolenausgabe.
-2. **`rebornd` + `reborn-ipc`**: lokale Schnittstelle (ADR 0008), Download-Warteschlange, Fortschrittsereignisse.
+2. **`rebornd` + `reborn-ipc`** (erledigt, live geprüft 2026-11-19): lokale Schnittstelle (ADR 0008), Download-Warteschlange, Abbrechen, Fortschrittsereignisse; `reborn-cli daemon …` als erste Nutzerin. Offen: Named Pipe unter Windows auf den eigenen Benutzer beschränken.
 3. **GUI `reborn`** mit Iced 0.14 (ADR 0009): Login, Bibliothek, Details, Downloads, Einstellungen.
 4. **Spiele starten**, Linux mit Proton; Kompatibilitätsdatenbank → Release 0.1.
 

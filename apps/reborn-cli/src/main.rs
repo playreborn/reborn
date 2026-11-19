@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, Subcommand};
@@ -15,8 +16,10 @@ use reborn_cm::{PUBLIC_BRANCH, Platform, Secret, Session};
 use reborn_content::DepotKey;
 use reborn_content::cdn::{CdnClient, CdnHost};
 use reborn_content::chunk::process_chunk;
+use reborn_content::install::{CdnSource, DepotDownload, InstallOptions, InstallTarget};
 use reborn_content::manifest::DepotManifest;
 use reborn_content::path::install_path;
+use reborn_formats::{InstalledDepot, NewAppManifest};
 use reborn_platform::secrets::{self, SecretKind};
 use reborn_platform::settings;
 use tracing_subscriber::EnvFilter;
@@ -79,6 +82,24 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Download and install an app.
+    ///
+    /// Installs into Reborn's own library unless `--library` is given. The
+    /// result has the Steam library layout (`steamapps/common/<folder>` and
+    /// `steamapps/appmanifest_<app>.acf`).
+    Install {
+        /// App ID, e.g. 480 for Spacewar.
+        app_id: u32,
+        /// Library folder (the folder that contains `steamapps`).
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Branch to install.
+        #[arg(long, default_value = PUBLIC_BRANCH)]
+        branch: String,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Remove the stored login of an account from this computer.
     Logout {
         /// Account to sign out (defaults to the last account that signed in).
@@ -106,6 +127,12 @@ async fn main() -> Result<()> {
             branch,
             account,
         } => manifest(account, app_id, depot_id, &branch).await,
+        Command::Install {
+            app_id,
+            library,
+            branch,
+            account,
+        } => install(account, app_id, library, &branch).await,
         Command::Logout { account } => logout(account),
     }
 }
@@ -265,53 +292,28 @@ async fn manifest(
         "Depot {}, manifest {manifest_id}: asking Steam for the key and content servers",
         depot.depot_id
     );
-    let key = session.depot_key(app_id, depot.depot_id).await?;
-    let key = DepotKey::from_slice(key.as_bytes())
-        .ok_or_else(|| anyhow!("Steam sent a depot key of unexpected length"))?;
-    let servers: Vec<CdnHost> = session
-        .content_servers()
-        .await?
-        .into_iter()
-        .filter(|server| server.serves_app(app_id))
-        .map(|server| CdnHost {
-            host: server.host,
-            https: server.https,
-        })
-        .collect();
-    if servers.is_empty() {
-        bail!("Steam returned no usable content servers");
-    }
-
+    let servers = cdn_hosts(&session, app_id).await?;
     let cdn = CdnClient::new()?;
-    let mut downloaded = None;
-    for server in servers.iter().take(5) {
-        // Request codes are short-lived, so fetch a fresh one per attempt.
-        let code = session
-            .manifest_request_code(app_id, depot.depot_id, manifest_id, branch)
-            .await?;
-        match cdn
-            .manifest(server, depot.depot_id, manifest_id, code)
-            .await
-        {
-            Ok(bytes) => {
-                downloaded = Some((server, bytes));
-                break;
-            }
-            Err(error) => eprintln!("  {error}, trying the next server"),
-        }
-    }
-    let (server, raw) =
-        downloaded.ok_or_else(|| anyhow!("no content server delivered the manifest"))?;
+    let FetchedDepot {
+        key,
+        manifest,
+        server,
+        was_encrypted,
+    } = fetch_depot(
+        &session,
+        &cdn,
+        &servers,
+        app_id,
+        depot.depot_id,
+        manifest_id,
+        branch,
+    )
+    .await?;
     eprintln!(
-        "Manifest downloaded from {} ({}, {})",
+        "Manifest downloaded from {} ({})",
         server.host,
         if server.https { "HTTPS" } else { "HTTP" },
-        human_size(raw.len() as u64)
     );
-
-    let mut manifest = DepotManifest::parse(&raw)?;
-    let was_encrypted = manifest.filenames_encrypted;
-    manifest.decrypt_filenames(&key)?;
     let chunk_count: usize = manifest.files.iter().map(|file| file.chunks.len()).sum();
     let unsafe_names = manifest
         .files
@@ -347,7 +349,7 @@ async fn manifest(
         .iter()
         .find_map(|file| file.chunks.first().map(|chunk| (file, chunk)))
     {
-        let encrypted = cdn.chunk(server, depot.depot_id, &chunk.id).await?;
+        let encrypted = cdn.chunk(&server, depot.depot_id, &chunk.id).await?;
         let data = process_chunk(&encrypted, &key, chunk.expectation())?;
         println!(
             "First chunk of `{}`: {} downloaded, {} after decryption and decompression, checksum ok",
@@ -357,6 +359,246 @@ async fn manifest(
         );
     }
     Ok(())
+}
+
+async fn install(
+    account: Option<String>,
+    app_id: u32,
+    library: Option<PathBuf>,
+    branch: &str,
+) -> Result<()> {
+    let session = session(account).await?;
+    let app = session.app_details(app_id, branch).await?;
+    let name = app.name.clone().unwrap_or_else(|| format!("App {app_id}"));
+    let install_dir_name = app
+        .install_dir
+        .clone()
+        .ok_or_else(|| anyhow!("app {app_id} has no install folder in its app info"))?;
+    // The folder name comes from Steam: treat it like any other untrusted name.
+    let install_dir_relative = install_path(&install_dir_name)?;
+    if install_dir_relative.components().count() != 1 {
+        bail!("unexpected install folder `{install_dir_name}`");
+    }
+
+    let platform = Platform::current();
+    let depots: Vec<_> = app.depots_for(&platform).collect();
+    if depots.is_empty() {
+        bail!(
+            "{name} has no depots for {} {}-bit on branch `{branch}`",
+            platform.os,
+            platform.arch
+        );
+    }
+
+    let library = match library {
+        Some(path) => path,
+        None => settings::default_library()?,
+    };
+    // Secondary Steam libraries contain `libraryfolder.vdf`, the main one
+    // `steamapps/libraryfolders.vdf`.
+    let is_steam_library = [
+        library.join("libraryfolder.vdf"),
+        library.join("steamapps").join("libraryfolder.vdf"),
+        library.join("steamapps").join("libraryfolders.vdf"),
+    ]
+    .iter()
+    .any(|marker| marker.exists());
+    if is_steam_library {
+        eprintln!(
+            "Note: {} is a Steam library. The Steam client must be closed while Reborn writes to it.",
+            library.display()
+        );
+    }
+    let steamapps = library.join("steamapps");
+    let target = InstallTarget {
+        install_dir: steamapps.join("common").join(&install_dir_relative),
+        staging_dir: steamapps.join("downloading").join(app_id.to_string()),
+    };
+
+    eprintln!(
+        "Installing {name} (app {app_id}, build {}) into {}",
+        app.build_id
+            .map_or_else(|| "?".to_owned(), |build| build.to_string()),
+        target.install_dir.display()
+    );
+    let servers = cdn_hosts(&session, app_id).await?;
+    let cdn = CdnClient::new()?;
+
+    let mut downloads = Vec::new();
+    let mut installed_depots = Vec::new();
+    for depot in depots {
+        let Some(manifest_id) = depot.manifest_id else {
+            continue;
+        };
+        let fetched = fetch_depot(
+            &session,
+            &cdn,
+            &servers,
+            app_id,
+            depot.depot_id,
+            manifest_id,
+            branch,
+        )
+        .await
+        .with_context(|| format!("depot {}", depot.depot_id))?;
+        eprintln!(
+            "  depot {}: {} files, {}",
+            depot.depot_id,
+            fetched.manifest.files.len(),
+            human_size(fetched.manifest.content_size())
+        );
+        installed_depots.push(InstalledDepot {
+            depot_id: depot.depot_id,
+            manifest_id,
+            size: fetched.manifest.content_size(),
+        });
+        downloads.push(DepotDownload {
+            depot_id: depot.depot_id,
+            key: fetched.key,
+            manifest: fetched.manifest,
+        });
+    }
+
+    let source = CdnSource {
+        cdn: &cdn,
+        servers: &servers,
+    };
+    let started = std::time::Instant::now();
+    let report = reborn_content::install::install(
+        &downloads,
+        &target,
+        &source,
+        InstallOptions::default(),
+        |progress| {
+            let percent = if progress.bytes_total == 0 {
+                100.0
+            } else {
+                progress.bytes_done as f64 * 100.0 / progress.bytes_total as f64
+            };
+            eprint!(
+                "\r  {percent:5.1} %  {} / {}  ({} of {} chunks)   ",
+                human_size(progress.bytes_done),
+                human_size(progress.bytes_total),
+                progress.chunks_done,
+                progress.chunks_total
+            );
+        },
+    )
+    .await?;
+    eprintln!();
+
+    let manifest = NewAppManifest {
+        app_id,
+        name: name.clone(),
+        install_dir: install_dir_name,
+        build_id: app.build_id.map(u64::from).unwrap_or(0),
+        last_owner: session.steam_id(),
+        size_on_disk: installed_depots.iter().map(|depot| depot.size).sum(),
+        download_size: report.bytes_downloaded,
+        last_updated: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_secs())
+            .unwrap_or(0),
+        installed_depots,
+    };
+    let acf_path = steamapps.join(format!("appmanifest_{app_id}.acf"));
+    let temporary = steamapps.join(format!("appmanifest_{app_id}.acf.tmp"));
+    std::fs::write(&temporary, manifest.to_text())
+        .with_context(|| format!("writing {}", temporary.display()))?;
+    std::fs::rename(&temporary, &acf_path)
+        .with_context(|| format!("writing {}", acf_path.display()))?;
+
+    println!(
+        "Installed {name}: {} files, {} written, {} downloaded in {:.1} s",
+        report.files,
+        human_size(report.bytes_written),
+        human_size(report.bytes_downloaded),
+        started.elapsed().as_secs_f64()
+    );
+    if report.symlinks_skipped > 0 {
+        println!(
+            "  {} symlinks were skipped (not supported here)",
+            report.symlinks_skipped
+        );
+    }
+    println!("  Game folder: {}", target.install_dir.display());
+    println!("  Steam manifest: {}", acf_path.display());
+    Ok(())
+}
+
+/// Content servers that may serve the app, best first.
+async fn cdn_hosts(session: &Session, app_id: u32) -> Result<Vec<CdnHost>> {
+    let servers: Vec<CdnHost> = session
+        .content_servers()
+        .await?
+        .into_iter()
+        .filter(|server| server.serves_app(app_id))
+        .map(|server| CdnHost {
+            host: server.host,
+            https: server.https,
+        })
+        .collect();
+    if servers.is_empty() {
+        bail!("Steam returned no usable content servers");
+    }
+    Ok(servers)
+}
+
+/// A depot's key and its manifest with decrypted names.
+struct FetchedDepot {
+    key: DepotKey,
+    manifest: DepotManifest,
+    /// The server that delivered the manifest.
+    server: CdnHost,
+    /// Whether the names were encrypted on the CDN.
+    was_encrypted: bool,
+}
+
+async fn fetch_depot(
+    session: &Session,
+    cdn: &CdnClient,
+    servers: &[CdnHost],
+    app_id: u32,
+    depot_id: u32,
+    manifest_id: u64,
+    branch: &str,
+) -> Result<FetchedDepot> {
+    let key = session.depot_key(app_id, depot_id).await?;
+    let key = DepotKey::from_slice(key.as_bytes())
+        .ok_or_else(|| anyhow!("Steam sent a depot key of unexpected length"))?;
+
+    let mut downloaded = None;
+    for server in servers.iter().take(5) {
+        // Request codes are short-lived, so fetch a fresh one per attempt.
+        let code = session
+            .manifest_request_code(app_id, depot_id, manifest_id, branch)
+            .await?;
+        match cdn.manifest(server, depot_id, manifest_id, code).await {
+            Ok(bytes) => {
+                downloaded = Some((server.clone(), bytes));
+                break;
+            }
+            Err(error) => eprintln!("  {error}, trying the next server"),
+        }
+    }
+    let (server, raw) =
+        downloaded.ok_or_else(|| anyhow!("no content server delivered the manifest"))?;
+    tracing::info!(
+        host = %server.host,
+        https = server.https,
+        bytes = raw.len(),
+        "manifest downloaded"
+    );
+
+    let mut manifest = DepotManifest::parse(&raw)?;
+    let was_encrypted = manifest.filenames_encrypted;
+    manifest.decrypt_filenames(&key)?;
+    Ok(FetchedDepot {
+        key,
+        manifest,
+        server,
+        was_encrypted,
+    })
 }
 
 fn human_size(bytes: u64) -> String {

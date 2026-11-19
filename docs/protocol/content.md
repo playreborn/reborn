@@ -69,3 +69,22 @@ See ADR 0013.
 - **Verified:** yes (2026-11-19, live: first chunk of depot 481 downloaded,
   decrypted, decompressed and checksum-verified; all three containers
   offline with synthetic data)
+
+### Install and appmanifest
+
+- **What:** Chunks are downloaded in parallel (8 at a time, 5 attempts on
+  rotating servers) into `steamapps/downloading/<app>`, every file with a
+  SHA-1 in the manifest is hashed, then files are moved to
+  `steamapps/common/<installdir>`. `appmanifest_<app>.acf` is written last
+  (temporary file + rename) with the official client's key order and values
+  (`StateFlags` 4, `Universe` 1, `DownloadType` 1, `UpdateResult` 0,
+  `InstalledDepots/<depot>/{manifest,size}`).
+- **Source:** key order and values compared with 18 appmanifests written by
+  the official client (2026-11-19, keys and non-personal values only);
+  staging folder name as used by the official client (`downloading`).
+- **Not yet:** install scripts (`installscript.vdf`, e.g. redistributables),
+  `LauncherPath`, updates of existing installs (stage 4).
+- **Verified:** yes (2026-11-19, live: Spacewar installed by Reborn into the
+  official client's library while it was closed; the client then listed it as
+  installed without downloading it again and "verify integrity of game files"
+  reported all files as valid). Offline: 7 install tests.

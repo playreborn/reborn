@@ -493,6 +493,8 @@ Grundsatz: **das Riskanteste zuerst.** Jeder Meilenstein endet mit etwas, das ma
 
 **Fertig, wenn:** `reborn-cli install <appid>` ein Spiel installiert, das der Original-Client als vollständig installiert erkennt und dessen „Dateien überprüfen“ keine Fehler findet.
 
+> Stand 2026-11-19: erfüllt für Spacewar (App 480). Offen für M1: Updates per Manifest-Diff, Fortsetzen, Prüfen bestehender Installationen (Etappe 4).
+
 > Ab hier ist das Projekt öffentlich vorzeigbar. Das ist der richtige Moment, um Mitwirkende zu gewinnen.
 
 ### M2 – Daemon und GUI → Release 0.1

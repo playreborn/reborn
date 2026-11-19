@@ -31,6 +31,21 @@ pub fn config_dir() -> Result<PathBuf, SettingsError> {
         .ok_or(SettingsError::NoConfigDir)
 }
 
+/// The directory for Reborn's local data (`%LOCALAPPDATA%\Reborn\data` on
+/// Windows, `$XDG_DATA_HOME/reborn` on Linux).
+pub fn data_dir() -> Result<PathBuf, SettingsError> {
+    ProjectDirs::from("", "", "Reborn")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+        .ok_or(SettingsError::NoConfigDir)
+}
+
+/// Reborn's own game library, used when no library folder is given. It has
+/// the same layout as a Steam library (`steamapps/common`, `appmanifest_*.acf`)
+/// but is separate from the official client's libraries.
+pub fn default_library() -> Result<PathBuf, SettingsError> {
+    Ok(data_dir()?.join("library"))
+}
+
 /// The account used when no `--account` is given, if set.
 pub fn default_account() -> Result<Option<String>, SettingsError> {
     let path = config_dir()?.join(DEFAULT_ACCOUNT_FILE);

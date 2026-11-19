@@ -41,12 +41,14 @@ futures-util = "0.3"
 keyring = "4"
 # Password prompt without echo.
 rpassword = "7"
+# File checksums in depot manifests.
+sha1 = "0.10"
 # Steam CM protocol client and its generated protobufs. See ADR 0007.
 steam-vent = "0.5"
 steam-vent-proto-common = "0.5"
 steam-vent-proto-steam = "0.5"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

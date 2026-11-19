@@ -2135,9 +2135,11 @@ dependencies = [
  "clap",
  "reborn-cm",
  "reborn-content",
+ "reborn-formats",
  "reborn-platform",
  "rpassword",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -2162,11 +2164,15 @@ dependencies = [
  "base64 0.22.1",
  "cbc 0.1.2",
  "ecb",
+ "futures-util",
  "lzma-rs",
  "reqwest",
+ "sha1",
  "steam-vent-proto-common",
  "steam-vent-proto-steam",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "zip",
  "zstd",
 ]

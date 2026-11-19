@@ -12,13 +12,17 @@ publish = true
 [dependencies]
 aes.workspace = true
 base64.workspace = true
+futures-util.workspace = true
 cbc.workspace = true
 ecb.workspace = true
 lzma-rs.workspace = true
 reqwest.workspace = true
+sha1.workspace = true
 steam-vent-proto-common.workspace = true
 steam-vent-proto-steam.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 zip.workspace = true
 zstd.workspace = true
 

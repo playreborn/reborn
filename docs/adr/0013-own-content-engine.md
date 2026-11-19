@@ -36,9 +36,9 @@ zero-seeded Adler-32 before it is written.
 
 1. **Offline core** (done): depot key type, AES, chunk containers,
    checksum, manifest parser with encrypted names, safe install paths.
-2. **Steam side**: depot list from PICS app info, depot decryption key,
+2. **Steam side** (done): depot list from PICS app info, depot decryption key,
    manifest request code, CDN server list, manifest and chunk download.
-3. **Install**: parallel chunk download into a staging directory, file
+3. **Install** (done, accepted by the official client): parallel chunk download into a staging directory, file
    assembly, SHA-1 check per file, commit, `appmanifest_*.acf`;
    `reborn-cli install <appid>`. First live target: Spacewar (app 480,
    small and in every account's base package).

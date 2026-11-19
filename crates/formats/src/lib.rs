@@ -29,7 +29,7 @@ mod fields;
 pub mod library_folders;
 pub mod vdf;
 
-pub use app_manifest::AppManifest;
+pub use app_manifest::{AppManifest, InstalledDepot, NewAppManifest};
 pub use library_folders::{LibraryApp, LibraryFolder, LibraryFolders};
 
 /// Error returned by the typed readers ([`AppManifest`], [`LibraryFolders`]).

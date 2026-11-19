@@ -66,3 +66,167 @@ impl AppManifest {
         self.state_flags & Self::STATE_FULLY_INSTALLED != 0
     }
 }
+
+/// One installed depot, as listed under `InstalledDepots`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledDepot {
+    /// Depot ID.
+    pub depot_id: u32,
+    /// Installed manifest ID.
+    pub manifest_id: u64,
+    /// Size on disk of this depot's files.
+    pub size: u64,
+}
+
+/// Everything needed to write the `appmanifest_<appid>.acf` of a freshly
+/// installed app.
+///
+/// Field order and values follow the files the official client writes
+/// (checked against 18 real manifests, 2026-11-19): `Universe` 1,
+/// `StateFlags` 4, `DownloadType` 1, `UpdateResult` 0, byte counters at
+/// their final values. `LauncherPath` (path of `steam.exe`) and
+/// `InstallScripts` are left out; Steam fills in what it needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewAppManifest {
+    /// App ID.
+    pub app_id: u32,
+    /// Display name.
+    pub name: String,
+    /// Folder name below `steamapps/common`.
+    pub install_dir: String,
+    /// Installed build ID.
+    pub build_id: u64,
+    /// 64-bit SteamID of the owner.
+    pub last_owner: u64,
+    /// Total size on disk.
+    pub size_on_disk: u64,
+    /// Bytes downloaded from the CDN.
+    pub download_size: u64,
+    /// Install time, Unix seconds.
+    pub last_updated: u64,
+    /// Installed depots.
+    pub installed_depots: Vec<InstalledDepot>,
+}
+
+impl NewAppManifest {
+    /// Builds the KeyValues document (root `AppState`).
+    pub fn to_vdf(&self) -> Object {
+        let mut state = Object::new();
+        let number = |value: u64| value.to_string();
+        state.push("appid", self.app_id.to_string());
+        state.push("Universe", "1");
+        state.push("name", self.name.as_str());
+        state.push("StateFlags", AppManifest::STATE_FULLY_INSTALLED.to_string());
+        state.push("installdir", self.install_dir.as_str());
+        state.push("LastUpdated", number(self.last_updated));
+        state.push("LastPlayed", "0");
+        state.push("SizeOnDisk", number(self.size_on_disk));
+        state.push("StagingSize", "0");
+        state.push("buildid", number(self.build_id));
+        state.push("LastOwner", number(self.last_owner));
+        state.push("DownloadType", "1");
+        state.push("UpdateResult", "0");
+        state.push("BytesToDownload", number(self.download_size));
+        state.push("BytesDownloaded", number(self.download_size));
+        state.push("BytesToStage", number(self.size_on_disk));
+        state.push("BytesStaged", number(self.size_on_disk));
+        state.push("TargetBuildID", number(self.build_id));
+        state.push("AutoUpdateBehavior", "0");
+        state.push("AllowOtherDownloadsWhileRunning", "0");
+        state.push("ScheduledAutoUpdate", "0");
+
+        let mut depots = Object::new();
+        for depot in &self.installed_depots {
+            let mut entry = Object::new();
+            entry.push("manifest", number(depot.manifest_id));
+            entry.push("size", number(depot.size));
+            depots.push(depot.depot_id.to_string(), entry);
+        }
+        state.push("InstalledDepots", depots);
+        state.push("UserConfig", Object::new());
+        state.push("MountedConfig", Object::new());
+
+        let mut document = Object::new();
+        document.push(ROOT, state);
+        document
+    }
+
+    /// The file content in Steam's layout.
+    pub fn to_text(&self) -> String {
+        vdf::write(&self.to_vdf())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> NewAppManifest {
+        NewAppManifest {
+            app_id: 480,
+            name: "Spacewar".to_owned(),
+            install_dir: "Spacewar".to_owned(),
+            build_id: 3_538_192,
+            last_owner: 76_561_190_000_000_000,
+            size_on_disk: 1_900_000,
+            download_size: 900_000,
+            last_updated: 1_700_000_000,
+            installed_depots: vec![InstalledDepot {
+                depot_id: 481,
+                manifest_id: 3_183_503_801_510_301_321,
+                size: 1_900_000,
+            }],
+        }
+    }
+
+    #[test]
+    fn written_manifest_reads_back() {
+        let manifest = AppManifest::parse(&sample().to_text()).unwrap();
+        assert_eq!(manifest.app_id, 480);
+        assert_eq!(manifest.install_dir, "Spacewar");
+        assert!(manifest.is_fully_installed());
+        assert_eq!(manifest.build_id, Some(3_538_192));
+        assert_eq!(manifest.size_on_disk, Some(1_900_000));
+    }
+
+    #[test]
+    fn uses_the_official_key_order() {
+        let document = sample().to_vdf();
+        let state = document.get_object("AppState").unwrap();
+        let keys: Vec<_> = state.iter().map(|(key, _)| key).collect();
+        assert_eq!(
+            keys,
+            [
+                "appid",
+                "Universe",
+                "name",
+                "StateFlags",
+                "installdir",
+                "LastUpdated",
+                "LastPlayed",
+                "SizeOnDisk",
+                "StagingSize",
+                "buildid",
+                "LastOwner",
+                "DownloadType",
+                "UpdateResult",
+                "BytesToDownload",
+                "BytesDownloaded",
+                "BytesToStage",
+                "BytesStaged",
+                "TargetBuildID",
+                "AutoUpdateBehavior",
+                "AllowOtherDownloadsWhileRunning",
+                "ScheduledAutoUpdate",
+                "InstalledDepots",
+                "UserConfig",
+                "MountedConfig",
+            ]
+        );
+        let depot = state
+            .get_object("InstalledDepots")
+            .and_then(|depots| depots.get_object("481"))
+            .unwrap();
+        assert_eq!(depot.get_str("manifest"), Some("3183503801510301321"));
+    }
+}

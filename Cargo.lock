@@ -2135,11 +2135,9 @@ dependencies = [
  "clap",
  "reborn-cm",
  "reborn-content",
- "reborn-formats",
- "reborn-platform",
+ "reborn-core",
  "rpassword",
  "tokio",
- "tracing",
  "tracing-subscriber",
 ]
 
@@ -2180,6 +2178,14 @@ dependencies = [
 [[package]]
 name = "reborn-core"
 version = "0.1.0"
+dependencies = [
+ "reborn-cm",
+ "reborn-content",
+ "reborn-formats",
+ "reborn-platform",
+ "thiserror 2.0.21",
+ "tracing",
+]
 
 [[package]]
 name = "reborn-formats"

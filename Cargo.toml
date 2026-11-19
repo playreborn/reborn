@@ -16,6 +16,7 @@ repository = "https://github.com/playreborn/reborn"
 # reborn-proto = { path = "crates/proto", version = "0.1.0" }
 reborn-cm = { path = "crates/cm", version = "0.1.0" }
 reborn-content = { path = "crates/content", version = "0.1.0" }
+reborn-core = { path = "crates/core", version = "0.1.0" }
 reborn-formats = { path = "crates/formats", version = "0.1.0" }
 reborn-platform = { path = "crates/platform", version = "0.1.0" }
 

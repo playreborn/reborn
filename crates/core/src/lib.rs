@@ -1,10 +1,17 @@
-//! Reborn domain logic.
+//! Reborn domain logic, shared by `reborn-cli`, `rebornd` and the GUI.
 //!
-//! Planned responsibilities: accounts and sessions, the game library,
-//! the download queue state machine and game launching. This crate glues
-//! `reborn-cm`, `reborn-content` and `reborn-platform` together and is used
-//! by `rebornd`. Frontends never depend on it directly; they use `reborn-ipc`.
+//! - [`account`]: signing in (password + Steam Guard, stored token), signing out.
+//! - [`install`]: installing, updating and verifying apps in a library.
+//! - [`library`]: apps installed in a library folder.
 //!
-//! **Status:** skeleton, nothing implemented yet (milestones M0–M2, see
-//! `docs/plan.md` section 6).
+//! This crate glues `reborn-cm` (Steam), `reborn-content` (downloads),
+//! `reborn-formats` (Steam files) and `reborn-platform` (keyring, paths)
+//! together. It never prints; progress is reported through callbacks.
 #![forbid(unsafe_code)]
+
+pub mod account;
+mod error;
+pub mod install;
+pub mod library;
+
+pub use error::CoreError;

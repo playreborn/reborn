@@ -1,6 +1,6 @@
 [package]
 name = "reborn-core"
-description = "Reborn domain logic: accounts, library, download queue and game launching."
+description = "Reborn domain logic: accounts, library and installing apps, shared by the CLI, the daemon and the GUI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,12 @@ license = "GPL-3.0-or-later"
 publish = true
 
 [dependencies]
+reborn-cm.workspace = true
+reborn-content.workspace = true
+reborn-formats.workspace = true
+reborn-platform.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

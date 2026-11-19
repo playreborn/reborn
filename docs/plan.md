@@ -507,6 +507,13 @@ Grundsatz: **das Riskanteste zuerst.** Jeder Meilenstein endet mit etwas, das ma
 
 **Fertig, wenn:** Ein Nutzer ohne Kommandozeile Spiele installieren, aktualisieren und starten kann, auf Windows und Linux.
 
+Etappen (Stand 2026-11-19):
+
+1. **`reborn-core`** (erledigt): Anmelden, Bibliothek, Installieren/Aktualisieren/Prüfen als gemeinsame Logik für CLI, Daemon und GUI; Fortschritt über Ereignisse statt Konsolenausgabe.
+2. **`rebornd` + `reborn-ipc`**: lokale Schnittstelle (ADR 0008), Download-Warteschlange, Fortschrittsereignisse.
+3. **GUI `reborn`** mit Iced 0.14 (ADR 0009): Login, Bibliothek, Details, Downloads, Einstellungen.
+4. **Spiele starten**, Linux mit Proton; Kompatibilitätsdatenbank → Release 0.1.
+
 ### M3 – Social → Release 0.2
 
 Freunde, Online-Status, Chat, Benachrichtigungen, Freundschaftsanfragen, Achievements anzeigen.

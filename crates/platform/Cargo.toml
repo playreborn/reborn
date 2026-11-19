@@ -1,6 +1,6 @@
 [package]
 name = "reborn-platform"
-description = "Operating system integration for Reborn: paths, secret storage, processes and Proton."
+description = "Operating system integration for Reborn: secret storage, paths, processes and Proton."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,10 @@ license = "GPL-3.0-or-later"
 publish = true
 
 [dependencies]
+directories.workspace = true
+keyring.workspace = true
+reborn-cm.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

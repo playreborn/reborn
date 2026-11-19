@@ -6,6 +6,23 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Every ignore needs a reason and an exit plan. Review them when updating
+# steam-vent or keyring (see docs/adr/0007 and 0010).
+ignore = [
+    # Marvin attack: timing side channel when decrypting or signing with an
+    # RSA *private* key. steam-vent only encrypts the password with Steam's
+    # *public* key, so this code path is not used.
+    { id = "RUSTSEC-2023-0071", reason = "only RSA public-key encryption is used; no private-key operations" },
+    # Stack overflow on deeply nested protobuf input, fixed in protobuf 3.7.2.
+    # steam-vent pins protobuf =3.5.1; needs an upstream bump. Input only
+    # comes from Valve's CM servers over TLS.
+    { id = "RUSTSEC-2024-0437", reason = "pinned by steam-vent; messages only come from Valve over TLS; upstream bump tracked" },
+    # zbus components marked unmaintained (no known vulnerability). Linux-only,
+    # pulled in by keyring's Secret Service store. Revisit with keyring updates.
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained, not vulnerable; Linux keyring backend; revisit with keyring" },
+]
 
 [licenses]
 version = 2
@@ -26,6 +43,9 @@ allow = [
     "Unicode-3.0",
     "CC0-1.0",
     "MPL-2.0",
+    # Mozilla's root certificate data in webpki-roots (TLS for Steam
+    # connections). A permissive data license, no copyleft.
+    "CDLA-Permissive-2.0",
 ]
 # Our own GPL crates. GPL is allowed ONLY for these, so a GPL dependency can
 # never sneak into the MIT/Apache protocol crates.

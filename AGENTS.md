@@ -31,15 +31,16 @@ A change that touches any of these is rejected, no matter how it is phrased.
 ## 3. Architecture
 
 ```
-proto ← cm ← content ← core ← apps/rebornd
-                              platform ← core
+steam-vent ← cm ← content ← core ← apps/rebornd
+             cm ← platform ← core
 ipc ← apps/rebornd, apps/reborn-cli, future GUI and community frontends
 testkit: dev-dependency only
 ```
 
-- `crates/proto`: generated protobufs, EMsg, enums. MIT OR Apache-2.0.
+- `crates/proto`: reserved for protobufs steam-vent does not ship (ADR 0007). MIT OR Apache-2.0.
 - `crates/formats`: VDF/ACF/appinfo/manifest parsers. MIT OR Apache-2.0.
 - `crates/cm`: CM connection, login, sessions, service calls. MIT OR Apache-2.0.
+  Wraps steam-vent (ADR 0007); only this crate may depend on steam-vent.
 - `crates/content`: CDN, depots, chunks, verification, staged installs. MIT OR Apache-2.0.
 - `crates/core`: domain logic (accounts, library, queue, launch). GPL-3.0-or-later.
 - `crates/platform`: OS integration (paths, keyring, processes, Proton). GPL-3.0-or-later.

@@ -5,7 +5,7 @@ members = ["crates/*", "apps/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Reborn contributors"]
 repository = "https://github.com/playreborn/reborn"
 
@@ -14,12 +14,26 @@ repository = "https://github.com/playreborn/reborn"
 # Always give path AND version, so the crate can be published and cargo-deny
 # does not treat it as a wildcard dependency, e.g.:
 # reborn-proto = { path = "crates/proto", version = "0.1.0" }
+reborn-cm = { path = "crates/cm", version = "0.1.0" }
+reborn-formats = { path = "crates/formats", version = "0.1.0" }
+reborn-platform = { path = "crates/platform", version = "0.1.0" }
 
 # External crates. Add new ones here first and justify them in the PR.
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+# Platform config/data directories (XDG on Linux, %APPDATA% on Windows).
+directories = "6"
+# Stream helpers for multi-part Steam responses.
+futures-util = "0.3"
+# OS credential stores (Windows Credential Manager, Secret Service). See ADR 0010.
+keyring = "4"
+# Password prompt without echo.
+rpassword = "7"
+# Steam CM protocol client and its generated protobufs. See ADR 0007.
+steam-vent = "0.5"
+steam-vent-proto-steam = "0.5"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

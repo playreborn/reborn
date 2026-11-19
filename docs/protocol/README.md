@@ -32,8 +32,8 @@ is documented like this:
 | File | Milestone |
 | --- | --- |
 | `connection.md` (CM discovery, WebSocket transport, framing, heartbeat) | M0 |
-| `auth.md` (IAuthenticationService, tokens, logon) | M0 |
-| `licenses-pics.md` (license list, PICS, access tokens) | M0 |
+| [`auth.md`](auth.md) (IAuthenticationService, tokens, logon) | M0, written |
+| [`licenses-pics.md`](licenses-pics.md) (license list, PICS, access tokens) | M0, written |
 | `content.md` (depot keys, manifest request codes, CDN, chunks) | M1 |
 | `social.md` (friends, persona state, chat) | M3 |
 | `cloud.md` | M4 |

@@ -676,12 +676,12 @@ Ablage in `docs/adr/`. Jedes ADR enthält Kontext, Problem, Alternativen, Entsch
 - [x] Workspace-Gerüst nach 6.3, `rust-toolchain.toml`, CI mit fmt, Clippy, Tests und cargo-deny. (Secret-Scan: GitHub Secret Scanning und Push Protection in den Repo-Einstellungen aktivieren.)
 - [x] `AGENTS.md`, `CONTRIBUTING.md` (mit DCO), `SECURITY.md`, `CODE_OF_CONDUCT.md`, ADRs 0001–0004.
 - [x] Lizenzdateien `LICENSE-GPL`, `LICENSE-APACHE`, `LICENSE-MIT`.
-- [ ] Protobuf-Pipeline aus SteamDatabase/Protobufs aufsetzen.
-- [ ] `steam-vent` und `steamlocate` evaluieren, ADR 007 schreiben.
-- [ ] Spike: QR-Login über WebSocket-CM, Refresh-Token im Schlüsselbund.
+- [x] Protobufs kommen generiert über `steam-vent-proto-steam` (Quelle: SteamDatabase/Protobufs, ADR 0007).
+- [x] `steam-vent` evaluiert und als Basis gewählt (ADR 0007). `steamlocate` ist noch offen.
+- [x] Spike: Login mit Passwort + Steam Guard über WebSocket-CM, Refresh-Token im Schlüsselbund (ADR 0007, 0010). QR-Login braucht einen Beitrag zu steam-vent.
 - [ ] Fixture-Recorder mit automatischer Schwärzung.
-- [ ] `reborn-formats` als erstes echtes Crate auf crates.io veröffentlichen.
-- [ ] `reborn-cli library` (M0 abschließen).
+- [x] `reborn-formats` 0.1.0 als erstes echtes Crate auf crates.io veröffentlicht.
+- [x] `reborn-cli login` / `library` live mit dem Zweitaccount getestet: Login per App-Bestätigung, Token-Login nach Neustart (2026-11-19).
 - [ ] Repository öffentlich machen, Roadmap und erste Einsteiger-Issues anlegen.
 
 ---

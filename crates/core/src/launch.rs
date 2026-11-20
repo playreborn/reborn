@@ -94,7 +94,9 @@ pub async fn plan_launch(
             for problem in &discovery.problems {
                 warn!(%problem, "while looking for Proton");
             }
-            let install = choose_proton(&discovery.installs).ok_or(CoreError::NoProton(name))?;
+            let wanted = settings::proton_setting().ok().flatten();
+            let install = pick_proton(&discovery.installs, wanted.as_deref())
+                .ok_or(CoreError::NoProton(name))?;
             let compat_data = settings::data_dir()?
                 .join("compatdata")
                 .join(request.app_id.to_string());
@@ -108,6 +110,43 @@ pub async fn plan_launch(
         }
         other => other,
     }
+}
+
+/// The Proton build chosen in the settings if it is installed, else the
+/// automatic choice ([`choose_proton`]).
+pub fn pick_proton<'a>(
+    installs: &'a [ProtonInstall],
+    wanted: Option<&str>,
+) -> Option<&'a ProtonInstall> {
+    if let Some(wanted) = wanted {
+        match installs.iter().find(|install| install.name == wanted) {
+            Some(install) => return Some(install),
+            None => warn!(
+                wanted,
+                "the chosen Proton build is not installed; choosing automatically"
+            ),
+        }
+    }
+    choose_proton(installs)
+}
+
+/// Names of the installed Proton builds, best automatic choice first.
+/// Empty on Windows, where games run natively.
+pub fn installed_protons() -> Vec<String> {
+    if cfg!(windows) {
+        return Vec::new();
+    }
+    let discovery = proton::discover(&SearchRoots::from_environment());
+    let mut installs = discovery.installs;
+    let best = choose_proton(&installs).map(|install| install.name.clone());
+    installs.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut names: Vec<String> = installs.into_iter().map(|install| install.name).collect();
+    if let Some(best) = best {
+        names.retain(|name| *name != best);
+        names.insert(0, best);
+    }
+    names.dedup();
+    names
 }
 
 /// The Proton build to use: the newest numbered official build (`Proton
@@ -532,6 +571,21 @@ mod tests {
         );
         assert_eq!(choose_proton(&installs[..1]).unwrap().name, "GE-Proton9-20");
         assert!(choose_proton(&[]).is_none());
+    }
+
+    #[test]
+    fn the_chosen_proton_wins_if_installed() {
+        let installs = [proton("GE-Proton9-20", false), proton("Proton 9.0", true)];
+        assert_eq!(
+            pick_proton(&installs, Some("GE-Proton9-20")).unwrap().name,
+            "GE-Proton9-20"
+        );
+        assert_eq!(
+            pick_proton(&installs, Some("Proton 1.0")).unwrap().name,
+            "Proton 9.0",
+            "falls back to the automatic choice"
+        );
+        assert_eq!(pick_proton(&installs, None).unwrap().name, "Proton 9.0");
     }
 
     #[test]

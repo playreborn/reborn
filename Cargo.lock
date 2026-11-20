@@ -3727,7 +3727,7 @@ dependencies = [
 
 [[package]]
 name = "reborn"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "iced",
@@ -3739,7 +3739,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3754,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-cm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "reborn-formats",
@@ -3767,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-content"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes 0.8.4",
  "base64 0.22.1",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reborn-cm",
  "reborn-content",
@@ -3802,14 +3802,14 @@ dependencies = [
 
 [[package]]
 name = "reborn-formats"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "reborn-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "interprocess",
  "reborn-platform",
@@ -3823,7 +3823,7 @@ dependencies = [
 
 [[package]]
 name = "reborn-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "keyring",
@@ -3835,15 +3835,15 @@ dependencies = [
 
 [[package]]
 name = "reborn-proto"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "reborn-testkit"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "rebornd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "interprocess",

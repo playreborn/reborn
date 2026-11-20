@@ -4,6 +4,16 @@ All notable changes to Reborn are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - unreleased
+
+### Added
+
+- **Settings** tab in the desktop app (ADR 0019):
+  - choose the folder where new games are installed, or go back to the
+    default;
+  - on Linux, choose which installed Proton build runs Windows games, or
+    keep the automatic choice.
+
 ## [0.1.0] - 2026-11-20
 
 The first alpha: install, update and play the games of your Steam account
@@ -43,9 +53,11 @@ without the command line, on Windows and Linux.
   Runtime container, which some games may need.
 - Install scripts (redistributables such as DirectX or Visual C++) are not
   run yet; some games may not start on a fresh system.
-- No settings screen yet; games go into Reborn's own library.
+- No settings screen yet; games go into Reborn's own library (settings
+  follow in 0.1.1).
 - The binaries are not code-signed; Windows SmartScreen may warn.
 - On Windows PCs shared with other users, another user could in theory
   impersonate the background service before it starts (see ADR 0014).
 
+[0.1.1]: https://github.com/playreborn/reborn/releases/tag/v0.1.1
 [0.1.0]: https://github.com/playreborn/reborn/releases/tag/v0.1.0

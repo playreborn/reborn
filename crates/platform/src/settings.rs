@@ -2,15 +2,19 @@
 //! directory (`%APPDATA%\Reborn\config` on Windows,
 //! `$XDG_CONFIG_HOME/reborn` on Linux).
 //!
-//! For now this is only the default account, so `reborn-cli library` works
-//! without `--account`. A proper settings file follows with the daemon (M2).
+//! One small text file per setting:
+//! - `default-account`: the account used when none is given,
+//! - `library`: the folder for Reborn's game library, if not the default,
+//! - `proton`: the Proton build to use on Linux, if not the automatic choice.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 
 const DEFAULT_ACCOUNT_FILE: &str = "default-account";
+const LIBRARY_FILE: &str = "library";
+const PROTON_FILE: &str = "proton";
 
 /// Reading or writing a setting failed.
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +26,12 @@ pub enum SettingsError {
     /// File system error.
     #[error("settings file: {0}")]
     Io(#[from] io::Error),
+    /// The library folder must be an absolute path.
+    #[error("the library folder must be an absolute path: {}", .0.display())]
+    RelativeLibrary(PathBuf),
+    /// The library folder exists but is not a folder.
+    #[error("{} is not a folder", .0.display())]
+    NotAFolder(PathBuf),
 }
 
 /// The directory where Reborn keeps its settings.
@@ -39,11 +49,88 @@ pub fn data_dir() -> Result<PathBuf, SettingsError> {
         .ok_or(SettingsError::NoConfigDir)
 }
 
-/// Reborn's own game library, used when no library folder is given. It has
-/// the same layout as a Steam library (`steamapps/common`, `appmanifest_*.acf`)
-/// but is separate from the official client's libraries.
+/// Reborn's game library, used when no library folder is given: the folder
+/// set with [`set_library`], else [`builtin_library`]. It has the same layout
+/// as a Steam library (`steamapps/common`, `appmanifest_*.acf`).
 pub fn default_library() -> Result<PathBuf, SettingsError> {
+    match library_setting()? {
+        Some(library) => Ok(library),
+        None => builtin_library(),
+    }
+}
+
+/// The library folder Reborn uses when none is set: `library` in the data
+/// directory, separate from the official client's libraries.
+pub fn builtin_library() -> Result<PathBuf, SettingsError> {
     Ok(data_dir()?.join("library"))
+}
+
+/// The library folder set by the user, if any.
+pub fn library_setting() -> Result<Option<PathBuf>, SettingsError> {
+    Ok(read_value(&config_dir()?, LIBRARY_FILE)?.map(PathBuf::from))
+}
+
+/// Sets the library folder (`None`: back to [`builtin_library`]). The folder
+/// must be absolute; it is created with its `steamapps` folder if needed.
+/// Games already installed elsewhere stay where they are.
+pub fn set_library(library: Option<&Path>) -> Result<(), SettingsError> {
+    let dir = config_dir()?;
+    match library {
+        Some(library) => {
+            prepare_library(library)?;
+            write_value(&dir, LIBRARY_FILE, Some(&library.to_string_lossy()))
+        }
+        None => write_value(&dir, LIBRARY_FILE, None),
+    }
+}
+
+/// Checks a library folder and creates it (with `steamapps`) if missing.
+fn prepare_library(library: &Path) -> Result<(), SettingsError> {
+    if !library.is_absolute() {
+        return Err(SettingsError::RelativeLibrary(library.to_path_buf()));
+    }
+    if library.exists() && !library.is_dir() {
+        return Err(SettingsError::NotAFolder(library.to_path_buf()));
+    }
+    std::fs::create_dir_all(library.join("steamapps"))?;
+    Ok(())
+}
+
+/// The Proton build chosen by the user (its display name), if any.
+pub fn proton_setting() -> Result<Option<String>, SettingsError> {
+    read_value(&config_dir()?, PROTON_FILE)
+}
+
+/// Sets the Proton build by display name (`None`: automatic choice).
+pub fn set_proton(name: Option<&str>) -> Result<(), SettingsError> {
+    write_value(&config_dir()?, PROTON_FILE, name)
+}
+
+/// Reads a one-line setting; missing or empty files mean "not set".
+fn read_value(dir: &Path, name: &str) -> Result<Option<String>, SettingsError> {
+    match std::fs::read_to_string(dir.join(name)) {
+        Ok(text) => {
+            let value = text.trim();
+            Ok((!value.is_empty()).then(|| value.to_owned()))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Writes a one-line setting, or removes it for `None` or an empty value.
+fn write_value(dir: &Path, name: &str, value: Option<&str>) -> Result<(), SettingsError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => {
+            std::fs::create_dir_all(dir)?;
+            std::fs::write(dir.join(name), value)?;
+        }
+        None => match std::fs::remove_file(dir.join(name)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        },
+    }
+    Ok(())
 }
 
 /// The account used when no `--account` is given, if set.
@@ -72,5 +159,56 @@ pub fn clear_default_account() -> Result<(), SettingsError> {
     match std::fs::remove_file(config_dir()?.join(DEFAULT_ACCOUNT_FILE)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.into()),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("reborn-settings-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn values_round_trip_and_clear() {
+        let dir = temp_dir("values");
+        assert_eq!(read_value(&dir, "x").unwrap(), None);
+        write_value(&dir, "x", Some("  Proton 9.0 \n")).unwrap();
+        assert_eq!(
+            read_value(&dir, "x").unwrap().as_deref(),
+            Some("Proton 9.0")
+        );
+        write_value(&dir, "x", Some("   ")).unwrap();
+        assert_eq!(read_value(&dir, "x").unwrap(), None, "blank means not set");
+        write_value(&dir, "x", Some("again")).unwrap();
+        write_value(&dir, "x", None).unwrap();
+        assert_eq!(read_value(&dir, "x").unwrap(), None);
+        write_value(&dir, "x", None).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn library_folders_are_checked_and_created() {
+        assert!(matches!(
+            prepare_library(Path::new("relative/library")),
+            Err(SettingsError::RelativeLibrary(_))
+        ));
+        let dir = temp_dir("library");
+        let library = dir.join("Games");
+        prepare_library(&library).unwrap();
+        assert!(library.join("steamapps").is_dir());
+        prepare_library(&library).unwrap();
+
+        let file = dir.join("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(matches!(
+            prepare_library(&file),
+            Err(SettingsError::NotAFolder(_))
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

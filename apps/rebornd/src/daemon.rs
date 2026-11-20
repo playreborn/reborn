@@ -227,6 +227,9 @@ impl Daemon {
             Request::CancelSignIn => self.cancel_sign_in(),
             Request::SignOut => self.sign_out().await,
             Request::Uninstall { app_id, library } => self.uninstall(app_id, library).await,
+            Request::GetSettings => current_settings(),
+            Request::SetLibrary { library } => self.set_library(library),
+            Request::SetProton { name } => self.set_proton(name),
             Request::Launch {
                 app_id,
                 library,
@@ -369,6 +372,38 @@ impl Daemon {
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
         Response::Ok
+    }
+
+    /// Sets the library folder for new installs (ADR 0019).
+    fn set_library(&self, library: Option<PathBuf>) -> Response {
+        if self.jobs().active() > 0 {
+            return Response::Error {
+                message: "cancel the downloads first, then change the library folder".to_owned(),
+            };
+        }
+        if let Err(error) = settings::set_library(library.as_deref()) {
+            return error_response(&CoreError::from(error));
+        }
+        info!(library = ?library, "library folder changed");
+        self.emit(Event::SettingsChanged);
+        current_settings()
+    }
+
+    /// Chooses the Proton build (ADR 0019).
+    fn set_proton(&self, name: Option<String>) -> Response {
+        if let Some(name) = &name
+            && !reborn_core::launch::installed_protons().contains(name)
+        {
+            return Response::Error {
+                message: format!("Proton build `{name}` is not installed"),
+            };
+        }
+        if let Err(error) = settings::set_proton(name.as_deref()) {
+            return error_response(&CoreError::from(error));
+        }
+        info!(proton = ?name, "Proton choice changed");
+        self.emit(Event::SettingsChanged);
+        current_settings()
     }
 
     /// Removes an installed app (ADR 0018). Deleting files needs a running
@@ -673,6 +708,21 @@ fn installed(library: Option<PathBuf>) -> Result<(PathBuf, Vec<InstalledApp>), C
     Ok((library, apps))
 }
 
+/// The settings as the daemon uses them.
+fn current_settings() -> Response {
+    let library = match settings::default_library() {
+        Ok(library) => library,
+        Err(error) => return error_response(&CoreError::from(error)),
+    };
+    let library_is_builtin = settings::library_setting().ok().flatten().is_none();
+    Response::Settings {
+        library,
+        library_is_builtin,
+        proton: settings::proton_setting().ok().flatten(),
+        protons: reborn_core::launch::installed_protons(),
+    }
+}
+
 /// Locks a mutex; a poisoned lock only means another thread panicked while
 /// holding it, the data is still usable.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -800,6 +850,30 @@ mod tests {
             panic!("expected an error");
         };
         assert!(message.contains("being installed"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn library_changes_are_refused_while_downloads_run() {
+        // Refused before any setting is written.
+        let daemon = Daemon::new();
+        daemon.handle(install(480)).await;
+        let response = daemon
+            .handle(Request::SetLibrary {
+                library: Some(PathBuf::from("/never/written")),
+            })
+            .await;
+        assert!(matches!(response, Response::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn unknown_proton_builds_are_refused() {
+        let daemon = Daemon::new();
+        let response = daemon
+            .handle(Request::SetProton {
+                name: Some("Proton 0.0 that does not exist".to_owned()),
+            })
+            .await;
+        assert!(matches!(response, Response::Error { .. }));
     }
 
     #[tokio::test]

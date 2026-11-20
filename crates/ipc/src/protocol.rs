@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 3;
+pub const PROTOCOL_MINOR: u16 = 4;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -150,6 +150,19 @@ pub enum Request {
         /// Library folder (`None`: Reborn's own library).
         library: Option<PathBuf>,
     },
+    /// The current settings (ADR 0019). Added in protocol 1.4.
+    GetSettings,
+    /// Set the library folder for new installs (`None`: the built-in
+    /// folder). Refused while downloads are queued or running.
+    SetLibrary {
+        /// Absolute folder; created if missing.
+        library: Option<PathBuf>,
+    },
+    /// Choose the Proton build by name (`None`: automatic choice).
+    SetProton {
+        /// One of [`Response::Settings`]'s `protons`.
+        name: Option<String>,
+    },
 }
 
 /// Answers from the daemon.
@@ -211,6 +224,19 @@ pub enum Response {
     SignedIn {
         /// The account.
         account: String,
+    },
+    /// Answer to [`Request::GetSettings`], [`Request::SetLibrary`] and
+    /// [`Request::SetProton`].
+    Settings {
+        /// The library folder in use.
+        library: PathBuf,
+        /// Whether that is Reborn's built-in folder (nothing set).
+        library_is_builtin: bool,
+        /// The chosen Proton build, if any (`None`: automatic).
+        proton: Option<String>,
+        /// Installed Proton builds, best automatic choice first. Empty on
+        /// Windows.
+        protons: Vec<String>,
     },
     /// Answer to [`Request::Launch`]: the game process was started.
     Launched {
@@ -384,6 +410,8 @@ pub enum Event {
         /// App name, if known.
         name: Option<String>,
     },
+    /// The settings changed (library folder or Proton choice).
+    SettingsChanged,
     /// An app was uninstalled.
     AppUninstalled {
         /// The app.

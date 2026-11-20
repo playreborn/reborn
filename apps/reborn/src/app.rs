@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::widget::{
-    Column, button, column, container, progress_bar, row, rule, scrollable, space, text, text_input,
+    Column, button, column, container, pick_list, progress_bar, row, rule, scrollable, space, text,
+    text_input,
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp};
@@ -18,6 +19,19 @@ use crate::daemon;
 pub enum Tab {
     Library,
     Downloads,
+    Settings,
+}
+
+/// Label of the automatic Proton choice in the settings.
+const AUTOMATIC_PROTON: &str = "Automatic (newest installed)";
+
+/// The daemon's settings as shown in the settings tab.
+#[derive(Clone, Debug, Default)]
+struct SettingsView {
+    library: PathBuf,
+    library_is_builtin: bool,
+    proton: Option<String>,
+    protons: Vec<String>,
 }
 
 /// Connection to the daemon.
@@ -79,6 +93,11 @@ pub enum Message {
     PlayDone(u32, Result<Response, String>),
     Uninstall(u32),
     UninstallDone(Result<Response, String>),
+    SettingsLoaded(Result<Response, String>),
+    LibraryInput(String),
+    SaveLibrary,
+    ResetLibrary,
+    ProtonPicked(String),
 }
 
 pub struct App {
@@ -109,6 +128,8 @@ pub struct App {
     starting: BTreeSet<u32>,
     /// The app whose "Uninstall" was clicked once; a second click deletes.
     confirm_uninstall: Option<u32>,
+    settings: Option<SettingsView>,
+    library_input: String,
 }
 
 impl App {
@@ -135,6 +156,8 @@ impl App {
             running: BTreeSet::new(),
             starting: BTreeSet::new(),
             confirm_uninstall: None,
+            settings: None,
+            library_input: String::new(),
         };
         (
             app,
@@ -166,6 +189,7 @@ impl App {
                         Message::InstalledLoaded,
                     ),
                     self.send(Request::Jobs, Message::JobsLoaded),
+                    self.send(Request::GetSettings, Message::SettingsLoaded),
                 ])
             }
             Message::Connected(Err(error)) => {
@@ -387,6 +411,48 @@ impl App {
                     Message::InstalledLoaded,
                 )
             }
+            Message::SettingsLoaded(result) => {
+                match result {
+                    Ok(Response::Settings {
+                        library,
+                        library_is_builtin,
+                        proton,
+                        protons,
+                    }) => {
+                        self.library_input = library.display().to_string();
+                        self.settings = Some(SettingsView {
+                            library,
+                            library_is_builtin,
+                            proton,
+                            protons,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notice = Some(error),
+                }
+                Task::none()
+            }
+            Message::LibraryInput(input) => {
+                self.library_input = input;
+                Task::none()
+            }
+            Message::SaveLibrary => {
+                let library = PathBuf::from(self.library_input.trim());
+                self.send(
+                    Request::SetLibrary {
+                        library: Some(library),
+                    },
+                    Message::SettingsLoaded,
+                )
+            }
+            Message::ResetLibrary => self.send(
+                Request::SetLibrary { library: None },
+                Message::SettingsLoaded,
+            ),
+            Message::ProtonPicked(choice) => {
+                let name = (choice != AUTOMATIC_PROTON).then_some(choice);
+                self.send(Request::SetProton { name }, Message::SettingsLoaded)
+            }
             Message::PlayDone(app_id, result) => {
                 self.starting.remove(&app_id);
                 match result {
@@ -527,6 +593,13 @@ impl App {
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
             }
+            Event::SettingsChanged => Task::batch([
+                self.send(Request::GetSettings, Message::SettingsLoaded),
+                self.send(
+                    Request::Installed { library: None },
+                    Message::InstalledLoaded,
+                ),
+            ]),
             Event::AppUninstalled { app_id } => {
                 self.installed.remove(&app_id);
                 Task::none()
@@ -575,6 +648,7 @@ impl App {
                 Some(true) => match self.tab {
                     Tab::Library => self.library_view(),
                     Tab::Downloads => self.downloads_view(),
+                    Tab::Settings => self.settings_view(),
                 },
             },
         };
@@ -617,6 +691,7 @@ impl App {
             text("Reborn").size(26),
             tab_button("Library".to_owned(), Tab::Library),
             tab_button(downloads, Tab::Downloads),
+            tab_button("Settings".to_owned(), Tab::Settings),
             space().width(Fill),
             text(status).size(14),
             button("Refresh")
@@ -740,6 +815,63 @@ impl App {
             .center_x(Fill)
             .padding(40)
             .into()
+    }
+
+    fn settings_view(&self) -> Element<'_, Message> {
+        let Some(settings) = &self.settings else {
+            return center_text("Loading settings ...");
+        };
+        let changed = self.library_input.trim() != settings.library.display().to_string()
+            && !self.library_input.trim().is_empty();
+        let mut page = column![
+            text("Library folder").size(18),
+            text(
+                "New games are installed here. Games already installed stay in \
+                 their folder; the library list shows the games of this folder."
+            )
+            .size(13),
+            row![
+                text_input("Folder for your games", &self.library_input)
+                    .on_input(Message::LibraryInput)
+                    .on_submit(Message::SaveLibrary)
+                    .padding(8),
+                button("Save").on_press_maybe(changed.then_some(Message::SaveLibrary)),
+                button("Use default")
+                    .style(button::secondary)
+                    .on_press_maybe(
+                        (!settings.library_is_builtin).then_some(Message::ResetLibrary)
+                    ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(10);
+
+        if !settings.protons.is_empty() {
+            let mut options = vec![AUTOMATIC_PROTON.to_owned()];
+            options.extend(settings.protons.iter().cloned());
+            let selected = settings
+                .proton
+                .clone()
+                .unwrap_or_else(|| AUTOMATIC_PROTON.to_owned());
+            page = page
+                .push(rule::horizontal(1))
+                .push(text("Proton").size(18))
+                .push(text("Windows games run through this Proton build.").size(13));
+            page = page.push(pick_list(options, Some(selected), Message::ProtonPicked));
+        } else if !cfg!(windows) {
+            page = page
+                .push(rule::horizontal(1))
+                .push(text("Proton").size(18))
+                .push(
+                    text(
+                        "No Proton build found. Install one in the Steam client to play \
+                         Windows games.",
+                    )
+                    .size(13),
+                );
+        }
+        container(page).max_width(720).into()
     }
 
     fn library_view(&self) -> Element<'_, Message> {

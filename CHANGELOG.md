@@ -20,6 +20,9 @@ All notable changes to Reborn are listed here. The format follows
 - `reborn-cli ticket <app_id>` asks Valve for the app's ownership ticket
   and encrypted app ticket and shows their sizes: groundwork for running
   games without the official client (ADR 0012, ADR 0027).
+- `reborn-cli achievements <app_id>` lists the achievements of a game and
+  which ones you have unlocked, with the date. It only reads; Reborn never
+  unlocks or changes achievements (ADR 0029).
 
 ### Changed
 

@@ -24,6 +24,7 @@
 //! Not yet: QR-code login (needs upstream support in `steam-vent`).
 #![forbid(unsafe_code)]
 
+mod achievements;
 mod apps;
 mod chat;
 mod content;
@@ -36,6 +37,7 @@ mod secret;
 mod session;
 mod tickets;
 
+pub use achievements::{Achievement, FALLBACK_LANGUAGE, achievements_from};
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use chat::{
     ChatEvent, ChatMessage, ChatRecording, UnreadChat, chat_event_from, history_from,

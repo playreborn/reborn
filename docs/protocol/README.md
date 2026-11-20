@@ -37,5 +37,6 @@ is documented like this:
 | [`content.md`](content.md) (depot keys, manifest request codes, CDN, chunks) | M1, written |
 | `social.md` (friends, persona state, chat) | M3 |
 | [`tickets.md`](tickets.md) (ownership and encrypted app tickets) | M4, written |
+| [`achievements.md`](achievements.md) (reading achievements) | M4, written |
 | `cloud.md` | M4 |
 | `steamclient-interfaces.md` (shim) | M4 |

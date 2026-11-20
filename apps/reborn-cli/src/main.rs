@@ -82,6 +82,21 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Show the achievements of an app for the account (ADR 0029). Only
+    /// reads; nothing is ever unlocked or changed.
+    Achievements {
+        /// App ID, e.g. 480 for Spacewar.
+        app_id: u32,
+        /// Language of the texts, as Steam names it (e.g. german, english).
+        #[arg(long, default_value = "english")]
+        language: String,
+        /// Instead, record Steam's answer as a fixture into this folder.
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Show the depots and launch entries of an app and which ones fit
     /// this computer.
     Depots {
@@ -201,6 +216,12 @@ async fn main() -> Result<()> {
             record,
             account,
         } => ticket(account, app_id, record.as_deref()).await,
+        Command::Achievements {
+            app_id,
+            language,
+            record,
+            account,
+        } => achievements(account, app_id, &language, record.as_deref()).await,
         Command::Depots {
             app_id,
             branch,
@@ -389,6 +410,81 @@ async fn ticket(account: Option<String>, app_id: u32, record: Option<&Path>) -> 
         Err(error) => println!("Encrypted app ticket for app {app_id}: {error}"),
     }
     Ok(())
+}
+
+async fn achievements(
+    account: Option<String>,
+    app_id: u32,
+    language: &str,
+    record: Option<&Path>,
+) -> Result<()> {
+    let session = account::sign_in(account).await?;
+    if let Some(dir) = record {
+        let recording = session.record_achievements(app_id).await?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::write(dir.join("user_stats.bin"), &recording)?;
+        println!("Recorded Steam's answer into {}.", dir.display());
+        return Ok(());
+    }
+    let achievements = session.achievements(app_id, language).await?;
+    if achievements.is_empty() {
+        println!("App {app_id} has no achievements.");
+        return Ok(());
+    }
+    let unlocked = achievements
+        .iter()
+        .filter(|achievement| achievement.unlocked_at.is_some())
+        .count();
+    println!(
+        "{unlocked} of {} achievements unlocked in app {app_id}:",
+        achievements.len()
+    );
+    for achievement in &achievements {
+        let hidden = achievement.hidden && achievement.unlocked_at.is_none();
+        let mark = if achievement.unlocked_at.is_some() {
+            "x"
+        } else {
+            " "
+        };
+        let when = achievement
+            .unlocked_at
+            .map(|time| format!(" ({})", utc_time(time)))
+            .unwrap_or_default();
+        if hidden {
+            println!("[{mark}] {} (hidden){when}", achievement.display_name);
+        } else if achievement.description.is_empty() {
+            println!("[{mark}] {}{when}", achievement.display_name);
+        } else {
+            println!(
+                "[{mark}] {}: {}{when}",
+                achievement.display_name, achievement.description
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `YYYY-MM-DD HH:MM UTC` for seconds since the Unix epoch. Days to dates
+/// with Howard Hinnant's `civil_from_days` (public domain,
+/// https://howardhinnant.github.io/date_algorithms.html).
+fn utc_time(seconds: u32) -> String {
+    let seconds = i64::from(seconds);
+    let days = seconds.div_euclid(86_400);
+    let of_day = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        of_day / 3600,
+        of_day % 3600 / 60
+    )
 }
 
 async fn appinfo(account: Option<String>, app_id: u32, output: &Path) -> Result<()> {
@@ -1145,6 +1241,13 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn formats_utc_times() {
+        assert_eq!(utc_time(0), "1970-01-01 00:00 UTC");
+        assert_eq!(utc_time(951_782_400), "2000-02-29 00:00 UTC");
+        assert_eq!(utc_time(1_700_000_000), "2023-11-14 22:13 UTC");
     }
 
     #[test]

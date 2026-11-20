@@ -79,6 +79,9 @@ pub enum Error {
     /// A response lacks a field that is required.
     #[error("Steam's {0} response is missing data")]
     IncompleteResponse(&'static str),
+    /// The stats schema of an app (achievements) could not be read.
+    #[error("stats schema of app {0} is malformed: {1}")]
+    StatsSchema(u32, String),
 }
 
 impl Error {

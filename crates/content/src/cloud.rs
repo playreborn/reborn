@@ -9,7 +9,7 @@
 //! plain GET on the `url` of `EnumerateUserFiles`.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use sha1::{Digest, Sha1};
 
@@ -125,6 +125,21 @@ pub async fn download_cloud_file(
     file: CloudFileRef<'_>,
 ) -> Result<CloudOutcome, CloudDownloadError> {
     let relative = cloud_path(file.name)?;
+    download_cloud_file_into(client, folder, &relative, file).await
+}
+
+/// Downloads one file to `base`/`relative` (ADR 0034), with the same
+/// rules as [`download_cloud_file`]. `relative` must consist of plain
+/// folder and file names only (as from [`install_path`]); anything else is
+/// refused.
+pub async fn download_cloud_file_into(
+    client: &CdnClient,
+    folder: &Path,
+    relative: &Path,
+    file: CloudFileRef<'_>,
+) -> Result<CloudOutcome, CloudDownloadError> {
+    check_plain(relative)?;
+    let relative = relative.to_path_buf();
     let expected = parse_sha1(file.sha1)?;
     let destination = folder.join(&relative);
     check_no_symlinks(folder, &relative)?;
@@ -140,6 +155,19 @@ pub async fn download_cloud_file(
             path: destination,
             source: std::io::Error::other(error),
         })?
+}
+
+/// Accepts only a non-empty path of plain folder and file names.
+fn check_plain(relative: &Path) -> Result<(), CloudDownloadError> {
+    let plain = relative.components().next().is_some()
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if plain {
+        Ok(())
+    } else {
+        Err(PathError::Traversal(relative.display().to_string()).into())
+    }
 }
 
 /// GET with a size limit; errors never carry the URL.
@@ -397,6 +425,23 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, CloudDownloadError::Symlink(_)));
         assert!(!outside.0.join("save.json").exists());
+    }
+
+    #[test]
+    fn only_plain_relative_paths_are_accepted() {
+        assert!(check_plain(&Path::new("Studio312").join("save.json")).is_ok());
+        for bad in [
+            PathBuf::new(),
+            PathBuf::from(".."),
+            Path::new("a").join("..").join("b"),
+            std::env::temp_dir(),
+        ] {
+            assert!(
+                matches!(check_plain(&bad), Err(CloudDownloadError::Name(_))),
+                "{}",
+                bad.display()
+            );
+        }
     }
 
     #[test]

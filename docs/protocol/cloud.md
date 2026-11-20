@@ -80,6 +80,19 @@ response types are in steam-vent-proto-steam
   both files as saved through the Steam interface. "Differs", "missing
   locally" and Linux are covered by unit tests only.
 
+### Restore missing saves
+
+- **What:** Download the cloud files that are missing locally into their
+  mapped place (ADR 0034), like the official client does before a game
+  starts (`AC Launch, down` in its log, see below).
+- **When not:** any file differs, local saves match a rule but are not in
+  the cloud, or a root folder does not exist. Then nothing is written.
+- **Verified:** yes (2026-11-20, first test account, Windows, app
+  5191630): with a hand-made local-only save it refused and wrote
+  nothing; with an empty save folder it restored `save_slot_demo_1.json`,
+  which then compared as "same"; after a local change it refused with
+  "differs" and wrote nothing.
+
 ## Known, not implemented
 
 ### Download through `Cloud.ClientFileDownload`
@@ -123,8 +136,29 @@ response types are in steam-vent-proto-steam
   answers with pending remote operations; `Cloud.SignalAppExitSyncDone#1`
   and `Cloud.GetAppFileChangelist#1` (`appid`, `synced_change_number`;
   answer with `current_change_number`, `files`, `path_prefixes`,
-  `machine_names`) exist. **Unknown:** the exact order the official
-  client uses; to be recorded before any sync.
+  `machine_names`) exist.
+- **Observed** in the official client's `logs/cloud_log.txt`, 2026-11-20,
+  Coin Maker Simulator Demo, first test account (only the order of
+  steps is logged, not method names or message fields):
+  - First use of the app by this account on the computer (`init`): the
+    client found local files of a *previous user* in the Auto-Cloud
+    folder and moved them into its own per-account folder
+    (`userdata/<account>/<app>/ac/...`) before going on. Different
+    accounts' saves are kept apart.
+  - Launch (`AC Launch, down`): "sync from local change number to global
+    change number", download, then watch the files.
+  - Exit (`up, AC Exit`): evaluate each `savefiles` rule (logged with the
+    same `root`, `path`, `pattern` as the app info), "Need to upload file
+    ...", "Upload batch initiated" with an ID, a change number and the
+    app build ID, then an HTTP upload per file to a Google Cloud Storage
+    host, then "Upload complete, result OK".
+  - The 20496-byte save went up as an HTTP body of 9019 bytes
+    (`offset=0, length=9019`). **Unknown:** how the upload body is
+    transformed (compression? which format?); `ClientBeginFileUpload`
+    has both `file_size` and `raw_file_size`, which fits a compressed
+    body. Downloads so far arrived raw (SHA-1 of the file).
+- **Not used by Reborn** until the upload format and the exact messages
+  are backed by a source.
 
 ### Auto-Cloud paths
 

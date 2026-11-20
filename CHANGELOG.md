@@ -30,8 +30,11 @@ All notable changes to Reborn are listed here. The format follows
   choice, checked against Steam's SHA-1. Existing files are never
   overwritten. `--compare` shows where each file belongs on this computer
   and whether your local copy is the same, differs or is missing, plus
-  local saves that are not in the cloud yet. First steps towards syncing
-  saves; nothing is uploaded or deleted (ADR 0031, ADR 0032, ADR 0033).
+  local saves that are not in the cloud yet. `--restore` brings saves
+  that are missing on this computer into the game's save folders, but
+  only if no local save differs or is missing from the cloud. First steps
+  towards syncing saves; nothing is uploaded, deleted or overwritten
+  (ADR 0031 to ADR 0034).
 
 ### Changed
 

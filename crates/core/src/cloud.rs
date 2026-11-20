@@ -1,5 +1,6 @@
 //! Comparing an app's Steam Cloud files with the files on this computer
-//! (ADR 0033). Only reads; nothing is written, downloaded or uploaded.
+//! (ADR 0033), and restoring saves that are missing locally (ADR 0034).
+//! Nothing is uploaded, deleted or overwritten.
 //!
 //! An Auto-Cloud file name is the root token, the rule's path and the
 //! file name, e.g.
@@ -13,6 +14,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use reborn_cm::{CloudFile, Session};
+use reborn_content::cdn::CdnClient;
+use reborn_content::cloud::{CloudFileRef, CloudOutcome, download_cloud_file_into};
 use reborn_content::path::install_path;
 use reborn_formats::{CloudConfig, cloud_config, vdf};
 use reborn_platform::cloud_roots::{CloudOs, KnownDirs, cloud_root_dir, is_windows_root};
@@ -131,35 +134,215 @@ pub async fn compare_app_cloud(
     app_id: u32,
     library: Option<&Path>,
 ) -> Result<CloudReport, CoreError> {
-    let text = session.app_info_text(app_id).await?;
-    let document =
-        vdf::parse(&text).map_err(|error| reborn_cm::Error::AppInfo(app_id, error.to_string()))?;
-    let found = cloud_config(&document);
-    let has_cloud = found.is_some();
-    let config = found.unwrap_or_default();
-    let files = session.cloud_files(app_id).await?;
-    let library = match library {
-        Some(library) => library.to_path_buf(),
-        None => settings::default_library()?,
-    };
-    let game_dir = installed_game_dir(&library, app_id).ok();
-    let dirs = KnownDirs::current();
-    let os = CloudOs::current();
-    let resolve = |root: &str| {
-        dirs.as_ref()
-            .and_then(|dirs| cloud_root_dir(root, os, dirs, game_dir.as_deref()))
-    };
-    let place = CloudPlace {
-        os,
-        config: &config,
-        resolve: &resolve,
-    };
+    let app = AppCloud::load(session, app_id, library).await?;
+    let resolve = |root: &str| app.resolve(root);
+    let place = app.place(&resolve);
     Ok(CloudReport {
-        has_cloud,
-        auto_cloud: !config.save_files.is_empty(),
-        files: compare_cloud(&files, &place),
-        local_only: local_only_files(&place, session.steam_id(), &files),
+        has_cloud: app.has_cloud,
+        auto_cloud: !app.config.save_files.is_empty(),
+        files: compare_cloud(&app.files, &place),
+        local_only: local_only_files(&place, app.steam_id, &app.files),
     })
+}
+
+/// What [`restore_missing_saves`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestoreOutcome {
+    /// Nothing was written because something local conflicts.
+    Blocked(RestoreBlocked),
+    /// The missing files were handled.
+    Done(RestoreReport),
+}
+
+/// Why nothing was restored. The user decides how to go on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestoreBlocked {
+    /// These cloud files differ from the local ones.
+    Differs(Vec<String>),
+    /// These local files match a rule but are not in the cloud: unsynced
+    /// progress, or another account's saves.
+    LocalOnly(Vec<PathBuf>),
+    /// This root folder does not exist; Reborn does not create it.
+    RootMissing(PathBuf),
+}
+
+/// The result of restoring.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RestoreReport {
+    /// Files downloaded and written.
+    pub restored: Vec<PathBuf>,
+    /// Files that were already there with the same content.
+    pub unchanged: Vec<PathBuf>,
+    /// Cloud files without a local place, with the reason.
+    pub not_mapped: Vec<(String, NotMapped)>,
+    /// Files that could not be downloaded, with the reason. Nothing was
+    /// written for them.
+    pub failed: Vec<(String, String)>,
+}
+
+/// One file to download.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreTask {
+    /// The cloud file.
+    pub file: CloudFile,
+    /// Its root folder (exists).
+    pub base: PathBuf,
+    /// Its path below the root folder (checked).
+    pub relative: PathBuf,
+}
+
+/// What restoring would do: download `tasks`, nothing else.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RestorePlan {
+    /// Files missing locally.
+    pub tasks: Vec<RestoreTask>,
+    /// Files already the same locally.
+    pub unchanged: Vec<PathBuf>,
+    /// Cloud files without a local place.
+    pub not_mapped: Vec<(String, NotMapped)>,
+}
+
+/// Plans a restore (ADR 0034): blocked if any file differs, if local
+/// saves are not in the cloud, or if a root folder is missing; otherwise
+/// every file that is missing locally becomes a task. Only reads.
+pub fn plan_restore(
+    files: &[CloudFile],
+    place: &CloudPlace<'_>,
+    steam_id: u64,
+) -> Result<RestorePlan, RestoreBlocked> {
+    let states = compare_cloud(files, place);
+    let differing: Vec<String> = states
+        .iter()
+        .filter(|state| matches!(state.state, CloudState::Differs { .. }))
+        .map(|state| state.name.clone())
+        .collect();
+    if !differing.is_empty() {
+        return Err(RestoreBlocked::Differs(differing));
+    }
+    let local_only = local_only_files(place, steam_id, files);
+    if !local_only.is_empty() {
+        return Err(RestoreBlocked::LocalOnly(local_only));
+    }
+    let mut plan = RestorePlan::default();
+    for (file, state) in files.iter().zip(states) {
+        match state.state {
+            CloudState::MissingLocally => {
+                let Ok((base, relative)) = local_parts(&file.name, place) else {
+                    continue;
+                };
+                if !base.is_dir() {
+                    return Err(RestoreBlocked::RootMissing(base));
+                }
+                plan.tasks.push(RestoreTask {
+                    file: file.clone(),
+                    base,
+                    relative,
+                });
+            }
+            CloudState::Same => plan.unchanged.extend(state.local),
+            CloudState::NotMapped(reason) => plan.not_mapped.push((state.name, reason)),
+            CloudState::Differs { .. } => {}
+        }
+    }
+    Ok(plan)
+}
+
+/// Brings the app's cloud saves that are missing locally to this computer
+/// (ADR 0034). Writes only new files, after checking Steam's SHA-1; stops
+/// without writing anything when something local conflicts.
+pub async fn restore_missing_saves(
+    session: &Session,
+    app_id: u32,
+    library: Option<&Path>,
+) -> Result<RestoreOutcome, CoreError> {
+    let app = AppCloud::load(session, app_id, library).await?;
+    let resolve = |root: &str| app.resolve(root);
+    let place = app.place(&resolve);
+    let plan = match plan_restore(&app.files, &place, app.steam_id) {
+        Ok(plan) => plan,
+        Err(blocked) => return Ok(RestoreOutcome::Blocked(blocked)),
+    };
+    let mut report = RestoreReport {
+        unchanged: plan.unchanged,
+        not_mapped: plan.not_mapped,
+        ..RestoreReport::default()
+    };
+    if plan.tasks.is_empty() {
+        return Ok(RestoreOutcome::Done(report));
+    }
+    let client = CdnClient::new().map_err(|error| CoreError::Http(error.to_string()))?;
+    for task in plan.tasks {
+        let Some(url) = &task.file.download_url else {
+            report
+                .failed
+                .push((task.file.name, "Steam sent no download link".to_owned()));
+            continue;
+        };
+        let reference = CloudFileRef {
+            name: &task.file.name,
+            url: url.expose(),
+            size: task.file.size,
+            sha1: &task.file.sha1,
+        };
+        match download_cloud_file_into(&client, &task.base, &task.relative, reference).await {
+            Ok(CloudOutcome::Written(path)) => report.restored.push(path),
+            Ok(CloudOutcome::AlreadyThere(path)) => report.unchanged.push(path),
+            Err(error) => report.failed.push((task.file.name, error.to_string())),
+        }
+    }
+    Ok(RestoreOutcome::Done(report))
+}
+
+/// Everything about one app's cloud, loaded once.
+struct AppCloud {
+    has_cloud: bool,
+    config: CloudConfig,
+    files: Vec<CloudFile>,
+    os: CloudOs,
+    dirs: Option<KnownDirs>,
+    game_dir: Option<PathBuf>,
+    steam_id: u64,
+}
+
+impl AppCloud {
+    async fn load(
+        session: &Session,
+        app_id: u32,
+        library: Option<&Path>,
+    ) -> Result<Self, CoreError> {
+        let text = session.app_info_text(app_id).await?;
+        let document = vdf::parse(&text)
+            .map_err(|error| reborn_cm::Error::AppInfo(app_id, error.to_string()))?;
+        let found = cloud_config(&document);
+        let files = session.cloud_files(app_id).await?;
+        let library = match library {
+            Some(library) => library.to_path_buf(),
+            None => settings::default_library()?,
+        };
+        Ok(Self {
+            has_cloud: found.is_some(),
+            config: found.unwrap_or_default(),
+            files,
+            os: CloudOs::current(),
+            dirs: KnownDirs::current(),
+            game_dir: installed_game_dir(&library, app_id).ok(),
+            steam_id: session.steam_id(),
+        })
+    }
+
+    fn resolve(&self, root: &str) -> Option<PathBuf> {
+        self.dirs
+            .as_ref()
+            .and_then(|dirs| cloud_root_dir(root, self.os, dirs, self.game_dir.as_deref()))
+    }
+
+    fn place<'a>(&'a self, resolve: &'a dyn Fn(&str) -> Option<PathBuf>) -> CloudPlace<'a> {
+        CloudPlace {
+            os: self.os,
+            config: &self.config,
+            resolve,
+        }
+    }
 }
 
 /// What the comparison needs to know about this computer.
@@ -175,10 +358,16 @@ pub struct CloudPlace<'a> {
 
 /// The local path for a cloud file name.
 pub fn local_path(name: &str, place: &CloudPlace<'_>) -> Result<PathBuf, NotMapped> {
+    let (folder, relative) = local_parts(name, place)?;
+    Ok(folder.join(relative))
+}
+
+/// The root folder and the checked path below it for a cloud file name.
+fn local_parts(name: &str, place: &CloudPlace<'_>) -> Result<(PathBuf, PathBuf), NotMapped> {
     let (root, rest) = split_root(name).ok_or(NotMapped::NoRootToken)?;
     let relative = install_path(rest).map_err(|_| NotMapped::UnsafeName)?;
     let folder = root_folder(root, place)?;
-    Ok(folder.join(relative))
+    Ok((folder, relative))
 }
 
 /// Compares every cloud file with its local counterpart.
@@ -584,6 +773,101 @@ mod tests {
             local_only_files(&place, TEST_STEAM_ID, &cloud),
             vec![folder.join("save_slot_demo_2.json")]
         );
+    }
+
+    fn windows_place<'a>(
+        config: &'a CloudConfig,
+        resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    ) -> CloudPlace<'a> {
+        CloudPlace {
+            os: CloudOs::Windows,
+            config,
+            resolve,
+        }
+    }
+
+    #[test]
+    fn plans_missing_files_into_a_clean_folder() {
+        let dir = TempDir::new("plan");
+        let config = config();
+        let resolve = |_: &str| Some(dir.0.clone());
+        let place = windows_place(&config, &resolve);
+        let folder = save_folder(&dir.0);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("save_slot_demo_1.json"), b"same").unwrap();
+        let files = [
+            cloud_file(RECORDED_NAME, b"same"),
+            cloud_file(&RECORDED_NAME.replace("_1", "_2"), b"new"),
+            cloud_file("MainPlayerData.json", b"other"),
+        ];
+        let plan = plan_restore(&files, &place, TEST_STEAM_ID).unwrap();
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].base, dir.0);
+        assert_eq!(
+            plan.tasks[0].relative,
+            Path::new("Studio312")
+                .join("Coin Maker Simulator Demo")
+                .join("save_slot_demo_2.json")
+        );
+        assert_eq!(plan.unchanged, vec![folder.join("save_slot_demo_1.json")]);
+        assert_eq!(
+            plan.not_mapped,
+            vec![("MainPlayerData.json".to_owned(), NotMapped::NoRootToken)]
+        );
+        // Planning writes nothing.
+        assert!(!folder.join("save_slot_demo_2.json").exists());
+    }
+
+    #[test]
+    fn a_differing_file_blocks_everything() {
+        let dir = TempDir::new("plan-differs");
+        let config = config();
+        let resolve = |_: &str| Some(dir.0.clone());
+        let place = windows_place(&config, &resolve);
+        let folder = save_folder(&dir.0);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("save_slot_demo_1.json"), b"local progress").unwrap();
+        let files = [
+            cloud_file(RECORDED_NAME, b"cloud progress"),
+            cloud_file(&RECORDED_NAME.replace("_1", "_2"), b"new"),
+        ];
+        assert_eq!(
+            plan_restore(&files, &place, TEST_STEAM_ID),
+            Err(RestoreBlocked::Differs(vec![RECORDED_NAME.to_owned()]))
+        );
+    }
+
+    #[test]
+    fn local_saves_not_in_the_cloud_block_everything() {
+        let dir = TempDir::new("plan-local");
+        let config = config();
+        let resolve = |_: &str| Some(dir.0.clone());
+        let place = windows_place(&config, &resolve);
+        let folder = save_folder(&dir.0);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("save_slot_demo_7.json"), b"someone's save").unwrap();
+        let files = [cloud_file(RECORDED_NAME, b"cloud")];
+        assert_eq!(
+            plan_restore(&files, &place, TEST_STEAM_ID),
+            Err(RestoreBlocked::LocalOnly(vec![
+                folder.join("save_slot_demo_7.json")
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_missing_root_folder_is_not_created() {
+        let dir = TempDir::new("plan-root");
+        let missing = dir.0.join("no LocalLow here");
+        let config = config();
+        let resolve = |_: &str| Some(missing.clone());
+        let place = windows_place(&config, &resolve);
+        let files = [cloud_file(RECORDED_NAME, b"cloud")];
+        assert_eq!(
+            plan_restore(&files, &place, TEST_STEAM_ID),
+            Err(RestoreBlocked::RootMissing(missing.clone()))
+        );
+        assert!(!missing.exists());
     }
 
     #[test]

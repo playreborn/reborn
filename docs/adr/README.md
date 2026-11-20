@@ -39,3 +39,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0031](0031-steam-cloud-step-by-step.md) | Steam Cloud, step by step | Accepted |
 | [0032](0032-downloading-cloud-files.md) | Downloading Steam Cloud files | Accepted |
 | [0033](0033-mapping-cloud-files.md) | Mapping Steam Cloud files to local paths | Accepted |
+| [0034](0034-restoring-missing-saves.md) | Restoring missing saves from Steam Cloud | Accepted |

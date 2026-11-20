@@ -105,13 +105,19 @@ enum Command {
         /// Download all files into this folder (ADR 0032): verified against
         /// Steam's SHA-1, existing files are never overwritten. Use a folder
         /// of your own, not the game's save folder.
-        #[arg(long, conflicts_with_all = ["record", "compare"])]
+        #[arg(long, conflicts_with_all = ["record", "compare", "restore"])]
         download: Option<PathBuf>,
         /// Compare the files with the ones on this computer (ADR 0033):
         /// where each belongs, and whether it is the same, differs or is
         /// missing. Only reads.
-        #[arg(long, conflicts_with = "record")]
+        #[arg(long, conflicts_with_all = ["record", "restore"])]
         compare: bool,
+        /// Bring saves that are missing on this computer from the cloud
+        /// into the game's save folders (ADR 0034). Writes only new files
+        /// and stops without writing anything if a local save differs or
+        /// is not in the cloud.
+        #[arg(long, conflicts_with = "record")]
+        restore: bool,
         /// Instead, record Steam's answer as a redacted fixture into this
         /// folder.
         #[arg(long)]
@@ -249,11 +255,13 @@ async fn main() -> Result<()> {
             app_id,
             download,
             compare,
+            restore,
             record,
             account,
         } => match download {
             Some(folder) => cloud_download(account, app_id, &folder).await,
             None if compare => cloud_compare(account, app_id).await,
+            None if restore => cloud_restore(account, app_id).await,
             None => cloud(account, app_id, record.as_deref()).await,
         },
         Command::Depots {
@@ -570,6 +578,55 @@ async fn cloud_compare(account: Option<String>, app_id: u32) -> Result<()> {
     for path in &report.local_only {
         println!("only local: {}", path.display());
     }
+    Ok(())
+}
+
+/// Restores saves that are missing locally (ADR 0034).
+async fn cloud_restore(account: Option<String>, app_id: u32) -> Result<()> {
+    use reborn_core::cloud::{RestoreBlocked, RestoreOutcome, restore_missing_saves};
+
+    let session = account::sign_in(account).await?;
+    let report = match restore_missing_saves(&session, app_id, None).await? {
+        RestoreOutcome::Blocked(RestoreBlocked::Differs(names)) => {
+            for name in &names {
+                println!("differs: {name}");
+            }
+            bail!("nothing written: local saves differ from the cloud; decide which to keep");
+        }
+        RestoreOutcome::Blocked(RestoreBlocked::LocalOnly(paths)) => {
+            for path in &paths {
+                println!("only local: {}", path.display());
+            }
+            bail!(
+                "nothing written: these local saves are not in the cloud \
+                 (unsynced progress or another account's saves)"
+            );
+        }
+        RestoreOutcome::Blocked(RestoreBlocked::RootMissing(path)) => {
+            bail!("nothing written: {} does not exist", path.display());
+        }
+        RestoreOutcome::Done(report) => report,
+    };
+    for path in &report.restored {
+        println!("restored: {}", path.display());
+    }
+    for path in &report.unchanged {
+        println!("already there: {}", path.display());
+    }
+    for (name, reason) in &report.not_mapped {
+        println!("skipped {name}: {reason}");
+    }
+    for (name, error) in &report.failed {
+        println!("failed {name}: {error}");
+    }
+    if !report.failed.is_empty() {
+        bail!("{} files could not be restored", report.failed.len());
+    }
+    println!(
+        "{} restored, {} already there.",
+        report.restored.len(),
+        report.unchanged.len()
+    );
     Ok(())
 }
 

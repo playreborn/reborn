@@ -97,6 +97,19 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// List the files of an app in the account's Steam Cloud (ADR 0031).
+    /// Only reads; nothing is downloaded, uploaded or deleted.
+    Cloud {
+        /// App ID, e.g. 480 for Spacewar.
+        app_id: u32,
+        /// Instead, record Steam's answer as a redacted fixture into this
+        /// folder.
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Show the depots and launch entries of an app and which ones fit
     /// this computer.
     Depots {
@@ -222,6 +235,11 @@ async fn main() -> Result<()> {
             record,
             account,
         } => achievements(account, app_id, &language, record.as_deref()).await,
+        Command::Cloud {
+            app_id,
+            record,
+            account,
+        } => cloud(account, app_id, record.as_deref()).await,
         Command::Depots {
             app_id,
             branch,
@@ -460,6 +478,35 @@ async fn achievements(
                 achievement.display_name, achievement.description
             );
         }
+    }
+    Ok(())
+}
+
+async fn cloud(account: Option<String>, app_id: u32, record: Option<&Path>) -> Result<()> {
+    let session = account::sign_in(account).await?;
+    if let Some(dir) = record {
+        let recording = session.record_cloud_files(app_id).await?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::write(dir.join("cloud_files.bin"), &recording)?;
+        println!("Recorded Steam's answer (redacted) into {}.", dir.display());
+        return Ok(());
+    }
+    let files = session.cloud_files(app_id).await?;
+    if files.is_empty() {
+        println!("App {app_id} has no files in Steam Cloud.");
+        return Ok(());
+    }
+    println!("{} files of app {app_id} in Steam Cloud:", files.len());
+    for file in files {
+        let time = u32::try_from(file.timestamp)
+            .map(utc_time)
+            .unwrap_or_else(|_| file.timestamp.to_string());
+        println!(
+            "{} · {} · {time} · {}",
+            file.name,
+            human_size(u64::from(file.size)),
+            file.platforms.join(",")
+        );
     }
     Ok(())
 }

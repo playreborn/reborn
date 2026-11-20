@@ -38,5 +38,5 @@ is documented like this:
 | `social.md` (friends, persona state, chat) | M3 |
 | [`tickets.md`](tickets.md) (ownership and encrypted app tickets) | M4, written |
 | [`achievements.md`](achievements.md) (reading achievements) | M4, written |
-| `cloud.md` | M4 |
+| [`cloud.md`](cloud.md) (Steam Cloud: listing; spike for the rest) | M4, written |
 | `steamclient-interfaces.md` (shim) | M4 |

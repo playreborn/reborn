@@ -27,6 +27,7 @@
 mod achievements;
 mod apps;
 mod chat;
+mod cloud;
 mod content;
 mod friends;
 mod guard;
@@ -43,6 +44,7 @@ pub use chat::{
     ChatEvent, ChatMessage, ChatRecording, UnreadChat, chat_event_from, history_from,
     incoming_from, unread_from,
 };
+pub use cloud::{CloudFile, cloud_files_from};
 pub use content::{ContentServer, DepotDecryptionKey};
 pub use friends::{
     Friend, FriendRequestRecording, FriendsRecording, Persona, PersonaState, Relationship,

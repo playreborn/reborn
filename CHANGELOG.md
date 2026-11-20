@@ -25,6 +25,9 @@ All notable changes to Reborn are listed here. The format follows
   Hidden ones stay hidden until unlocked. `reborn-cli achievements
   <app_id>` lists them too. Reborn only reads them; it never unlocks or
   changes achievements (ADR 0029, ADR 0030).
+- `reborn-cli cloud <app_id>` lists the files a game keeps in your Steam
+  Cloud. First step towards syncing saves; nothing is downloaded,
+  uploaded or deleted yet (ADR 0031).
 
 ### Changed
 

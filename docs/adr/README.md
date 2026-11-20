@@ -36,3 +36,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0028](0028-trying-several-servers.md) | Trying several Steam servers when signing in | Accepted |
 | [0029](0029-reading-achievements.md) | Reading achievements | Accepted |
 | [0030](0030-achievements-in-the-gui.md) | Achievements in the daemon and the GUI | Accepted |
+| [0031](0031-steam-cloud-step-by-step.md) | Steam Cloud, step by step | Accepted |

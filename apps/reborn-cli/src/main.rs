@@ -69,6 +69,19 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Ask Valve for the ownership ticket and the encrypted app ticket of
+    /// an app (ADR 0027). Only the sizes are shown, never the tickets.
+    Ticket {
+        /// App ID, e.g. 480 for Spacewar.
+        app_id: u32,
+        /// Instead, record Steam's answers as redacted fixtures into this
+        /// folder (ticket bytes replaced by zeros).
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Show the depots and launch entries of an app and which ones fit
     /// this computer.
     Depots {
@@ -183,6 +196,11 @@ async fn main() -> Result<()> {
             output,
             account,
         } => appinfo(account, app_id, &output).await,
+        Command::Ticket {
+            app_id,
+            record,
+            account,
+        } => ticket(account, app_id, record.as_deref()).await,
         Command::Depots {
             app_id,
             branch,
@@ -345,6 +363,30 @@ async fn depots(account: Option<String>, app_id: u32, branch: &str) -> Result<()
                 .map(|d| format!("  ({d})"))
                 .unwrap_or_default(),
         );
+    }
+    Ok(())
+}
+
+async fn ticket(account: Option<String>, app_id: u32, record: Option<&Path>) -> Result<()> {
+    let session = account::sign_in(account).await?;
+    if let Some(dir) = record {
+        let recording = session.record_tickets(app_id).await?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::write(dir.join("ownership_ticket.bin"), &recording.ownership)?;
+        std::fs::write(dir.join("encrypted_app_ticket.bin"), &recording.encrypted)?;
+        println!("Recorded both answers (redacted) into {}.", dir.display());
+        return Ok(());
+    }
+    match session.app_ownership_ticket(app_id).await {
+        Ok(ticket) => println!("Ownership ticket for app {app_id}: {} bytes.", ticket.len()),
+        Err(error) => println!("Ownership ticket for app {app_id}: {error}"),
+    }
+    match session.encrypted_app_ticket(app_id, &[]).await {
+        Ok(ticket) => println!(
+            "Encrypted app ticket for app {app_id}: {} bytes.",
+            ticket.ticket.len()
+        ),
+        Err(error) => println!("Encrypted app ticket for app {app_id}: {error}"),
     }
     Ok(())
 }

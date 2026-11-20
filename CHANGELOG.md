@@ -17,12 +17,24 @@ All notable changes to Reborn are listed here. The format follows
   type. Messages you read in Reborn are marked as read on Steam, so the
   official client and the phone no longer show them as new. Unread counts
   from Steam appear in the friends list (ADR 0026).
+- `reborn-cli ticket <app_id>` asks Valve for the app's ownership ticket
+  and encrypted app ticket and shows their sizes: groundwork for running
+  games without the official client (ADR 0012, ADR 0027).
+
+### Changed
+
+- The rules for the planned `steamclient` replacement are set: it is built
+  without Valve's Steamworks SDK, only from observing games you own
+  (ADR 0012, `docs/legal/shim-assessment.md`).
 
 ### Fixed
 
 - A network error while signing in with the stored login was reported as
-  "login rejected, sign in again". Signing in now also gives up after one
-  minute instead of hanging.
+  "login rejected, sign in again". Signing in now also gives up after 90
+  seconds instead of hanging.
+- When one Steam server kept resetting the connection, every sign-in with
+  the stored login failed. Reborn now tries up to three servers, and the
+  daemon allows a sign-in 90 seconds (ADR 0028).
 
 ## [0.2.0] - 2026-11-20
 

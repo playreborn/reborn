@@ -34,6 +34,7 @@ mod pics;
 mod prompt;
 mod secret;
 mod session;
+mod tickets;
 
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use chat::{
@@ -49,6 +50,9 @@ pub use library::OwnedApp;
 pub use secret::Secret;
 pub use session::{
     Error, PasswordLogin, Session, login_with_password, login_with_token, logoff_allows_reconnect,
+};
+pub use tickets::{
+    EncryptedTicket, Ticket, TicketRecording, encrypted_ticket_from, ownership_ticket_from,
 };
 
 /// Ways to confirm a login with Steam Guard.

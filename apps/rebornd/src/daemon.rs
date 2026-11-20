@@ -28,8 +28,9 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Longest a sign-in may take. Without a limit, a sign-in caught by a
 /// network outage could hang and hold the session lock, blocking every
-/// request (live 2026-11-20).
-const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(60);
+/// request (live 2026-11-20). Room for three servers that each take about
+/// 20 seconds to fail (ADR 0028).
+const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Least time between two typing notices to the same friend (ADR 0026).
 const TYPING_INTERVAL: Duration = Duration::from_secs(10);

@@ -30,5 +30,7 @@ it is accepted; a new ADR supersedes it instead.
 | [0022](0022-friend-requests.md) | Friend requests: send, accept, decline | Accepted (decline: see 0023) |
 | [0023](0023-decline-disabled.md) | Declining friend requests disabled until verified | Accepted |
 | [0024](0024-friend-chat.md) | One-to-one chat with friends | Accepted (typing, read markers: see 0026) |
-| [0025](0025-reconnecting.md) | Reconnecting after a lost connection | Accepted |
+| [0025](0025-reconnecting.md) | Reconnecting after a lost connection | Accepted (sign-in limit: see 0028) |
 | [0026](0026-typing-and-read-markers.md) | Typing notices, read markers and unread counts | Accepted |
+| [0027](0027-app-tickets.md) | App tickets from Valve | Accepted |
+| [0028](0028-trying-several-servers.md) | Trying several Steam servers when signing in | Accepted |

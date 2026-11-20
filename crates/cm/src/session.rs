@@ -28,7 +28,7 @@ use steam_vent_proto_steam::steammessages_clientserver_friends::CMsgClientFriend
 use steam_vent_proto_steam::steammessages_clientserver_login::{
     CMsgClientHeartBeat, CMsgClientLoggedOff,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::Secret;
 use crate::friends::FriendsSlot;
@@ -237,11 +237,45 @@ pub async fn login_with_password<H: AuthConfirmationHandler>(
     })
 }
 
+/// How many Steam servers a token login tries before giving up (ADR 0028).
+const LOGIN_SERVERS: u32 = 3;
+
+/// Whether connecting to one Steam server failed in a way another server
+/// may not: the connection was reset, closed or timed out before logon.
+/// Live 2026-11-20: one server reset every connection (os error 10054),
+/// and steam-vent starts each new process at the first server of the list.
+fn try_another_server(error: &ConnectionError) -> bool {
+    matches!(
+        error,
+        ConnectionError::Network(
+            NetworkError::IO(_) | NetworkError::Ws(_) | NetworkError::EOF | NetworkError::Timeout
+        )
+    )
+}
+
 /// Logs in with a refresh token from an earlier [`login_with_password`].
+///
+/// Tries up to three servers when a connection fails before
+/// logon, a second apart. steam-vent's server list hands out its servers in
+/// turn, so each attempt reaches the next one. node-steam-user also avoids
+/// a failed server: it picks at random among the five least loaded and
+/// skips recently failed ones (`components/09-logon.js`). Password logins
+/// are not repeated, because they may ask for Steam Guard again.
 pub async fn login_with_token(account: &str, refresh_token: &Secret) -> Result<Session, Error> {
     let servers = ServerList::discover().await?;
-    debug!(account, "starting token login");
-    let connection = Connection::access(&servers, account, refresh_token.expose()).await?;
+    let mut attempt = 1;
+    let connection = loop {
+        debug!(account, attempt, "starting token login");
+        match Connection::access(&servers, account, refresh_token.expose()).await {
+            Ok(connection) => break connection,
+            Err(error) if attempt < LOGIN_SERVERS && try_another_server(&error) => {
+                warn!(%error, attempt, "Steam server failed, trying the next one");
+                attempt += 1;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
     info!(account, "logged in with refresh token");
     let (licenses, friends) = receive_initial(&connection).await?;
     Ok(Session {
@@ -346,6 +380,20 @@ mod tests {
         assert!(!offline.is_login_rejected());
         assert!(!Error::Network(NetworkError::EOF).is_login_rejected());
         assert!(!Error::LicenseListTimeout.is_login_rejected());
+    }
+
+    #[test]
+    fn only_connection_failures_try_another_server() {
+        let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        assert!(try_another_server(&ConnectionError::Network(
+            NetworkError::IO(reset)
+        )));
+        assert!(try_another_server(&ConnectionError::Network(
+            NetworkError::Timeout
+        )));
+        assert!(!try_another_server(&ConnectionError::LoginError(
+            steam_vent::LoginError::InvalidCredentials
+        )));
     }
 
     #[test]

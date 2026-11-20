@@ -96,3 +96,18 @@ v0.5.0 unless noted.
   it within the minute, and the first sign-in attempt after 5 seconds
   succeeded. A logoff with an EResult (for example a replaced session) has
   not been seen live yet.
+
+### Choosing a server
+
+- **What:** A token login tries up to three CM servers when connecting
+  fails before logon (reset, closed, timeout), a second apart.
+- **Why:** steam-vent's `ServerList` hands out servers in turn, starting
+  with the first of `ISteamDirectory/GetCMList` in each process
+  (`src/serverlist.rs`, `pick_ws`). On 2026-11-20 one server reset every
+  connection (os error 10054), so every new CLI process failed.
+- **Source:** node-steam-user `components/09-logon.js` picks at random
+  among the five least loaded servers and skips recently failed ones;
+  Reborn moves to the next server instead.
+- **Verified:** yes (2026-11-20: several servers reset connections after
+  about 20 seconds; the second or third server worked in three of four
+  runs, and one run failed on all three).

@@ -204,7 +204,7 @@ pub async fn login_with_password<H: AuthConfirmationHandler>(
     guard_data: Option<&Secret>,
     confirmation: H,
 ) -> Result<PasswordLogin, Error> {
-    let servers = ServerList::discover().await?;
+    let servers = discover_servers().await?;
     let (guard_store, received) = MemoryGuardStore::new(guard_data.map(|g| g.expose().to_owned()));
 
     debug!(account, "starting password login");
@@ -259,13 +259,14 @@ fn try_another_server(error: &ConnectionError) -> bool {
 /// Logs in with a refresh token from an earlier [`login_with_password`].
 ///
 /// Tries up to three servers when a connection fails before
-/// logon, a second apart. steam-vent's server list hands out its servers in
-/// turn, so each attempt reaches the next one. node-steam-user also avoids
+/// logon, a second apart. steam-vent shuffles the server list once and
+/// then hands its servers out in turn, so each attempt reaches another
+/// random server (ADR 0036). node-steam-user also avoids
 /// a failed server: it picks at random among the five least loaded and
 /// skips recently failed ones (`components/09-logon.js`). Password logins
 /// are not repeated, because they may ask for Steam Guard again.
 pub async fn login_with_token(account: &str, refresh_token: &Secret) -> Result<Session, Error> {
-    let servers = ServerList::discover().await?;
+    let servers = discover_servers().await?;
     let mut attempt = 1;
     let connection = loop {
         debug!(account, attempt, "starting token login");
@@ -287,6 +288,24 @@ pub async fn login_with_token(account: &str, refresh_token: &Secret) -> Result<S
         licenses,
         friends,
     })
+}
+
+/// Steam's server list, WebSocket servers on port 443 first (ADR 0037).
+async fn discover_servers() -> Result<ServerList, Error> {
+    let servers = ServerList::discover().await?;
+    Ok(ServerList::new(
+        servers.tcp_servers(),
+        port_443_first(servers.ws_servers()),
+    )?)
+}
+
+/// Moves servers on port 443 to the front, keeping the (random) order
+/// inside both groups: on 2026-11-21 every attempt on ports 27018 and
+/// 27019 was reset, while port 443 worked on the same hosts (ADR 0037).
+fn port_443_first(mut servers: Vec<String>) -> Vec<String> {
+    // Stable: `false` (port 443) sorts before `true`.
+    servers.sort_by_key(|server| !server.ends_with(":443"));
+    servers
 }
 
 fn take(slot: &Arc<Mutex<Option<String>>>) -> Option<String> {
@@ -383,6 +402,30 @@ mod tests {
         assert!(!offline.is_login_rejected());
         assert!(!Error::Network(NetworkError::EOF).is_login_rejected());
         assert!(!Error::LicenseListTimeout.is_login_rejected());
+    }
+
+    #[test]
+    fn servers_on_port_443_come_first_in_their_order() {
+        let servers = [
+            "cmp1-fra2.steamserver.net:27018",
+            "cmp2-mad1.steamserver.net:443",
+            "ext2-par1.steamserver.net:27033",
+            "cmp1-fra1.steamserver.net:443",
+            "cmp1-fra1.steamserver.net:27019",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(
+            port_443_first(servers),
+            [
+                "cmp2-mad1.steamserver.net:443",
+                "cmp1-fra1.steamserver.net:443",
+                "cmp1-fra2.steamserver.net:27018",
+                "ext2-par1.steamserver.net:27033",
+                "cmp1-fra1.steamserver.net:27019",
+            ]
+        );
+        assert!(port_443_first(Vec::new()).is_empty());
     }
 
     #[test]

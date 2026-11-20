@@ -101,10 +101,21 @@ v0.5.0 unless noted.
 
 - **What:** A token login tries up to three CM servers when connecting
   fails before logon (reset, closed, timeout), a second apart.
-- **Why:** steam-vent's `ServerList` hands out servers in turn, starting
-  with the first of `ISteamDirectory/GetCMList` in each process
-  (`src/serverlist.rs`, `pick_ws`). On 2026-11-20 one server reset every
-  connection (os error 10054), so every new CLI process failed.
+- **Why:** On 2026-11-20 and 2026-11-21 many connections were reset
+  after about 20 seconds (os error 10054). steam-vent's `ServerList`
+  shuffles the `ISteamDirectory/GetCMList` answer at random
+  (`src/serverlist.rs`, `TryFrom<ServerListResponse>`), then hands the
+  servers out in turn within a process (`pick_ws`). So each attempt
+  reaches another, randomly chosen server. (Corrected 2026-11-21: earlier
+  this said every process starts at the same server, which is wrong; see
+  ADR 0036.)
+- **Observed** 2026-11-21 (picked server logged by
+  `steam_vent::serverlist` at debug level, ten attempts): every attempt
+  on port 27018 or 27019 was reset, every attempt on 443, 27021 or 27033
+  worked, and `cmp1-fra1` failed on 27018/27019 but worked on 443. So the
+  network path resets those ports. Reborn tries servers on port 443
+  first (ADR 0037); afterwards five runs in a row all picked port 443 and
+  signed in on the first attempt (2026-11-21).
 - **Source:** node-steam-user `components/09-logon.js` picks at random
   among the five least loaded servers and skips recently failed ones;
   Reborn moves to the next server instead.

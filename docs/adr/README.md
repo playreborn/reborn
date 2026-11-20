@@ -33,7 +33,7 @@ it is accepted; a new ADR supersedes it instead.
 | [0025](0025-reconnecting.md) | Reconnecting after a lost connection | Accepted (sign-in limit: see 0028) |
 | [0026](0026-typing-and-read-markers.md) | Typing notices, read markers and unread counts | Accepted |
 | [0027](0027-app-tickets.md) | App tickets from Valve | Accepted |
-| [0028](0028-trying-several-servers.md) | Trying several Steam servers when signing in | Accepted |
+| [0028](0028-trying-several-servers.md) | Trying several Steam servers when signing in | Accepted (context corrected by 0036) |
 | [0029](0029-reading-achievements.md) | Reading achievements | Accepted |
 | [0030](0030-achievements-in-the-gui.md) | Achievements in the daemon and the GUI | Accepted |
 | [0031](0031-steam-cloud-step-by-step.md) | Steam Cloud, step by step | Accepted |
@@ -41,3 +41,5 @@ it is accepted; a new ADR supersedes it instead.
 | [0033](0033-mapping-cloud-files.md) | Mapping Steam Cloud files to local paths | Accepted |
 | [0034](0034-restoring-missing-saves.md) | Restoring missing saves from Steam Cloud | Accepted |
 | [0035](0035-restoring-saves-on-launch.md) | Restoring missing saves when a game starts | Accepted |
+| [0036](0036-servers-are-already-shuffled.md) | Steam servers are already chosen at random | Accepted |
+| [0037](0037-preferring-port-443.md) | Preferring Steam servers on port 443 | Accepted |

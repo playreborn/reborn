@@ -54,7 +54,9 @@ All notable changes to Reborn are listed here. The format follows
   seconds instead of hanging.
 - When one Steam server kept resetting the connection, every sign-in with
   the stored login failed. Reborn now tries up to three servers, and the
-  daemon allows a sign-in 90 seconds (ADR 0028).
+  daemon allows a sign-in 90 seconds (ADR 0028). It also tries servers on
+  port 443 first, because some networks reset Steam's other ports; signing
+  in no longer waits 20 seconds for a reset there (ADR 0037).
 
 ## [0.2.0] - 2026-11-20
 

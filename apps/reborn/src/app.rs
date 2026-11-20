@@ -11,7 +11,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
     FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult,
-    JobState, OwnedApp,
+    JobState, OwnStatus, OwnedApp,
 };
 use reborn_ipc::{Client, Event, Request, Response, Secret};
 
@@ -36,6 +36,35 @@ struct SettingsView {
     library_is_builtin: bool,
     proton: Option<String>,
     protons: Vec<String>,
+    own_status: Option<OwnStatus>,
+}
+
+/// The choices for the own online status (ADR 0021).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatusChoice(Option<OwnStatus>);
+
+impl StatusChoice {
+    const ALL: [StatusChoice; 6] = [
+        StatusChoice(None),
+        StatusChoice(Some(OwnStatus::Online)),
+        StatusChoice(Some(OwnStatus::Away)),
+        StatusChoice(Some(OwnStatus::Busy)),
+        StatusChoice(Some(OwnStatus::Invisible)),
+        StatusChoice(Some(OwnStatus::Offline)),
+    ];
+}
+
+impl std::fmt::Display for StatusChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self.0 {
+            None => "Not set by Reborn",
+            Some(OwnStatus::Online) => "Online",
+            Some(OwnStatus::Away) => "Away",
+            Some(OwnStatus::Busy) => "Busy",
+            Some(OwnStatus::Invisible) => "Invisible",
+            Some(OwnStatus::Offline) => "Offline",
+        })
+    }
 }
 
 /// Connection to the daemon.
@@ -99,6 +128,7 @@ pub enum Message {
     UninstallDone(Result<Response, String>),
     SettingsLoaded(Result<Response, String>),
     FriendsLoaded(Result<Response, String>),
+    OwnStatusPicked(StatusChoice),
     LibraryInput(String),
     SaveLibrary,
     ResetLibrary,
@@ -295,6 +325,9 @@ impl App {
                 }
                 Task::none()
             }
+            Message::OwnStatusPicked(StatusChoice(status)) => {
+                self.send(Request::SetOwnStatus { status }, Message::SettingsLoaded)
+            }
             Message::FriendsLoaded(result) => {
                 match result {
                     Ok(Response::Friends { friends }) => self.friends = Some(friends),
@@ -440,6 +473,7 @@ impl App {
                         library_is_builtin,
                         proton,
                         protons,
+                        own_status,
                     }) => {
                         self.library_input = library.display().to_string();
                         self.settings = Some(SettingsView {
@@ -447,6 +481,7 @@ impl App {
                             library_is_builtin,
                             proton,
                             protons,
+                            own_status,
                         });
                     }
                     Ok(_) => {}
@@ -852,6 +887,18 @@ impl App {
     }
 
     fn friends_view(&self) -> Element<'_, Message> {
+        let status = StatusChoice(self.settings.as_ref().and_then(|s| s.own_status));
+        let status_row = row![
+            text("Your status:"),
+            pick_list(StatusChoice::ALL, Some(status), Message::OwnStatusPicked),
+            text("Visible to your friends. Reborn sets it after every sign-in.").size(12),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        column![status_row, self.friends_list()].spacing(12).into()
+    }
+
+    fn friends_list(&self) -> Element<'_, Message> {
         let Some(friends) = &self.friends else {
             return center_text("Loading your friends ...");
         };

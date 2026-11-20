@@ -14,7 +14,7 @@ use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
     Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind,
-    JobResult, JobState, OwnedApp, Request, Response, Secret,
+    JobResult, JobState, OwnStatus, OwnedApp, Request, Response, Secret,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, oneshot};
@@ -170,6 +170,12 @@ impl Daemon {
         let friends = Arc::clone(&self.friends);
         let events = self.events.clone();
         let task = tokio::spawn(async move {
+            // The status the user chose in Reborn, if any (ADR 0021).
+            if let Some(status) = chosen_own_status()
+                && let Err(error) = session.set_persona_state(persona_state(status)).await
+            {
+                warn!(%error, "cannot set the online status");
+            }
             let list = match session.friends().await {
                 Ok(list) => list,
                 Err(error) => {
@@ -308,6 +314,7 @@ impl Daemon {
             Request::SignOut => self.sign_out().await,
             Request::Uninstall { app_id, library } => self.uninstall(app_id, library).await,
             Request::GetSettings => current_settings(),
+            Request::SetOwnStatus { status } => self.set_own_status(status).await,
             Request::Friends => match self.friends().await {
                 Ok(friends) => Response::Friends { friends },
                 Err(error) => {
@@ -475,6 +482,23 @@ impl Daemon {
             return error_response(&CoreError::from(error));
         }
         info!(library = ?library, "library folder changed");
+        self.emit(Event::SettingsChanged);
+        current_settings()
+    }
+
+    /// Remembers the online status and applies it to the current session
+    /// (ADR 0021). Acts on the account: visible to friends.
+    async fn set_own_status(&self, status: Option<OwnStatus>) -> Response {
+        if let Err(error) = settings::set_own_status(status.map(own_status_name)) {
+            return error_response(&CoreError::from(error));
+        }
+        let session = self.session.lock().await.clone();
+        if let (Some(status), Some(session)) = (status, session)
+            && let Err(error) = session.set_persona_state(persona_state(status)).await
+        {
+            return error_response(&CoreError::from(error));
+        }
+        info!(status = ?status, "own online status changed");
         self.emit(Event::SettingsChanged);
         current_settings()
     }
@@ -860,6 +884,39 @@ fn current_settings() -> Response {
         library_is_builtin,
         proton: settings::proton_setting().ok().flatten(),
         protons: reborn_core::launch::installed_protons(),
+        own_status: chosen_own_status(),
+    }
+}
+
+/// The online status the user chose in Reborn, if any.
+fn chosen_own_status() -> Option<OwnStatus> {
+    match settings::own_status_setting().ok().flatten()?.as_str() {
+        "online" => Some(OwnStatus::Online),
+        "away" => Some(OwnStatus::Away),
+        "busy" => Some(OwnStatus::Busy),
+        "invisible" => Some(OwnStatus::Invisible),
+        "offline" => Some(OwnStatus::Offline),
+        _ => None,
+    }
+}
+
+fn own_status_name(status: OwnStatus) -> &'static str {
+    match status {
+        OwnStatus::Online => "online",
+        OwnStatus::Away => "away",
+        OwnStatus::Busy => "busy",
+        OwnStatus::Invisible => "invisible",
+        OwnStatus::Offline => "offline",
+    }
+}
+
+fn persona_state(status: OwnStatus) -> PersonaState {
+    match status {
+        OwnStatus::Online => PersonaState::Online,
+        OwnStatus::Away => PersonaState::Away,
+        OwnStatus::Busy => PersonaState::Busy,
+        OwnStatus::Invisible => PersonaState::Invisible,
+        OwnStatus::Offline => PersonaState::Offline,
     }
 }
 
@@ -1014,6 +1071,26 @@ mod tests {
             })
             .await;
         assert!(matches!(response, Response::Error { .. }));
+    }
+
+    #[test]
+    fn own_status_names_round_trip() {
+        for status in [
+            OwnStatus::Online,
+            OwnStatus::Away,
+            OwnStatus::Busy,
+            OwnStatus::Invisible,
+            OwnStatus::Offline,
+        ] {
+            let name = own_status_name(status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                json,
+                format!("\"{name}\""),
+                "file and wire use the same names"
+            );
+        }
+        assert_eq!(persona_state(OwnStatus::Invisible).to_raw(), 7);
     }
 
     #[test]

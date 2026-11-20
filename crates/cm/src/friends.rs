@@ -14,8 +14,8 @@ use futures_util::{Stream, StreamExt};
 use steam_vent::ConnectionTrait;
 use steam_vent_proto_common::protobuf::Message;
 use steam_vent_proto_steam::steammessages_clientserver_friends::{
-    CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRequestFriendData,
-    cmsg_client_persona_state,
+    CMsgClientChangeStatus, CMsgClientFriendsList, CMsgClientPersonaState,
+    CMsgClientRequestFriendData, cmsg_client_persona_state,
 };
 use tokio::sync::Notify;
 use tracing::debug;
@@ -93,6 +93,21 @@ pub enum PersonaState {
 }
 
 impl PersonaState {
+    /// The `EPersonaState` value.
+    pub fn to_raw(self) -> u32 {
+        match self {
+            Self::Offline => 0,
+            Self::Online => 1,
+            Self::Busy => 2,
+            Self::Away => 3,
+            Self::Snooze => 4,
+            Self::LookingToTrade => 5,
+            Self::LookingToPlay => 6,
+            Self::Invisible => 7,
+            Self::Unknown(value) => value,
+        }
+    }
+
     fn from_raw(value: u32) -> Self {
         match value {
             0 => Self::Offline,
@@ -221,6 +236,12 @@ impl Session {
         Ok(())
     }
 
+    /// Sets the account's online status (ADR 0021). Visible to friends.
+    pub async fn set_persona_state(&self, state: PersonaState) -> Result<(), Error> {
+        self.connection.send(change_status(state)).await?;
+        Ok(())
+    }
+
     /// Persona updates for as long as the connection lasts.
     pub fn persona_updates(&self) -> impl Stream<Item = Vec<Persona>> + 'static {
         self.connection
@@ -258,6 +279,16 @@ impl Session {
             friends_list,
             persona_states,
         })
+    }
+}
+
+/// `CMsgClientChangeStatus` with only `persona_state`: `player_name` would
+/// rename the profile (node-steam-user `components/friends.js`,
+/// `setPersona`).
+fn change_status(state: PersonaState) -> CMsgClientChangeStatus {
+    CMsgClientChangeStatus {
+        persona_state: Some(state.to_raw()),
+        ..CMsgClientChangeStatus::default()
     }
 }
 
@@ -495,6 +526,27 @@ mod tests {
             "no persona_state sent"
         );
         assert_eq!(friend.game_app_id, None);
+    }
+
+    #[test]
+    fn status_change_sends_only_the_state() {
+        // Field 1 (persona_state) as a varint, nothing else; in particular
+        // no player_name, which would rename the profile.
+        assert_eq!(
+            change_status(PersonaState::Online)
+                .write_to_bytes()
+                .unwrap(),
+            [0x08, 0x01]
+        );
+        assert_eq!(
+            change_status(PersonaState::Invisible)
+                .write_to_bytes()
+                .unwrap(),
+            [0x08, 0x07]
+        );
+        for raw in 0..8 {
+            assert_eq!(PersonaState::from_raw(raw).to_raw(), raw);
+        }
     }
 
     #[test]

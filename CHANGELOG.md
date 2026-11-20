@@ -12,6 +12,9 @@ All notable changes to Reborn are listed here. The format follows
   and pending friend requests with name, online status and current game,
   updated live. Read-only: Reborn does not change your own status yet
   (ADR 0020).
+- **Your own online status** (online, away, busy, invisible, offline) can
+  be chosen in the Friends tab; Reborn sets it after every sign-in. Nothing
+  changes until you choose one (ADR 0021).
 
 ### Fixed
 

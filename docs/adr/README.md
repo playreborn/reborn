@@ -26,3 +26,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0018](0018-uninstalling-apps.md) | Uninstalling apps | Accepted |
 | [0019](0019-settings.md) | Settings for the library folder and the Proton build | Accepted |
 | [0020](0020-friends-and-presence.md) | Friends and presence, read-only first | Accepted |
+| [0021](0021-own-online-status.md) | The user's own online status | Accepted |

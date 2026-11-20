@@ -3854,6 +3854,7 @@ dependencies = [
  "reborn-core",
  "reborn-ipc",
  "reborn-platform",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

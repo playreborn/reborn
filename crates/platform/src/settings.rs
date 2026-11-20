@@ -5,7 +5,8 @@
 //! One small text file per setting:
 //! - `default-account`: the account used when none is given,
 //! - `library`: the folder for Reborn's game library, if not the default,
-//! - `proton`: the Proton build to use on Linux, if not the automatic choice.
+//! - `proton`: the Proton build to use on Linux, if not the automatic choice,
+//! - `own-status`: the online status Reborn sets after sign-in, if any.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use directories::ProjectDirs;
 const DEFAULT_ACCOUNT_FILE: &str = "default-account";
 const LIBRARY_FILE: &str = "library";
 const PROTON_FILE: &str = "proton";
+const OWN_STATUS_FILE: &str = "own-status";
 
 /// Reading or writing a setting failed.
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +106,17 @@ pub fn proton_setting() -> Result<Option<String>, SettingsError> {
 /// Sets the Proton build by display name (`None`: automatic choice).
 pub fn set_proton(name: Option<&str>) -> Result<(), SettingsError> {
     write_value(&config_dir()?, PROTON_FILE, name)
+}
+
+/// The online status Reborn sets after sign-in (`online`, `away`, ...), if
+/// the user chose one (ADR 0021).
+pub fn own_status_setting() -> Result<Option<String>, SettingsError> {
+    read_value(&config_dir()?, OWN_STATUS_FILE)
+}
+
+/// Sets or clears the online status Reborn sets after sign-in.
+pub fn set_own_status(status: Option<&str>) -> Result<(), SettingsError> {
+    write_value(&config_dir()?, OWN_STATUS_FILE, status)
 }
 
 /// Reads a one-line setting; missing or empty files mean "not set".

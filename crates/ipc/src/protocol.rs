@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 5;
+pub const PROTOCOL_MINOR: u16 = 6;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -166,6 +166,13 @@ pub enum Request {
     /// The friends list with names and status (ADR 0020). Signs in if
     /// needed. Added in protocol 1.5.
     Friends,
+    /// Set the online status Reborn applies after every sign-in (`None`:
+    /// Reborn does not set one), and apply it now (ADR 0021). Added in
+    /// protocol 1.6.
+    SetOwnStatus {
+        /// The status.
+        status: Option<OwnStatus>,
+    },
 }
 
 /// Answers from the daemon.
@@ -240,6 +247,9 @@ pub enum Response {
         /// Installed Proton builds, best automatic choice first. Empty on
         /// Windows.
         protons: Vec<String>,
+        /// The online status Reborn sets, if any. Added in protocol 1.6.
+        #[serde(default)]
+        own_status: Option<OwnStatus>,
     },
     /// Answer to [`Request::Friends`]. Names and status may still be
     /// missing; they follow as [`Event::FriendUpdated`].
@@ -457,6 +467,22 @@ pub struct FriendInfo {
     pub game_app_id: Option<u32>,
     /// Name of a non-Steam game being played, if any.
     pub game_name: Option<String>,
+}
+
+/// An online status the user can choose for their own account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnStatus {
+    /// Online.
+    Online,
+    /// Away.
+    Away,
+    /// Busy.
+    Busy,
+    /// Invisible: appear offline but stay signed in.
+    Invisible,
+    /// Offline.
+    Offline,
 }
 
 /// Online status of a friend.

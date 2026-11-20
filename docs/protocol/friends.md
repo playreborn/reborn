@@ -51,3 +51,18 @@ Read-only part of M3 (ADR 0020). Each section names its sources.
 - **Verified:** yes (2026-11-20, test account; name and offline status of
   one friend; fixture `crates/cm/tests/data/persona_state_0.bin`). Online
   and in-game states not seen live yet.
+
+### Own online status
+
+- **What:** The client sets the account's status (online, away, ...).
+- **Message:** `CMsgClientChangeStatus` (EMsg 716) with `persona_state`
+  (field 1, an `EPersonaState` value). Reborn sends nothing else;
+  `player_name` would rename the profile (ADR 0021).
+- **Source:** node-steam-user `components/friends.js` (`setPersona` sends
+  `ClientChangeStatus` with `persona_state` and the optional `player_name`,
+  no response expected); SteamKit2 `enums.steamd` (`EPersonaState`).
+- **Verified:** yes (2026-11-20, test account): a friend saw Online, Away
+  and Offline in the friends list as chosen in Reborn. While the official
+  client ran with the same account, its status won; with it closed,
+  Reborn's status applied. The profile page shows only online/offline/in
+  game; the detailed status appears in the friends list.

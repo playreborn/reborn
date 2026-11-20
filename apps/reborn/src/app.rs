@@ -11,8 +11,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
-    ChatMessageInfo, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job,
-    JobKind, JobResult, JobState, OwnStatus, OwnedApp,
+    AchievementInfo, ChatMessageInfo, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
+    InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
 };
 use reborn_ipc::{ChatText, Client, Event, Request, Response, Secret};
 
@@ -158,6 +158,10 @@ pub enum Message {
     SaveLibrary,
     ResetLibrary,
     ProtonPicked(String),
+    /// Open the achievements of an app (ADR 0030).
+    OpenAchievements(u32),
+    CloseAchievements,
+    AchievementsLoaded(Result<Response, String>),
 }
 
 pub struct App {
@@ -205,6 +209,11 @@ pub struct App {
     typing: HashMap<String, Instant>,
     /// The friend and time of the last typing notice sent.
     typing_sent: Option<(String, Instant)>,
+    /// The app whose achievements are open.
+    achievements_for: Option<u32>,
+    /// Its achievements, or why they could not be loaded; `None` while
+    /// loading.
+    achievements: Option<Result<Vec<AchievementInfo>, String>>,
 }
 
 impl App {
@@ -242,6 +251,8 @@ impl App {
             sending_chat: false,
             typing: HashMap::new(),
             typing_sent: None,
+            achievements_for: None,
+            achievements: None,
         };
         (
             app,
@@ -406,6 +417,41 @@ impl App {
             }
             Message::CloseChat => {
                 self.chat_with = None;
+                Task::none()
+            }
+            Message::OpenAchievements(app_id) => {
+                self.achievements_for = Some(app_id);
+                self.achievements = None;
+                self.send(
+                    Request::Achievements {
+                        app_id,
+                        language: None,
+                    },
+                    Message::AchievementsLoaded,
+                )
+            }
+            Message::CloseAchievements => {
+                self.achievements_for = None;
+                self.achievements = None;
+                Task::none()
+            }
+            Message::AchievementsLoaded(result) => {
+                match result {
+                    Ok(Response::Achievements {
+                        app_id,
+                        achievements,
+                    }) if self.achievements_for == Some(app_id) => {
+                        self.achievements = Some(Ok(achievements));
+                    }
+                    Ok(_) => {}
+                    // Errors carry no app ID; only show one while loading.
+                    Err(error)
+                        if self.achievements_for.is_some() && self.achievements.is_none() =>
+                    {
+                        self.achievements = Some(Err(error));
+                    }
+                    Err(_) => {}
+                }
                 Task::none()
             }
             Message::ChatLoaded(result) => {
@@ -852,6 +898,8 @@ impl App {
                 self.unread.clear();
                 self.typing.clear();
                 self.typing_sent = None;
+                self.achievements_for = None;
+                self.achievements = None;
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
             }
@@ -1397,6 +1445,9 @@ impl App {
         if self.library_loading && self.owned.is_empty() {
             return center_text("Loading your library ...");
         }
+        if let Some(app_id) = self.achievements_for {
+            return self.achievements_view(app_id);
+        }
         let filter = self.filter.to_lowercase();
         let rows = self
             .owned
@@ -1439,6 +1490,7 @@ impl App {
                     ),
                     row![
                         self.play_button(app.app_id, installed.fully_installed && !busy),
+                        achievements_button(app.app_id),
                         button("Update")
                             .style(button::secondary)
                             .on_press_maybe((!busy).then_some(Message::Install(app.app_id))),
@@ -1452,9 +1504,13 @@ impl App {
                 ),
                 None => (
                     "Not installed".to_owned(),
-                    button("Install")
-                        .on_press_maybe((!busy).then_some(Message::Install(app.app_id)))
-                        .into(),
+                    row![
+                        achievements_button(app.app_id),
+                        button("Install")
+                            .on_press_maybe((!busy).then_some(Message::Install(app.app_id))),
+                    ]
+                    .spacing(8)
+                    .into(),
                 ),
             };
         let hours = f64::from(app.playtime_minutes) / 60.0;
@@ -1477,6 +1533,76 @@ impl App {
         .padding(10)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// The achievements of one app (ADR 0030): unlocked first, newest
+    /// first, then locked ones; locked hidden ones without name or
+    /// description, like the official client.
+    fn achievements_view(&self, app_id: u32) -> Element<'_, Message> {
+        let name = self
+            .owned
+            .iter()
+            .find(|app| app.app_id == app_id)
+            .map(|app| app.name.clone())
+            .unwrap_or_else(|| format!("App {app_id}"));
+        let summary = match &self.achievements {
+            Some(Ok(list)) if !list.is_empty() => format!(
+                "{} of {} unlocked",
+                list.iter().filter(|a| a.unlocked_at.is_some()).count(),
+                list.len()
+            ),
+            _ => String::new(),
+        };
+        let header = row![
+            button("< Library")
+                .style(button::secondary)
+                .on_press(Message::CloseAchievements),
+            column![text(name).size(20), text(summary).size(12)].spacing(2),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+        let body: Element<'_, Message> = match &self.achievements {
+            None => center_text("Loading achievements ..."),
+            Some(Err(error)) => center_text(error),
+            Some(Ok(list)) if list.is_empty() => center_text("This game has no achievements."),
+            Some(Ok(list)) => {
+                let rows = achievement_order(list).into_iter().map(|achievement| {
+                    let secret = achievement.hidden && achievement.unlocked_at.is_none();
+                    let (title, description) = if secret {
+                        (
+                            "Hidden achievement".to_owned(),
+                            "Details appear when you unlock it.".to_owned(),
+                        )
+                    } else {
+                        (
+                            achievement.display_name.clone(),
+                            achievement.description.clone(),
+                        )
+                    };
+                    let state = match achievement.unlocked_at {
+                        Some(time) => format!("Unlocked {}", utc_time(time)),
+                        None => "Locked".to_owned(),
+                    };
+                    let mut details = column![text(title).size(16)].spacing(2).width(Fill);
+                    if !description.is_empty() {
+                        details = details.push(text(description).size(12));
+                    }
+                    container(
+                        row![details, text(state).size(12)]
+                            .spacing(12)
+                            .align_y(Alignment::Center),
+                    )
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .into()
+                });
+                scrollable(Column::with_children(rows).spacing(6))
+                    .height(Fill)
+                    .into()
+            }
+        };
+        column![header, body].spacing(12).into()
     }
 
     /// Two clicks: "Uninstall", then "Really delete?".
@@ -1566,6 +1692,49 @@ impl App {
     }
 }
 
+fn achievements_button(app_id: u32) -> Element<'static, Message> {
+    button("Achievements")
+        .style(button::secondary)
+        .on_press(Message::OpenAchievements(app_id))
+        .into()
+}
+
+/// Unlocked achievements first, newest first; then locked ones in the
+/// game's order.
+fn achievement_order(list: &[AchievementInfo]) -> Vec<&AchievementInfo> {
+    let mut ordered: Vec<&AchievementInfo> = list.iter().collect();
+    ordered.sort_by_key(|achievement| {
+        (
+            achievement.unlocked_at.is_none(),
+            std::cmp::Reverse(achievement.unlocked_at),
+        )
+    });
+    ordered
+}
+
+/// `YYYY-MM-DD HH:MM UTC` for seconds since the Unix epoch. Days to dates
+/// with Howard Hinnant's `civil_from_days` (public domain,
+/// <https://howardhinnant.github.io/date_algorithms.html>).
+fn utc_time(seconds: u32) -> String {
+    let seconds = i64::from(seconds);
+    let days = seconds.div_euclid(86_400);
+    let of_day = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        of_day / 3600,
+        of_day % 3600 / 60
+    )
+}
+
 /// Adds a message to a conversation unless it is already there (the same
 /// message can arrive as history and as an event), keeping time order.
 fn add_chat_message(chat: &mut Vec<ChatMessageInfo>, message: ChatMessageInfo) {
@@ -1626,5 +1795,41 @@ fn human_size(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn achievement(name: &str, unlocked_at: Option<u32>) -> AchievementInfo {
+        AchievementInfo {
+            name: name.to_owned(),
+            display_name: name.to_owned(),
+            description: String::new(),
+            hidden: false,
+            unlocked_at,
+        }
+    }
+
+    #[test]
+    fn unlocked_achievements_come_first_newest_first() {
+        let list = [
+            achievement("a", None),
+            achievement("b", Some(100)),
+            achievement("c", None),
+            achievement("d", Some(300)),
+        ];
+        let names: Vec<&str> = achievement_order(&list)
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
+        assert_eq!(names, ["d", "b", "a", "c"]);
+    }
+
+    #[test]
+    fn formats_utc_times() {
+        assert_eq!(utc_time(0), "1970-01-01 00:00 UTC");
+        assert_eq!(utc_time(1_795_133_048), "2026-11-20 00:04 UTC");
     }
 }

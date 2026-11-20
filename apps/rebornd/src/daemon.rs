@@ -9,15 +9,16 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
 use reborn_cm::{
-    ChatEvent, ChatMessage, Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session,
+    Achievement, ChatEvent, ChatMessage, Friend, PUBLIC_BRANCH, Persona, PersonaState,
+    Relationship, Session,
 };
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
-    ChatMessageInfo, ChatText, Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
-    InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp, Request, Response,
-    Secret, UnreadChatInfo,
+    AchievementInfo, ChatMessageInfo, ChatText, Event, FriendInfo, FriendRelationship,
+    FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
+    Request, Response, Secret, UnreadChatInfo,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
@@ -518,6 +519,35 @@ impl Daemon {
         }
     }
 
+    /// The achievements of an app (ADR 0030). Only reads; reading is safe
+    /// to repeat, so a lost connection is retried once after signing in
+    /// again.
+    async fn achievements(&self, app_id: u32, language: Option<&str>) -> Response {
+        let language = language.unwrap_or(reborn_cm::FALLBACK_LANGUAGE);
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        let mut result = session.achievements(app_id, language).await;
+        if result
+            .as_ref()
+            .is_err_and(reborn_cm::Error::is_connection_lost)
+        {
+            *self.session.lock().await = None;
+            match self.session().await {
+                Ok(session) => result = session.achievements(app_id, language).await,
+                Err(error) => return error_response(&error),
+            }
+        }
+        match result {
+            Ok(achievements) => Response::Achievements {
+                app_id,
+                achievements: achievements.iter().map(achievement_info).collect(),
+            },
+            Err(error) => self.steam_failure(error).await,
+        }
+    }
+
     /// Sends a friend request (ADR 0022).
     async fn add_friend(&self, input: &str) -> Response {
         let Some(steam_id) = reborn_cm::steam_id_from_input(input) else {
@@ -687,6 +717,9 @@ impl Daemon {
                 timestamp,
             } => self.mark_chat_read(&steam_id, timestamp).await,
             Request::UnreadChats => self.unread_chats().await,
+            Request::Achievements { app_id, language } => {
+                self.achievements(app_id, language.as_deref()).await
+            }
             Request::AcceptFriend { steam_id } => self.answer_friend_request(&steam_id, true).await,
             // Disabled: on today's Steam, `ClientRemoveFriend` on a pending
             // request left the sender blocked (live, 2026-11-20).
@@ -1409,6 +1442,16 @@ fn error_response(error: &CoreError) -> Response {
     }
 }
 
+fn achievement_info(achievement: &Achievement) -> AchievementInfo {
+    AchievementInfo {
+        name: achievement.name.clone(),
+        display_name: achievement.display_name.clone(),
+        description: achievement.description.clone(),
+        hidden: achievement.hidden,
+        unlocked_at: achievement.unlocked_at,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1559,6 +1602,27 @@ mod tests {
             "other friends are separate"
         );
         assert!(typing_due(&mut sent, 1, start + TYPING_INTERVAL));
+    }
+
+    #[test]
+    fn achievements_keep_their_unlock_state() {
+        let info = achievement_info(&Achievement {
+            name: "PET_1".to_owned(),
+            display_name: "Bongo Beat 1".to_owned(),
+            description: "1 bongo beat".to_owned(),
+            hidden: true,
+            unlocked_at: Some(1_795_133_048),
+        });
+        assert_eq!(
+            info,
+            AchievementInfo {
+                name: "PET_1".to_owned(),
+                display_name: "Bongo Beat 1".to_owned(),
+                description: "1 bongo beat".to_owned(),
+                hidden: true,
+                unlocked_at: Some(1_795_133_048),
+            }
+        );
     }
 
     #[tokio::test]

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 10;
+pub const PROTOCOL_MINOR: u16 = 11;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -240,6 +240,16 @@ pub enum Request {
     },
     /// Conversations with unread messages. Added in protocol 1.10.
     UnreadChats,
+    /// The achievements of an app for the account (ADR 0030). Only reads.
+    /// Added in protocol 1.11.
+    Achievements {
+        /// App ID.
+        app_id: u32,
+        /// Language of the texts as Steam names it (`english`, `german`,
+        /// ...); `None` means English.
+        #[serde(default)]
+        language: Option<String>,
+    },
 }
 
 /// Answers from the daemon.
@@ -340,6 +350,13 @@ pub enum Response {
     UnreadChats {
         /// Conversations with at least one unread message.
         chats: Vec<UnreadChatInfo>,
+    },
+    /// Answer to [`Request::Achievements`], in the game's order.
+    Achievements {
+        /// The app.
+        app_id: u32,
+        /// Its achievements; empty if it has none.
+        achievements: Vec<AchievementInfo>,
     },
     /// Answer to [`Request::AddFriend`]: Steam accepted the request.
     FriendRequestSent {
@@ -596,6 +613,21 @@ pub struct UnreadChatInfo {
     pub count: u32,
 }
 
+/// An achievement with the account's unlock state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AchievementInfo {
+    /// The game's internal name, unique within the game.
+    pub name: String,
+    /// Display name.
+    pub display_name: String,
+    /// Description; may be empty.
+    pub description: String,
+    /// Whether the game hides it until it is unlocked.
+    pub hidden: bool,
+    /// Unlock time in seconds since the Unix epoch, `None` while locked.
+    pub unlocked_at: Option<u32>,
+}
+
 /// A friend or pending friend request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FriendInfo {
@@ -754,6 +786,32 @@ mod tests {
             !printed.contains("hunter2") && !printed.contains("AB12C"),
             "{printed}"
         );
+    }
+
+    #[test]
+    fn achievements_round_trip() {
+        let request: Request =
+            serde_json::from_str(r#"{"type":"achievements","app_id":480}"#).unwrap();
+        assert_eq!(
+            request,
+            Request::Achievements {
+                app_id: 480,
+                language: None
+            }
+        );
+        let response = Response::Achievements {
+            app_id: 480,
+            achievements: vec![AchievementInfo {
+                name: "ACH_WIN_ONE_GAME".to_owned(),
+                display_name: "Winner".to_owned(),
+                description: "Win one game.".to_owned(),
+                hidden: false,
+                unlocked_at: None,
+            }],
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains(r#""unlocked_at":null"#), "{json}");
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
     }
 
     #[test]

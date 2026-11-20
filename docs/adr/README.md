@@ -35,3 +35,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0027](0027-app-tickets.md) | App tickets from Valve | Accepted |
 | [0028](0028-trying-several-servers.md) | Trying several Steam servers when signing in | Accepted |
 | [0029](0029-reading-achievements.md) | Reading achievements | Accepted |
+| [0030](0030-achievements-in-the-gui.md) | Achievements in the daemon and the GUI | Accepted |

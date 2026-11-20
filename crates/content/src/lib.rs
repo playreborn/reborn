@@ -7,7 +7,8 @@
 //! - [`manifest`]: depot manifests (ZIP container, sections, encrypted names),
 //! - [`path`]: safe relative install paths from untrusted manifest names,
 //! - [`cdn`]: manifest and chunk downloads from content servers,
-//! - [`install`]: parallel download into a staging directory, verification, commit.
+//! - [`install`]: parallel download into a staging directory, verification, commit,
+//! - [`cloud`]: Steam Cloud files into a folder, verified, never overwriting.
 //!
 //! Planned: manifest-diff updates, resuming, verifying existing installs.
 //!
@@ -18,6 +19,7 @@
 pub mod cdn;
 pub mod checksum;
 pub mod chunk;
+pub mod cloud;
 mod crypto;
 pub mod install;
 pub mod manifest;

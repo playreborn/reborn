@@ -26,8 +26,10 @@ All notable changes to Reborn are listed here. The format follows
   <app_id>` lists them too. Reborn only reads them; it never unlocks or
   changes achievements (ADR 0029, ADR 0030).
 - `reborn-cli cloud <app_id>` lists the files a game keeps in your Steam
-  Cloud. First step towards syncing saves; nothing is downloaded,
-  uploaded or deleted yet (ADR 0031).
+  Cloud, and `--download <folder>` copies them into a folder of your
+  choice, checked against Steam's SHA-1. Existing files are never
+  overwritten. First steps towards syncing saves; nothing is uploaded or
+  deleted (ADR 0031, ADR 0032).
 
 ### Changed
 

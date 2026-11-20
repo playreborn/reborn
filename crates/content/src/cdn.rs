@@ -67,7 +67,7 @@ impl CdnError {
 /// HTTP client for content servers. Cheap to clone.
 #[derive(Clone, Debug)]
 pub struct CdnClient {
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
 }
 
 impl CdnClient {

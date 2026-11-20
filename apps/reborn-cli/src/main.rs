@@ -98,10 +98,15 @@ enum Command {
         account: Option<String>,
     },
     /// List the files of an app in the account's Steam Cloud (ADR 0031).
-    /// Only reads; nothing is downloaded, uploaded or deleted.
+    /// Nothing is uploaded or deleted.
     Cloud {
         /// App ID, e.g. 480 for Spacewar.
         app_id: u32,
+        /// Download all files into this folder (ADR 0032): verified against
+        /// Steam's SHA-1, existing files are never overwritten. Use a folder
+        /// of your own, not the game's save folder.
+        #[arg(long, conflicts_with = "record")]
+        download: Option<PathBuf>,
         /// Instead, record Steam's answer as a redacted fixture into this
         /// folder.
         #[arg(long)]
@@ -237,9 +242,13 @@ async fn main() -> Result<()> {
         } => achievements(account, app_id, &language, record.as_deref()).await,
         Command::Cloud {
             app_id,
+            download,
             record,
             account,
-        } => cloud(account, app_id, record.as_deref()).await,
+        } => match download {
+            Some(folder) => cloud_download(account, app_id, &folder).await,
+            None => cloud(account, app_id, record.as_deref()).await,
+        },
         Command::Depots {
             app_id,
             branch,
@@ -508,6 +517,53 @@ async fn cloud(account: Option<String>, app_id: u32, record: Option<&Path>) -> R
             file.platforms.join(",")
         );
     }
+    Ok(())
+}
+
+/// Downloads an app's cloud files into `folder` (ADR 0032), one after the
+/// other. Links are never printed.
+async fn cloud_download(account: Option<String>, app_id: u32, folder: &Path) -> Result<()> {
+    let session = account::sign_in(account).await?;
+    let files = session.cloud_files(app_id).await?;
+    if files.is_empty() {
+        println!("App {app_id} has no files in Steam Cloud.");
+        return Ok(());
+    }
+    let client = CdnClient::new()?;
+    let mut failed = 0;
+    for file in &files {
+        let Some(url) = &file.download_url else {
+            println!("{}: Steam sent no download link", file.name);
+            failed += 1;
+            continue;
+        };
+        let reference = reborn_content::cloud::CloudFileRef {
+            name: &file.name,
+            url: url.expose(),
+            size: file.size,
+            sha1: &file.sha1,
+        };
+        match reborn_content::cloud::download_cloud_file(&client, folder, reference).await {
+            Ok(reborn_content::cloud::CloudOutcome::Written(path)) => {
+                println!("{}: written to {}", file.name, path.display());
+            }
+            Ok(reborn_content::cloud::CloudOutcome::AlreadyThere(path)) => {
+                println!(
+                    "{}: already there, same content ({})",
+                    file.name,
+                    path.display()
+                );
+            }
+            Err(error) => {
+                println!("{}: {error}", file.name);
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        bail!("{failed} of {} files were not downloaded", files.len());
+    }
+    println!("All {} files are in {}.", files.len(), folder.display());
     Ok(())
 }
 

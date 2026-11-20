@@ -8,7 +8,7 @@ All methods are service methods of the `Cloud` service; the request and
 response types are in steam-vent-proto-steam
 `steammessages_cloud_steamclient.rs` (generated from Valve's protobufs).
 
-## Implemented (read only)
+## Implemented
 
 ### List an app's files
 
@@ -40,7 +40,33 @@ response types are in steam-vent-proto-steam
 - **Verified:** yes (2026-11-20, first test account, fixture
   `cloud_files.bin`; one page, so paging past 500 files is untested).
 
+### Download a file
+
+- **What:** The content of one file (ADR 0032).
+- **How:** HTTP GET on the `url` from `EnumerateUserFiles`; the body is
+  the file. Reborn reads at most the listed `file_size` bytes and keeps
+  the body only if its SHA-1 equals `file_sha`.
+- **Source:** Valve's public `ICloudService` documentation
+  (`EnumerateUserFiles`: "make a GET request to the URL"); steamctl
+  `cmd_cloud_download` writes the body as it is.
+- **Unknown:** whether a body can be compressed; a compressed body would
+  fail the SHA-1 check and be reported.
+- **Verified:** yes (2026-11-20, first test account, app 2143030): both
+  files arrived uncompressed and matched `file_sha`; a second run found
+  them "already there"; a locally changed file was not overwritten. No
+  fixture: the body is the user's file itself, and the listing that
+  carries size and SHA-1 has one (`cloud_files.bin`).
+
 ## Known, not implemented
+
+### Download through `Cloud.ClientFileDownload`
+
+- `Cloud.ClientFileDownload#1` (`appid`, `filename`) answers with
+  `url_host`, `url_path`, `use_https`, `request_headers`, `file_size`,
+  `raw_file_size`, `encrypted`. **Unknown:** when the official client uses
+  it instead of the `url`, and whether `raw_file_size` means compressed
+  content.
+
 
 ### List apps with cloud files
 
@@ -52,17 +78,6 @@ response types are in steam-vent-proto-steam
   (Fail) four times, before and after the account had cloud files. So
   Fail does not mean "no apps". **Unknown** why; Reborn does not use the
   method.
-
-### Download
-
-- Valve's documentation: a GET request to the `url` from
-  `EnumerateUserFiles` returns the file; steamctl does the same and writes
-  the body as it is. `file_sha` is a SHA-1 of the content (40 hex digits).
-- `Cloud.ClientFileDownload#1` (`appid`, `filename`) answers with
-  `url_host`, `url_path`, `use_https`, `request_headers`, `file_size`,
-  `raw_file_size`, `encrypted`. **Unknown:** when the official client uses
-  it instead of the `url`, and whether `raw_file_size` means compressed
-  content.
 
 ### Upload and delete
 

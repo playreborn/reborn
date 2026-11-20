@@ -8,6 +8,8 @@
 //! `steamctl/commands/cloud/gcmds.py` (MIT) and Valve's public
 //! `ICloudService` documentation. Details: `docs/protocol/cloud.md`.
 
+use std::fmt;
+
 use steam_vent::ConnectionTrait;
 use steam_vent_proto_common::protobuf::Message;
 use steam_vent_proto_steam::steammessages_cloud_steamclient::{
@@ -36,8 +38,28 @@ pub struct CloudFile {
     pub timestamp: u64,
     /// SHA-1 of the content, 40 hex digits.
     pub sha1: String,
-    /// Platforms the file syncs to (e.g. `all`).
+    /// Platforms the file syncs to (e.g. `All`).
     pub platforms: Vec<String>,
+    /// Link to download the file with a plain GET (ADR 0032).
+    pub download_url: Option<CloudUrl>,
+}
+
+/// A download link for a cloud file. Anyone with the link can read the
+/// file, so `Debug` prints `<redacted>`; never log or store the value.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CloudUrl(String);
+
+impl CloudUrl {
+    /// The link. Never log or print it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CloudUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CloudUrl(<redacted>)")
+    }
 }
 
 impl Session {
@@ -101,6 +123,7 @@ pub fn cloud_files_from(response: &CCloud_EnumerateUserFiles_Response) -> Vec<Cl
                 timestamp: file.timestamp.unwrap_or(0),
                 sha1: file.file_sha.clone().unwrap_or_default(),
                 platforms: file.platforms_to_sync.clone(),
+                download_url: file.url.clone().filter(|url| !url.is_empty()).map(CloudUrl),
             })
         })
         .collect();
@@ -164,8 +187,12 @@ mod tests {
                 timestamp: 1_795_133_048,
                 sha1: "da39a3ee5e6b4b0d3255bfef95601890afd80709".to_owned(),
                 platforms: vec!["all".to_owned()],
+                download_url: Some(CloudUrl("https://example.invalid/ugc/123/abc/".to_owned())),
             }
         );
+        let printed = format!("{:?}", files[1]);
+        assert!(printed.contains("<redacted>"), "{printed}");
+        assert!(!printed.contains("example.invalid"), "{printed}");
     }
 
     /// Recorded with the first test account (see `tests/data/README.md`).
@@ -183,6 +210,7 @@ mod tests {
             assert_eq!(file.timestamp, 1_795_209_106);
             assert_eq!(file.sha1, "8fd5b59589120ebdf6928e9b778a40662b1660e8");
             assert_eq!(file.platforms, ["All"]);
+            assert_eq!(file.download_url, None, "removed in the fixture");
         }
         for file in &response.files {
             assert_eq!(file.url, None, "redacted");

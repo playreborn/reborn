@@ -13,12 +13,13 @@ use reborn_cm::{
     Relationship, Session,
 };
 use reborn_core::CoreError;
+use reborn_core::cloud::{RestoreBlocked, RestoreOutcome, restore_missing_saves};
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
-    AchievementInfo, ChatMessageInfo, ChatText, Event, FriendInfo, FriendRelationship,
-    FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
-    Request, Response, Secret, UnreadChatInfo,
+    AchievementInfo, ChatMessageInfo, ChatText, CloudRestoreResult, Event, FriendInfo,
+    FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState,
+    OwnStatus, OwnedApp, Request, Response, Secret, UnreadChatInfo,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
@@ -32,6 +33,9 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 /// request (live 2026-11-20). Room for three servers that each take about
 /// 20 seconds to fail (ADR 0028).
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How long restoring cloud saves may delay a game start (ADR 0035).
+const CLOUD_RESTORE_LIMIT: Duration = Duration::from_secs(30);
 
 /// Least time between two typing notices to the same friend (ADR 0026).
 const TYPING_INTERVAL: Duration = Duration::from_secs(10);
@@ -1001,6 +1005,23 @@ impl Daemon {
                 return error_response(&error);
             }
         };
+        // Missing saves from Steam Cloud first (ADR 0035). Never stops the
+        // game: a conflict or an error is only reported.
+        let restore = tokio::time::timeout(
+            CLOUD_RESTORE_LIMIT,
+            restore_missing_saves(&session, app_id, request.library.as_deref()),
+        )
+        .await;
+        let restore = match restore {
+            Ok(result) => result.map_err(|error| error.to_string()),
+            Err(_) => Err("Steam Cloud took too long".to_owned()),
+        };
+        if let Err(message) = &restore {
+            warn!(app_id, %message, "restoring cloud saves failed");
+        }
+        if let Some(result) = cloud_restore_result(restore) {
+            self.emit(Event::CloudRestore { app_id, result });
+        }
         let mut child = match spawn(&plan) {
             Ok(child) => child,
             Err(error) => return error_response(&error),
@@ -1442,6 +1463,42 @@ fn error_response(error: &CoreError) -> Response {
     }
 }
 
+/// The event for a restore before a game start, `None` if there was
+/// nothing to do (ADR 0035).
+fn cloud_restore_result(outcome: Result<RestoreOutcome, String>) -> Option<CloudRestoreResult> {
+    let report = match outcome {
+        Err(message) => return Some(CloudRestoreResult::Failed { message }),
+        Ok(RestoreOutcome::Blocked(blocked)) => {
+            let message = match blocked {
+                RestoreBlocked::Differs(names) => format!(
+                    "{} saves differ from Steam Cloud; nothing was changed",
+                    names.len()
+                ),
+                RestoreBlocked::LocalOnly(paths) => format!(
+                    "{} local saves are not in Steam Cloud; nothing was changed",
+                    paths.len()
+                ),
+                RestoreBlocked::RootMissing(path) => {
+                    format!("{} does not exist; nothing was changed", path.display())
+                }
+            };
+            return Some(CloudRestoreResult::Conflict { message });
+        }
+        Ok(RestoreOutcome::Done(report)) => report,
+    };
+    if let Some((name, error)) = report.failed.first() {
+        return Some(CloudRestoreResult::Failed {
+            message: format!(
+                "{} saves could not be downloaded ({name}: {error}); {} restored",
+                report.failed.len(),
+                report.restored.len()
+            ),
+        });
+    }
+    let files = u32::try_from(report.restored.len()).unwrap_or(u32::MAX);
+    (files > 0).then_some(CloudRestoreResult::Restored { files })
+}
+
 fn achievement_info(achievement: &Achievement) -> AchievementInfo {
     AchievementInfo {
         name: achievement.name.clone(),
@@ -1602,6 +1659,42 @@ mod tests {
             "other friends are separate"
         );
         assert!(typing_due(&mut sent, 1, start + TYPING_INTERVAL));
+    }
+
+    #[test]
+    fn cloud_restore_events_only_when_something_happened() {
+        use reborn_core::cloud::RestoreReport;
+
+        assert_eq!(
+            cloud_restore_result(Ok(RestoreOutcome::Done(RestoreReport::default()))),
+            None
+        );
+        assert_eq!(
+            cloud_restore_result(Ok(RestoreOutcome::Done(RestoreReport {
+                restored: vec![PathBuf::from("a.sav"), PathBuf::from("b.sav")],
+                ..RestoreReport::default()
+            }))),
+            Some(CloudRestoreResult::Restored { files: 2 })
+        );
+        assert!(matches!(
+            cloud_restore_result(Ok(RestoreOutcome::Blocked(RestoreBlocked::Differs(vec![
+                "x".to_owned()
+            ])))),
+            Some(CloudRestoreResult::Conflict { message }) if message.starts_with("1 saves differ")
+        ));
+        assert!(matches!(
+            cloud_restore_result(Ok(RestoreOutcome::Done(RestoreReport {
+                failed: vec![("a.sav".to_owned(), "HTTP 500".to_owned())],
+                ..RestoreReport::default()
+            }))),
+            Some(CloudRestoreResult::Failed { message }) if message.contains("HTTP 500")
+        ));
+        assert_eq!(
+            cloud_restore_result(Err("timed out".to_owned())),
+            Some(CloudRestoreResult::Failed {
+                message: "timed out".to_owned()
+            })
+        );
     }
 
     #[test]

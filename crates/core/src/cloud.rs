@@ -256,9 +256,14 @@ pub async fn restore_missing_saves(
     library: Option<&Path>,
 ) -> Result<RestoreOutcome, CoreError> {
     let app = AppCloud::load(session, app_id, library).await?;
-    let resolve = |root: &str| app.resolve(root);
-    let place = app.place(&resolve);
-    let plan = match plan_restore(&app.files, &place, app.steam_id) {
+    // Planned in its own scope: the folder lookup is not `Send` and must be
+    // gone before the downloads are awaited.
+    let planned = {
+        let resolve = |root: &str| app.resolve(root);
+        let place = app.place(&resolve);
+        plan_restore(&app.files, &place, app.steam_id)
+    };
+    let plan = match planned {
         Ok(plan) => plan,
         Err(blocked) => return Ok(RestoreOutcome::Blocked(blocked)),
     };

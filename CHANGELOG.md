@@ -20,6 +20,11 @@ All notable changes to Reborn are listed here. The format follows
 - `reborn-cli ticket <app_id>` asks Valve for the app's ownership ticket
   and encrypted app ticket and shows their sizes: groundwork for running
   games without the official client (ADR 0012, ADR 0027).
+- **Saves from Steam Cloud:** when you start a game, Reborn first brings
+  the game's cloud saves that are missing on this computer into its save
+  folders (Auto-Cloud games). It never replaces a local save: if one
+  differs or is not in the cloud, nothing is changed and Reborn tells you.
+  Saving back to the cloud is not supported yet (ADR 0034, ADR 0035).
 - **Achievements:** every game in the library has an "Achievements"
   button that shows which ones you have unlocked and when, newest first.
   Hidden ones stay hidden until unlocked. `reborn-cli achievements

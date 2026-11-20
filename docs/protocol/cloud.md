@@ -84,14 +84,17 @@ response types are in steam-vent-proto-steam
 
 - **What:** Download the cloud files that are missing locally into their
   mapped place (ADR 0034), like the official client does before a game
-  starts (`AC Launch, down` in its log, see below).
+  starts (`AC Launch, down` in its log, see below). `rebornd` does it
+  before every game start (ADR 0035).
 - **When not:** any file differs, local saves match a rule but are not in
   the cloud, or a root folder does not exist. Then nothing is written.
 - **Verified:** yes (2026-11-20, first test account, Windows, app
   5191630): with a hand-made local-only save it refused and wrote
   nothing; with an empty save folder it restored `save_slot_demo_1.json`,
   which then compared as "same"; after a local change it refused with
-  "differs" and wrote nothing.
+  "differs" and wrote nothing. Before a game start in the GUI
+  (ADR 0035): with the save moved away, starting the game restored it
+  and the game showed the save (2026-11-21).
 
 ## Known, not implemented
 

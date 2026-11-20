@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 11;
+pub const PROTOCOL_MINOR: u16 = 12;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -587,6 +587,39 @@ pub enum Event {
         /// Exit code, if the process returned one.
         exit_code: Option<i32>,
     },
+    /// Saves missing locally were looked for in Steam Cloud before a game
+    /// started (ADR 0035). Not sent when there was nothing to do. Added in
+    /// protocol 1.12.
+    CloudRestore {
+        /// The app.
+        app_id: u32,
+        /// What happened.
+        result: CloudRestoreResult,
+    },
+}
+
+/// What restoring saves before a game start did (ADR 0035). The game
+/// starts in every case.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CloudRestoreResult {
+    /// Saves were downloaded into the game's save folders.
+    Restored {
+        /// How many files.
+        files: u32,
+    },
+    /// Nothing was written: local saves differ from the cloud or are not
+    /// in it. The game started with the local saves.
+    Conflict {
+        /// For display.
+        message: String,
+    },
+    /// Steam or a download failed, or it took too long.
+    Failed {
+        /// For display.
+        message: String,
+    },
 }
 
 /// A message of a one-to-one conversation.
@@ -812,6 +845,39 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains(r#""unlocked_at":null"#), "{json}");
         assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+    }
+
+    #[test]
+    fn cloud_restore_events_round_trip() {
+        for result in [
+            CloudRestoreResult::Restored { files: 2 },
+            CloudRestoreResult::Conflict {
+                message: "1 save differs".to_owned(),
+            },
+            CloudRestoreResult::Failed {
+                message: "timed out".to_owned(),
+            },
+        ] {
+            let event = Event::CloudRestore {
+                app_id: 5_191_630,
+                result,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Event>(&json).unwrap(),
+                event,
+                "{json}"
+            );
+        }
+        let json = serde_json::to_string(&Event::CloudRestore {
+            app_id: 1,
+            result: CloudRestoreResult::Restored { files: 1 },
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"cloud_restore","app_id":1,"result":{"kind":"restored","files":1}}"#
+        );
     }
 
     #[test]

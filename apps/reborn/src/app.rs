@@ -11,8 +11,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
-    AchievementInfo, ChatMessageInfo, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
-    InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
+    AchievementInfo, ChatMessageInfo, CloudRestoreResult, FriendInfo, FriendRelationship,
+    FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
 };
 use reborn_ipc::{ChatText, Client, Event, Request, Response, Secret};
 
@@ -985,6 +985,16 @@ impl App {
                 self.running.remove(&app_id);
                 Task::none()
             }
+            Event::CloudRestore { app_id, result } => {
+                let name = self
+                    .owned
+                    .iter()
+                    .find(|app| app.app_id == app_id)
+                    .map(|app| app.name.clone())
+                    .unwrap_or_else(|| format!("App {app_id}"));
+                self.notice = Some(cloud_restore_notice(&name, &result));
+                Task::none()
+            }
             Event::ShuttingDown => {
                 self.connection = Connection::Failed("rebornd was stopped".to_owned());
                 self.client = None;
@@ -1692,6 +1702,25 @@ impl App {
     }
 }
 
+/// The notice for saves restored before a game start (ADR 0035).
+fn cloud_restore_notice(name: &str, result: &CloudRestoreResult) -> String {
+    match result {
+        CloudRestoreResult::Restored { files: 1 } => {
+            format!("{name}: 1 save restored from Steam Cloud.")
+        }
+        CloudRestoreResult::Restored { files } => {
+            format!("{name}: {files} saves restored from Steam Cloud.")
+        }
+        CloudRestoreResult::Conflict { message } => format!(
+            "{name}: Steam Cloud not applied, {message}. The game started with your local saves."
+        ),
+        CloudRestoreResult::Failed { message } => {
+            format!("{name}: Steam Cloud saves could not be checked ({message}).")
+        }
+        _ => format!("{name}: Steam Cloud checked."),
+    }
+}
+
 fn achievements_button(app_id: u32) -> Element<'static, Message> {
     button("Achievements")
         .style(button::secondary)
@@ -1825,6 +1854,25 @@ mod tests {
             .map(|a| a.name.as_str())
             .collect();
         assert_eq!(names, ["d", "b", "a", "c"]);
+    }
+
+    #[test]
+    fn cloud_restore_notices_name_the_game() {
+        assert_eq!(
+            cloud_restore_notice("Demo", &CloudRestoreResult::Restored { files: 1 }),
+            "Demo: 1 save restored from Steam Cloud."
+        );
+        assert_eq!(
+            cloud_restore_notice("Demo", &CloudRestoreResult::Restored { files: 3 }),
+            "Demo: 3 saves restored from Steam Cloud."
+        );
+        let conflict = cloud_restore_notice(
+            "Demo",
+            &CloudRestoreResult::Conflict {
+                message: "1 saves differ from Steam Cloud; nothing was changed".to_owned(),
+            },
+        );
+        assert!(conflict.contains("local saves"), "{conflict}");
     }
 
     #[test]

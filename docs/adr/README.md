@@ -17,7 +17,7 @@ it is accepted; a new ADR supersedes it instead.
 | [0009](0009-iced-gui.md) | Iced as GUI framework | Accepted |
 | [0010](0010-credential-storage.md) | Credential storage | Accepted |
 | 0011 | Origin of protobuf definitions | Planned (M0) |
-| 0012 | Shim approach (vtables, versions, IPC) | Planned (M4) |
+| [0012](0012-shim-approach.md) | Shim approach: clean room, observation, daemon first | Accepted |
 | [0013](0013-own-content-engine.md) | Own content engine, steamroom and SteamKit2 as references | Accepted |
 | [0014](0014-sign-in-through-the-daemon.md) | Sign-in through the daemon | Accepted |
 | [0015](0015-compatibility-database.md) | Compatibility database | Proposed |

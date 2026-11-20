@@ -51,6 +51,22 @@ The Steam protocol is undocumented. Protocol code is only merged if it
 
 See [AGENTS.md § 4](AGENTS.md#4-protocol-code-rules-most-important-section).
 
+## The `steamclient` replacement (shim): clean room
+
+The shim must not be built from Valve's Steamworks SDK (ADR 0012,
+[legal assessment](docs/legal/shim-assessment.md)). If you work on the shim:
+
+- You have never downloaded or used the Steamworks SDK, and you do not
+  read files distributed under its license (Proton `lsteamclient/`,
+  `steamworks-sys`, the `sdk/` folders of emulators).
+- Every interface detail you add has a provenance entry in `docs/shim/`:
+  an observation recording of a game you own, or Valve's public API
+  documentation for what a function means. Never copy its text.
+- Your PR includes the clean-room statement from the PR template.
+
+Have you used the SDK before? You are still welcome everywhere else in
+Reborn (daemon, GUI, protocol, content engine), just not in the shim.
+
 ## AI-assisted contributions
 
 Using AI tools is welcome. You are responsible for every line you submit:

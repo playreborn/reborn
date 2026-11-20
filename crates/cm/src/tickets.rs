@@ -304,6 +304,7 @@ mod tests {
     /// Recorded with the first test account (see `tests/data/README.md`).
     const OWNED: &[u8] = include_bytes!("../tests/data/ownership_ticket.bin");
     const NO_KEY: &[u8] = include_bytes!("../tests/data/encrypted_app_ticket_no_key.bin");
+    const ENCRYPTED: &[u8] = include_bytes!("../tests/data/encrypted_app_ticket.bin");
     const NOT_OWNED: &[u8] = include_bytes!("../tests/data/ownership_ticket_not_owned.bin");
     const NOT_OWNED_ENCRYPTED: &[u8] =
         include_bytes!("../tests/data/encrypted_app_ticket_not_owned.bin");
@@ -315,6 +316,19 @@ mod tests {
         assert_eq!(ticket.len(), 178);
         assert!(ticket.expose().iter().all(|&b| b == 0), "redacted");
         assert!(ownership_ticket_from(&response, 70).is_err(), "other app");
+    }
+
+    #[test]
+    fn replays_a_recorded_encrypted_ticket() {
+        // App 480 (Spacewar) has an encryption key.
+        let response =
+            CMsgClientRequestEncryptedAppTicketResponse::parse_from_bytes(ENCRYPTED).unwrap();
+        let ticket = encrypted_ticket_from(&response, 480).unwrap();
+        let decoded = EncryptedAppTicket::parse_from_bytes(ticket.ticket.expose()).unwrap();
+        assert_eq!(decoded.ticket_version_no, Some(2));
+        assert_eq!(decoded.cb_encrypteduserdata, Some(0), "no userdata sent");
+        assert_eq!(decoded.cb_encrypted_appownershipticket, Some(78));
+        assert_eq!(decoded.encrypted_ticket.map(|t| t.len()), Some(128));
     }
 
     #[test]

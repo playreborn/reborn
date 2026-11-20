@@ -37,11 +37,13 @@ replaced in fixtures.
 - **Source:** node-steam-user `components/appauth.js`
   (`createEncryptedAppTicket`: these fields and checks, `userdata`
   defaults to empty, the result is encoded as `EncryptedAppTicket`).
-- **Verified:** refusals yes (2026-11-20: EResult 2 Fail for an owned app
-  without an encryption key, EResult 15 for an app not owned; fixtures
-  `encrypted_app_ticket_no_key.bin`, `encrypted_app_ticket_not_owned.bin`).
-  A successful encrypted ticket is not recorded yet (needs an owned app
-  with a key).
+- **Verified:** yes (2026-11-20, first test account): app 480 (Spacewar)
+  returned a ticket (version 2, 128 encrypted bytes, 78 of them the
+  ownership ticket); EResult 2 Fail for an owned app without an encryption
+  key; EResult 15 for an app not owned. Fixtures `encrypted_app_ticket.bin`,
+  `encrypted_app_ticket_no_key.bin`, `encrypted_app_ticket_not_owned.bin`.
+  Steam gave tickets for app 480 although it is not in the account's
+  license list; the entitlement comes from Steam, not from Reborn.
 
 ### Not yet
 

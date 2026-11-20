@@ -30,3 +30,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0022](0022-friend-requests.md) | Friend requests: send, accept, decline | Accepted (decline: see 0023) |
 | [0023](0023-decline-disabled.md) | Declining friend requests disabled until verified | Accepted |
 | [0024](0024-friend-chat.md) | One-to-one chat with friends | Accepted |
+| [0025](0025-reconnecting.md) | Reconnecting after a lost connection | Accepted |

@@ -799,6 +799,28 @@ impl App {
                 }
                 Task::none()
             }
+            Event::SteamConnection {
+                connected,
+                reconnecting,
+                reason,
+            } => {
+                if connected {
+                    self.notice = None;
+                    // Statuses may have changed while offline.
+                    let mut tasks = vec![self.send(Request::Status, Message::StatusLoaded)];
+                    if self.friends.is_some() {
+                        tasks.push(self.send(Request::Friends, Message::FriendsLoaded));
+                    }
+                    return Task::batch(tasks);
+                }
+                let reason = reason.unwrap_or_else(|| "not connected to Steam".to_owned());
+                self.notice = Some(if reconnecting {
+                    format!("{reason}. Reconnecting ...")
+                } else {
+                    format!("{reason}. Reborn signs in again on your next action.")
+                });
+                Task::none()
+            }
             Event::SettingsChanged => Task::batch([
                 self.send(Request::GetSettings, Message::SettingsLoaded),
                 self.send(

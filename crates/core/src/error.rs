@@ -21,6 +21,9 @@ pub enum CoreError {
     /// Talking to Steam failed.
     #[error(transparent)]
     Steam(#[from] reborn_cm::Error),
+    /// Signing in to Steam took too long (network trouble).
+    #[error("signing in to Steam timed out; check the network connection")]
+    SignInTimeout,
     /// The OS credential store failed.
     #[error(transparent)]
     Secrets(#[from] SecretStoreError),

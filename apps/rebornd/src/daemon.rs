@@ -18,8 +18,41 @@ use reborn_ipc::protocol::{
     Secret,
 };
 use reborn_platform::settings;
-use tokio::sync::{Notify, broadcast, oneshot};
+use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tracing::{info, warn};
+
+/// How often the connection to Steam is checked (ADR 0025).
+const PROBE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Longest a sign-in may take. Without a limit, a sign-in caught by a
+/// network outage could hang and hold the session lock, blocking every
+/// request (live 2026-11-20).
+const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Why the connection to Steam ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lost {
+    /// Steam logged the session off with this EResult.
+    LoggedOff(i32),
+    /// The socket closed without a logoff message.
+    Closed,
+}
+
+impl Lost {
+    fn allows_reconnect(self) -> bool {
+        match self {
+            Lost::Closed => true,
+            Lost::LoggedOff(eresult) => reborn_cm::logoff_allows_reconnect(eresult),
+        }
+    }
+}
+
+/// Wait before the n-th sign-in attempt after a lost connection: 5 s, 15 s,
+/// 30 s, 1 min, 2 min, then every 5 minutes (ADR 0025).
+fn reconnect_delay(attempt: u32) -> Duration {
+    const DELAYS: [u64; 5] = [5, 15, 30, 60, 120];
+    Duration::from_secs(DELAYS.get(attempt as usize).copied().unwrap_or(300))
+}
 
 /// How often progress events are sent at most.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -95,6 +128,10 @@ pub struct Daemon {
     friends_loaded: Arc<AtomicBool>,
     /// The task that follows persona updates of the current session.
     friends_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Reports a lost connection to the keeper task.
+    lost: mpsc::UnboundedSender<Lost>,
+    /// Taken once by [`keep_connected`].
+    lost_receiver: Mutex<Option<mpsc::UnboundedReceiver<Lost>>>,
     jobs: Mutex<Jobs>,
     job_added: Notify,
     shutdown: Notify,
@@ -102,7 +139,10 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new() -> Self {
+        let (lost, lost_receiver) = mpsc::unbounded_channel();
         Self {
+            lost,
+            lost_receiver: Mutex::new(Some(lost_receiver)),
             events: broadcast::channel(256).0,
             session: tokio::sync::Mutex::new(None),
             sign_in: Mutex::new(None),
@@ -161,7 +201,10 @@ impl Daemon {
         if let Some(session) = cached.as_ref() {
             return Ok(Arc::clone(session));
         }
-        let session = Arc::new(reborn_core::account::sign_in(None).await?);
+        let session = tokio::time::timeout(SIGN_IN_TIMEOUT, reborn_core::account::sign_in(None))
+            .await
+            .map_err(|_| CoreError::SignInTimeout)??;
+        let session = Arc::new(session);
         info!(account = session.account(), "signed in to Steam");
         *cached = Some(Arc::clone(&session));
         self.watch_friends(Arc::clone(&session));
@@ -176,7 +219,9 @@ impl Daemon {
         let loaded = Arc::clone(&self.friends_loaded);
         loaded.store(false, Ordering::SeqCst);
         let events = self.events.clone();
+        let lost = self.lost.clone();
         let task = tokio::spawn(async move {
+            let mut logged_off = Box::pin(session.logged_off());
             // The status the user chose in Reborn, if any (ADR 0021).
             if let Some(status) = chosen_own_status()
                 && let Err(error) = session.set_persona_state(persona_state(status)).await
@@ -258,6 +303,10 @@ impl Daemon {
                         let message = chat_info(&message);
                         let _ = events.send(Event::ChatMessage { message });
                     }
+                    Some(eresult) = &mut logged_off => {
+                        let _ = lost.send(Lost::LoggedOff(eresult));
+                        break;
+                    }
                     else => break,
                 }
             }
@@ -265,6 +314,68 @@ impl Daemon {
         if let Some(old) = lock(&self.friends_watch).replace(task) {
             old.abort();
         }
+    }
+
+    /// Handles a lost connection (ADR 0025): drops the session, tells the
+    /// frontends, and signs in again with backoff unless another session
+    /// took over or the user signed out.
+    async fn connection_lost(&self, lost: Lost) {
+        *self.session.lock().await = None;
+        if let Some(task) = lock(&self.friends_watch).take() {
+            task.abort();
+        }
+        let reconnect = lost.allows_reconnect();
+        warn!(?lost, reconnect, "connection to Steam lost");
+        self.emit(Event::SteamConnection {
+            connected: false,
+            reconnecting: reconnect,
+            reason: Some(if reconnect {
+                "lost the connection to Steam".to_owned()
+            } else {
+                "Steam ended this session, probably because the account signed in elsewhere"
+                    .to_owned()
+            }),
+        });
+        if !reconnect {
+            return;
+        }
+        for attempt in 0.. {
+            tokio::time::sleep(reconnect_delay(attempt)).await;
+            if self.session.lock().await.is_some() {
+                // A request signed in meanwhile.
+                break;
+            }
+            let signed_in = reborn_core::account::resolve_account(None)
+                .ok()
+                .is_some_and(|account| {
+                    reborn_core::account::has_stored_login(&account).unwrap_or(false)
+                });
+            if !signed_in {
+                info!("signed out, not reconnecting");
+                return;
+            }
+            match self.session().await {
+                Ok(_) => break,
+                // Only a refused login ends the attempts; network trouble
+                // just waits for the next one.
+                Err(error @ (CoreError::TokenRejected(_) | CoreError::NotSignedIn(_))) => {
+                    warn!(%error, "cannot sign in again");
+                    self.emit(Event::SteamConnection {
+                        connected: false,
+                        reconnecting: false,
+                        reason: Some(error.to_string()),
+                    });
+                    return;
+                }
+                Err(error) => warn!(%error, attempt, "reconnecting failed"),
+            }
+        }
+        info!("reconnected to Steam");
+        self.emit(Event::SteamConnection {
+            connected: true,
+            reconnecting: false,
+            reason: None,
+        });
     }
 
     /// Stops following friends and forgets them.
@@ -940,6 +1051,31 @@ impl Daemon {
     }
 }
 
+/// Watches the connection to Steam: probes it every minute and handles
+/// logoffs reported by the friends watcher (ADR 0025).
+pub async fn keep_connected(daemon: Arc<Daemon>) {
+    let Some(mut lost) = lock(&daemon.lost_receiver).take() else {
+        return;
+    };
+    let mut probe = tokio::time::interval(PROBE_INTERVAL);
+    probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    probe.tick().await;
+    loop {
+        let reason = tokio::select! {
+            Some(reason) = lost.recv() => reason,
+            _ = probe.tick() => {
+                let session = daemon.session.lock().await.clone();
+                let Some(session) = session else { continue };
+                match session.probe().await {
+                    Err(error) if error.is_connection_lost() => Lost::Closed,
+                    _ => continue,
+                }
+            }
+        };
+        daemon.connection_lost(reason).await;
+    }
+}
+
 /// Runs queued jobs one after another, forever.
 pub async fn run_jobs(daemon: Arc<Daemon>) {
     loop {
@@ -1371,6 +1507,39 @@ mod tests {
             daemon.handle(invalid).await,
             Response::Error { .. }
         ));
+    }
+
+    #[test]
+    fn reconnecting_backs_off_gently() {
+        let delays: Vec<u64> = (0..8).map(|n| reconnect_delay(n).as_secs()).collect();
+        assert_eq!(delays, [5, 15, 30, 60, 120, 300, 300, 300]);
+        assert!(Lost::Closed.allows_reconnect());
+        assert!(Lost::LoggedOff(48).allows_reconnect(), "TryAnotherCM");
+        assert!(!Lost::LoggedOff(34).allows_reconnect(), "session replaced");
+    }
+
+    #[tokio::test]
+    async fn a_replaced_session_is_not_reconnected() {
+        // Returns at once without signing in: no network is used.
+        let daemon = Daemon::new();
+        let mut events = daemon.subscribe();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            daemon.connection_lost(Lost::LoggedOff(34)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            events.recv().await.unwrap(),
+            Event::SteamConnection {
+                connected: false,
+                reconnecting: false,
+                reason: Some(
+                    "Steam ended this session, probably because the account signed in elsewhere"
+                        .to_owned()
+                ),
+            }
+        );
     }
 
     #[test]

@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
 
     let daemon = Arc::new(Daemon::new());
     tokio::spawn(daemon::run_jobs(Arc::clone(&daemon)));
+    tokio::spawn(daemon::keep_connected(Arc::clone(&daemon)));
 
     tokio::select! {
         () = server::accept_loop(listener, Arc::clone(&daemon)) => {}

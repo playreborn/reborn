@@ -44,7 +44,9 @@ pub use friends::{
 };
 pub use library::OwnedApp;
 pub use secret::Secret;
-pub use session::{Error, PasswordLogin, Session, login_with_password, login_with_token};
+pub use session::{
+    Error, PasswordLogin, Session, login_with_password, login_with_token, logoff_allows_reconnect,
+};
 
 /// Ways to confirm a login with Steam Guard.
 ///

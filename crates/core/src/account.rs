@@ -30,7 +30,15 @@ pub async fn sign_in(account: Option<String>) -> Result<Session, CoreError> {
         .ok_or_else(|| CoreError::NotSignedIn(account.clone()))?;
     reborn_cm::login_with_token(&account, &token)
         .await
-        .map_err(CoreError::TokenRejected)
+        .map_err(|error| {
+            // Only a refusal by Steam means the stored login is bad; network
+            // problems are just that.
+            if error.is_login_rejected() {
+                CoreError::TokenRejected(error)
+            } else {
+                CoreError::Steam(error)
+            }
+        })
 }
 
 /// Signs in with account name and password, then stores the refresh token

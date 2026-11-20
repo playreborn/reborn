@@ -75,3 +75,24 @@ v0.5.0 unless noted.
 - **Source:** not implemented in steam-vent ("QR Authentication" unchecked in
   its README); needs an upstream contribution.
 - **Verified:** no
+
+### Logoff and reconnect
+
+- **What:** Steam logs a session off with `CMsgClientLoggedOff` (EMsg 757,
+  `eresult`). A socket can also close without that message. Reborn checks
+  every 60 seconds by sending the empty `CMsgClientHeartBeat` (EMsg 703)
+  steam-vent's heartbeat sends; on a closed socket the send fails at once,
+  locally. It signs in again with backoff (5 s, 15 s, 30 s, 1 min, 2 min,
+  then every 5 minutes) only for logoff results 0, 2, 3, 20, 48 or a
+  closed socket (ADR 0025).
+- **Source:** node-steam-user `components/09-logon.js` (`ClientLoggedOff`
+  handler reads `eresult`; `nonFatalLogOffResults` = 0, Fail,
+  NoConnection, ServiceUnavailable, TryAnotherCM; other results are fatal
+  and not relogged); steam-vent `src/connection/raw.rs`
+  (`setup_heartbeat` sends `CMsgClientHeartBeat::default()`) and
+  `src/eresult.rs` (numbers).
+- **Verified:** yes for a closed socket (2026-11-20, test account, Wi-Fi
+  switched off and on): steam-vent logged the reset, Reborn's probe noticed
+  it within the minute, and the first sign-in attempt after 5 seconds
+  succeeded. A logoff with an EResult (for example a replaced session) has
+  not been seen live yet.

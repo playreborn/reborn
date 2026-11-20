@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 8;
+pub const PROTOCOL_MINOR: u16 = 9;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -501,6 +501,18 @@ pub enum Event {
     },
     /// The settings changed (library folder or Proton choice).
     SettingsChanged,
+    /// The connection to Steam was lost or is back (ADR 0025). Added in
+    /// protocol 1.9.
+    SteamConnection {
+        /// Whether the daemon is connected now.
+        connected: bool,
+        /// When not connected: whether it signs in again on its own (false
+        /// when another session of the account took over, or it gave up).
+        reconnecting: bool,
+        /// Why it is not connected, for display.
+        #[serde(default)]
+        reason: Option<String>,
+    },
     /// A friend's name, status, game or relationship changed, or a new
     /// request arrived.
     FriendUpdated {

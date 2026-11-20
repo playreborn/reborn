@@ -4,6 +4,22 @@ All notable changes to Reborn are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Reconnecting:** when the connection to Steam drops, Reborn notices it
+  within a minute and signs in again on its own, with growing pauses
+  (5 s up to 5 minutes). If Steam ended the session because the account
+  signed in elsewhere, Reborn waits for your next action instead, so two
+  sessions do not keep replacing each other (ADR 0025).
+
+### Fixed
+
+- A network error while signing in with the stored login was reported as
+  "login rejected, sign in again". Signing in now also gives up after one
+  minute instead of hanging.
+
 ## [0.2.0] - 2026-11-20
 
 Friends and chat: see who is online and what they play, set your own

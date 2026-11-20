@@ -16,6 +16,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use steam_vent::auth::AuthConfirmationHandler;
 use steam_vent::{
     Connection, ConnectionError, ConnectionTrait, NetworkError, ServerDiscoveryError, ServerList,
@@ -24,6 +25,9 @@ use steam_vent_proto_common::MsgKind;
 use steam_vent_proto_steam::enums_clientserver::EMsg;
 use steam_vent_proto_steam::steammessages_clientserver::CMsgClientLicenseList;
 use steam_vent_proto_steam::steammessages_clientserver_friends::CMsgClientFriendsList;
+use steam_vent_proto_steam::steammessages_clientserver_login::{
+    CMsgClientHeartBeat, CMsgClientLoggedOff,
+};
 use tracing::{debug, info};
 
 use crate::Secret;
@@ -78,6 +82,18 @@ pub enum Error {
 }
 
 impl Error {
+    /// Whether Steam refused the login itself (wrong or revoked credentials,
+    /// an unusable token), as opposed to a network problem. Only then is
+    /// signing in again pointless (live 2026-11-20: a network outage was
+    /// reported as a rejected login).
+    pub fn is_login_rejected(&self) -> bool {
+        matches!(
+            self,
+            Error::Login(ConnectionError::LoginError(_) | ConnectionError::AccessToken(_))
+                | Error::MissingRefreshToken
+        )
+    }
+
     /// Whether the connection to Steam is gone: closed, or dropped by Steam
     /// (for example when another session of the same account signed in,
     /// live 2026-11-20). The session cannot be used any more; sign in again.
@@ -90,6 +106,16 @@ impl Error {
                 ))
         )
     }
+}
+
+/// Whether Steam's logoff result allows signing in again on our own: the
+/// results node-steam-user treats as non-fatal (`components/09-logon.js`,
+/// `nonFatalLogOffResults`): 0, Fail (2), NoConnection (3),
+/// ServiceUnavailable (20), TryAnotherCM (48); numbers from steam-vent
+/// `src/eresult.rs`. LoggedInElsewhere (6) and LogonSessionReplaced (34)
+/// are not in it: reconnecting would fight the other session (ADR 0025).
+pub fn logoff_allows_reconnect(eresult: i32) -> bool {
+    matches!(eresult, 0 | 2 | 3 | 20 | 48)
 }
 
 /// An authenticated connection to Steam.
@@ -116,6 +142,29 @@ impl Session {
     /// The 64-bit SteamID of the logged-in account.
     pub fn steam_id(&self) -> u64 {
         self.connection.steam_id().into()
+    }
+
+    /// Checks that the connection is open by sending the empty
+    /// `CMsgClientHeartBeat` steam-vent's own heartbeat sends
+    /// (`src/connection/raw.rs`, `setup_heartbeat`). On a closed socket this
+    /// fails at once without network traffic (ADR 0025).
+    pub async fn probe(&self) -> Result<(), Error> {
+        self.connection.send(CMsgClientHeartBeat::default()).await?;
+        Ok(())
+    }
+
+    /// Resolves with the EResult when Steam logs this session off
+    /// (`CMsgClientLoggedOff`, EMsg 757); see [`logoff_allows_reconnect`].
+    pub fn logged_off(&self) -> impl Future<Output = Option<i32>> + Send + 'static {
+        let mut messages = Box::pin(self.connection.on::<CMsgClientLoggedOff>());
+        async move {
+            while let Some(message) = messages.next().await {
+                if let Ok(message) = message {
+                    return Some(message.eresult.unwrap_or(0));
+                }
+            }
+            None
+        }
     }
 }
 
@@ -275,6 +324,29 @@ fn licenses_from(list: CMsgClientLicenseList) -> Vec<License> {
 mod tests {
     use super::*;
     use steam_vent_proto_steam::steammessages_clientserver::cmsg_client_license_list::License as ProtoLicense;
+
+    #[test]
+    fn only_harmless_logoffs_allow_reconnecting() {
+        for harmless in [0, 2, 3, 20, 48] {
+            assert!(logoff_allows_reconnect(harmless), "{harmless}");
+        }
+        // LoggedInElsewhere, LogonSessionReplaced, AccessDenied.
+        for fatal in [6, 34, 15] {
+            assert!(!logoff_allows_reconnect(fatal), "{fatal}");
+        }
+    }
+
+    #[test]
+    fn only_real_rejections_count_as_rejected_logins() {
+        let rejected = Error::Login(ConnectionError::LoginError(
+            steam_vent::LoginError::InvalidCredentials,
+        ));
+        assert!(rejected.is_login_rejected());
+        let offline = Error::Login(ConnectionError::Network(NetworkError::Timeout));
+        assert!(!offline.is_login_rejected());
+        assert!(!Error::Network(NetworkError::EOF).is_login_rejected());
+        assert!(!Error::LicenseListTimeout.is_login_rejected());
+    }
 
     #[test]
     fn lost_connections_are_recognized() {

@@ -114,5 +114,46 @@ response types are in steam-vent-proto-steam
   `{64BitSteamID}` or `{Steam3AccountID}`), a pattern, a recursive flag and
   an OS restriction; root overrides map roots between systems.
 - The per-app configuration is in the app info (`ufs` section).
-  **Unknown:** the exact key names there; to be read from recorded app
-  info before use.
+  Community app info dumps (e.g. updatemonitor.com) and the tool
+  SteamCloudFileManager show `savefiles` entries (`root`, `path`,
+  `pattern`, optional `recursive`, `platforms`) and `rootoverrides`
+  (`root`, `os`, `oscompare`, `useinstead`, `addpath` or
+  `pathtransforms`). Not a usual Reborn source; **unverified** until
+  recorded.
+- **Observed** 2026-11-20 in recorded app info: app 2143030 (Cave
+  Crawlers) has `ufs` with only `quota` 1000000 and `maxnumfiles` 3; app
+  3419430 (Bongo Cat) only `quota`, `maxnumfiles`, `hidecloudui`,
+  `ignoreexternalfiles`; app 2158270 (Quatro!) the same four keys; app
+  3393110 (AION 2) only `quota` and `maxnumfiles`. None has `savefiles`. Cave Crawlers' cloud
+  files have names without a root token, so the game writes them itself
+  through the Steam interface; such files only matter once the shim
+  exists (ADR 0012).
+- **Observed** 2026-11-20: app info of an app the account does not own
+  can be read (app 1511340, Defender of Kuiper Belt Demo). Its `ufs`:
+  `quota` 600000, `maxnumfiles` 50, `appidredirect` 1505520; `savefiles`
+  with one entry (`root` `WinAppDataLocalLow`, `path`
+  `Cascus Harmony Games/Defender of Kuiper Belt/{64BitSteamID}/`,
+  `pattern` `*`, `recursive` `1`) and a key `copied_from_parent` `1`
+  next to the entries; `rootoverrides` for `MacOS` (`useinstead`
+  `MacHome`) and `Linux` (`useinstead` `LinuxHome`), each with
+  `oscompare` `=` and `pathtransforms` (`find`, `replace`). So the key
+  names from the dumps match. **Unknown:** whether `appidredirect` means
+  the files are stored under app 1505520; how Steam names these files in
+  the cloud.
+- **Observed** 2026-11-20, app 5191630 (Coin Maker Simulator Demo):
+  `savefiles` with one entry (`root` `WinAppDataLocalLow`, `path`
+  `Studio312/Coin Maker Simulator Demo/`, `pattern`
+  `save_slot_demo_*.json`, no `recursive`); `rootoverrides` for `Linux`
+  with `useinstead` `LinuxHome` and `addpath`
+  `.config/unity3d/Studio312/Coin Maker Simulator Demo/` instead of
+  `pathtransforms`.
+- **Observed** 2026-11-20, same app, after playing it in the official
+  client: the cloud name is
+  `%WinAppDataLocalLow%Studio312/Coin Maker Simulator Demo/save_slot_demo_1.json`,
+  so root token, the `savefiles` `path` and the file name, with no
+  separator after the token. The local file
+  `AppData\LocalLow\Studio312\Coin Maker Simulator Demo\save_slot_demo_1.json`
+  has the same size (20496 bytes) and time. The folder also holds
+  `steam_autocloud.vdf` (Steam's marker, see Valve's documentation) and
+  log files that do not match the pattern; neither is in the cloud.
+  Fixture `cloud_files_autocloud.bin`.

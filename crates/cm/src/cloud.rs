@@ -198,6 +198,26 @@ mod tests {
     /// Recorded with the first test account (see `tests/data/README.md`).
     const RECORDED: &[u8] = include_bytes!("../tests/data/cloud_files.bin");
 
+    /// An Auto-Cloud game, recorded with the first test account.
+    const RECORDED_AUTOCLOUD: &[u8] = include_bytes!("../tests/data/cloud_files_autocloud.bin");
+
+    #[test]
+    fn replays_recorded_autocloud_file() {
+        // The name is the root token, the `savefiles` path and the file
+        // name, without a separator after the token.
+        let response =
+            CCloud_EnumerateUserFiles_Response::parse_from_bytes(RECORDED_AUTOCLOUD).unwrap();
+        let files = cloud_files_from(&response);
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].name,
+            "%WinAppDataLocalLow%Studio312/Coin Maker Simulator Demo/save_slot_demo_1.json"
+        );
+        assert_eq!(files[0].size, 20_496);
+        assert_eq!(files[0].sha1, "b43d15c1457f406000abeb9b1aa6c1c0d7adb932");
+        assert_eq!(files[0].download_url, None, "removed in the fixture");
+    }
+
     #[test]
     fn replays_recorded_cloud_files() {
         let response = CCloud_EnumerateUserFiles_Response::parse_from_bytes(RECORDED).unwrap();

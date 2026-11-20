@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -87,8 +87,11 @@ pub struct Daemon {
     next_sign_in: AtomicU64,
     /// Apps whose game process (started by us) is still running.
     running: Arc<Mutex<BTreeSet<u32>>>,
-    /// Friends of the signed-in account with their latest persona.
+    /// Friends of the signed-in account with their latest persona, kept
+    /// current by the watcher (initial list plus every change).
     friends: Arc<Mutex<BTreeMap<u64, FriendInfo>>>,
+    /// Whether the watcher has filled `friends` for the current session.
+    friends_loaded: Arc<AtomicBool>,
     /// The task that follows persona updates of the current session.
     friends_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
     jobs: Mutex<Jobs>,
@@ -105,6 +108,7 @@ impl Daemon {
             next_sign_in: AtomicU64::new(1),
             running: Arc::new(Mutex::new(BTreeSet::new())),
             friends: Arc::new(Mutex::new(BTreeMap::new())),
+            friends_loaded: Arc::new(AtomicBool::new(false)),
             friends_watch: Mutex::new(None),
             jobs: Mutex::new(Jobs {
                 next_id: 1,
@@ -168,6 +172,8 @@ impl Daemon {
     /// watcher is stopped.
     fn watch_friends(&self, session: Arc<Session>) {
         let friends = Arc::clone(&self.friends);
+        let loaded = Arc::clone(&self.friends_loaded);
+        loaded.store(false, Ordering::SeqCst);
         let events = self.events.clone();
         let task = tokio::spawn(async move {
             // The status the user chose in Reborn, if any (ADR 0021).
@@ -189,26 +195,63 @@ impl Daemon {
                 for friend in &list {
                     known.insert(friend.steam_id, friend_info(friend));
                 }
+                loaded.store(true, Ordering::SeqCst);
             }
             // Subscribe before asking, so no answer is missed.
             let mut updates = Box::pin(session.persona_updates());
+            let mut changes = Box::pin(session.friend_changes());
             let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
             if let Err(error) = session.request_personas(&ids).await {
                 warn!(%error, "cannot request friend data");
             }
-            while let Some(personas) = updates.next().await {
-                for persona in personas {
-                    let updated = {
-                        let mut known = lock(&friends);
-                        known.get_mut(&persona.steam_id).map(|info| {
-                            merge_persona(info, &persona);
-                            info.clone()
-                        })
-                    };
-                    if let Some(friend) = updated {
-                        // No receivers just means no frontend is connected.
-                        let _ = events.send(Event::FriendUpdated { friend });
+            // No receivers just means no frontend is connected.
+            loop {
+                tokio::select! {
+                    Some(personas) = updates.next() => {
+                        for persona in personas {
+                            let updated = {
+                                let mut known = lock(&friends);
+                                known.get_mut(&persona.steam_id).map(|info| {
+                                    merge_persona(info, &persona);
+                                    info.clone()
+                                })
+                            };
+                            if let Some(friend) = updated {
+                                let _ = events.send(Event::FriendUpdated { friend });
+                            }
+                        }
                     }
+                    Some(changed) = changes.next() => {
+                        let mut new_ids = Vec::new();
+                        for change in changed {
+                            info!(
+                                steam_id = change.steam_id,
+                                relationship = ?change.relationship,
+                                "friend relationship changed"
+                            );
+                            if change.relationship == Relationship::None {
+                                if lock(&friends).remove(&change.steam_id).is_some() {
+                                    let steam_id = change.steam_id.to_string();
+                                    let _ = events.send(Event::FriendRemoved { steam_id });
+                                }
+                                continue;
+                            }
+                            let friend = {
+                                let mut known = lock(&friends);
+                                let info = known.entry(change.steam_id).or_insert_with(|| {
+                                    new_ids.push(change.steam_id);
+                                    friend_info(&change)
+                                });
+                                info.relationship = relationship(change.relationship);
+                                info.clone()
+                            };
+                            let _ = events.send(Event::FriendUpdated { friend });
+                        }
+                        if let Err(error) = session.request_personas(&new_ids).await {
+                            warn!(%error, "cannot request friend data");
+                        }
+                    }
+                    else => break,
                 }
             }
         });
@@ -222,23 +265,78 @@ impl Daemon {
         if let Some(task) = lock(&self.friends_watch).take() {
             task.abort();
         }
+        self.friends_loaded.store(false, Ordering::SeqCst);
         lock(&self.friends).clear();
     }
 
-    /// The friends list, signing in if needed.
+    /// Sends a friend request (ADR 0022).
+    async fn add_friend(&self, input: &str) -> Response {
+        let Some(steam_id) = reborn_cm::steam_id_from_input(input) else {
+            return Response::Error {
+                message: "enter a friend code, a SteamID64 or a profile URL (…/profiles/<number>)"
+                    .to_owned(),
+            };
+        };
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        match session.add_friend(steam_id).await {
+            Ok(name) => {
+                info!(steam_id, "friend request sent");
+                Response::FriendRequestSent {
+                    steam_id: steam_id.to_string(),
+                    name,
+                }
+            }
+            Err(reborn_cm::Error::Refused { code: 24, .. }) => Response::Error {
+                message: INSUFFICIENT_PRIVILEGE.to_owned(),
+            },
+            Err(error) => error_response(&CoreError::from(error)),
+        }
+    }
+
+    /// Accepts a request the person sent (ADR 0022).
+    async fn answer_friend_request(&self, steam_id: &str, accept: bool) -> Response {
+        if !accept {
+            return Response::Error {
+                message: DECLINE_DISABLED.to_owned(),
+            };
+        }
+        let pending = steam_id.parse::<u64>().ok().filter(|id| {
+            lock(&self.friends)
+                .get(id)
+                .is_some_and(|info| info.relationship == FriendRelationship::RequestReceived)
+        });
+        let Some(steam_id) = pending else {
+            return Response::Error {
+                message: "this person has not sent you a friend request".to_owned(),
+            };
+        };
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        let result = if accept {
+            session.add_friend(steam_id).await.map(drop)
+        } else {
+            session.decline_friend(steam_id).await
+        };
+        match result {
+            Ok(()) => {
+                info!(steam_id, accept, "answered friend request");
+                Response::Ok
+            }
+            Err(error) => error_response(&CoreError::from(error)),
+        }
+    }
+
+    /// The friends list as it is now, signing in if needed.
     async fn friends(&self) -> Result<Vec<FriendInfo>, CoreError> {
         let session = self.session().await?;
         let list = session.friends().await?;
-        let known = lock(&self.friends);
-        Ok(list
-            .iter()
-            .map(|friend| {
-                known
-                    .get(&friend.steam_id)
-                    .cloned()
-                    .unwrap_or_else(|| friend_info(friend))
-            })
-            .collect())
+        let loaded = self.friends_loaded.load(Ordering::SeqCst);
+        Ok(current_friends(loaded, &lock(&self.friends), &list))
     }
 
     /// Forgets the session after a Steam error, so the next request signs
@@ -315,6 +413,13 @@ impl Daemon {
             Request::Uninstall { app_id, library } => self.uninstall(app_id, library).await,
             Request::GetSettings => current_settings(),
             Request::SetOwnStatus { status } => self.set_own_status(status).await,
+            Request::AddFriend { friend } => self.add_friend(&friend).await,
+            Request::AcceptFriend { steam_id } => self.answer_friend_request(&steam_id, true).await,
+            // Disabled: on today's Steam, `ClientRemoveFriend` on a pending
+            // request left the sender blocked (live, 2026-11-20).
+            Request::DeclineFriend { .. } => Response::Error {
+                message: DECLINE_DISABLED.to_owned(),
+            },
             Request::Friends => match self.friends().await {
                 Ok(friends) => Response::Friends { friends },
                 Err(error) => {
@@ -822,23 +927,62 @@ fn installed(library: Option<PathBuf>) -> Result<(PathBuf, Vec<InstalledApp>), C
     Ok((library, apps))
 }
 
+/// Why declining is switched off until a safe way is verified.
+const DECLINE_DISABLED: &str = "Declining friend requests is disabled for now: on current \
+     Steam it blocked the sender instead of just declining. Ignore the request in the \
+     official client or on the Steam website.";
+
+/// Steam's answer when the account may not send friend requests
+/// (`EResult::InsufficientPrivilege` = 24, live 2026-11-20 with a new test
+/// account). Steam restricts new accounts that have not spent money yet;
+/// they can still accept requests.
+const INSUFFICIENT_PRIVILEGE: &str = "Steam does not let this account send friend requests \
+     (EResult 24, insufficient privilege). Steam limits new accounts that have not spent \
+     money on Steam yet; they can still accept requests.";
+
+/// The friends as known now: once the watcher has loaded them, its map
+/// (initial list plus every change since, live 2026-11-20: answering with
+/// the login list hid requests that arrived later); before that, the login
+/// list.
+fn current_friends(
+    loaded: bool,
+    known: &BTreeMap<u64, FriendInfo>,
+    login_list: &[Friend],
+) -> Vec<FriendInfo> {
+    if loaded {
+        return known.values().cloned().collect();
+    }
+    login_list
+        .iter()
+        .map(|friend| {
+            known
+                .get(&friend.steam_id)
+                .cloned()
+                .unwrap_or_else(|| friend_info(friend))
+        })
+        .collect()
+}
+
 /// A list entry before Steam sent its persona.
 fn friend_info(friend: &Friend) -> FriendInfo {
     FriendInfo {
         steam_id: friend.steam_id.to_string(),
         name: None,
         status: FriendStatus::Unknown,
-        relationship: match friend.relationship {
-            Relationship::Friend => FriendRelationship::Friend,
-            Relationship::RequestRecipient => FriendRelationship::RequestReceived,
-            Relationship::RequestInitiator => FriendRelationship::RequestSent,
-            Relationship::Blocked | Relationship::Ignored | Relationship::IgnoredFriend => {
-                FriendRelationship::Blocked
-            }
-            _ => FriendRelationship::Other,
-        },
+        relationship: relationship(friend.relationship),
         game_app_id: None,
         game_name: None,
+    }
+}
+
+fn relationship(relationship: Relationship) -> FriendRelationship {
+    match relationship {
+        Relationship::Friend => FriendRelationship::Friend,
+        Relationship::RequestRecipient => FriendRelationship::RequestReceived,
+        Relationship::RequestInitiator => FriendRelationship::RequestSent,
+        Relationship::Blocked | Relationship::IgnoredFriend => FriendRelationship::Blocked,
+        Relationship::Ignored => FriendRelationship::Ignored,
+        _ => FriendRelationship::Other,
     }
 }
 
@@ -1073,6 +1217,42 @@ mod tests {
         assert!(matches!(response, Response::Error { .. }));
     }
 
+    #[tokio::test]
+    async fn only_received_requests_can_be_answered() {
+        // Refused before signing in, so no network is used.
+        let daemon = Daemon::new();
+        lock(&daemon.friends).insert(
+            7,
+            friend_info(&Friend {
+                steam_id: 7,
+                relationship: Relationship::Friend,
+            }),
+        );
+        for request in [
+            Request::AcceptFriend {
+                steam_id: "7".to_owned(),
+            },
+            Request::DeclineFriend {
+                steam_id: "7".to_owned(),
+            },
+            Request::AcceptFriend {
+                steam_id: "not a number".to_owned(),
+            },
+        ] {
+            assert!(matches!(
+                daemon.handle(request).await,
+                Response::Error { .. }
+            ));
+        }
+        let invalid = Request::AddFriend {
+            friend: "https://steamcommunity.com/id/someone".to_owned(),
+        };
+        assert!(matches!(
+            daemon.handle(invalid).await,
+            Response::Error { .. }
+        ));
+    }
+
     #[test]
     fn own_status_names_round_trip() {
         for status in [
@@ -1091,6 +1271,30 @@ mod tests {
             );
         }
         assert_eq!(persona_state(OwnStatus::Invisible).to_raw(), 7);
+    }
+
+    #[test]
+    fn the_current_list_includes_changes_since_login() {
+        let at_login = [Friend {
+            steam_id: 1,
+            relationship: Relationship::RequestRecipient,
+        }];
+        let mut known = BTreeMap::new();
+        // Since login: request 1 declined, request 2 arrived.
+        let new_request = Friend {
+            steam_id: 2,
+            relationship: Relationship::RequestRecipient,
+        };
+        known.insert(2, friend_info(&new_request));
+        let ids = |list: Vec<FriendInfo>| -> Vec<String> {
+            list.into_iter().map(|friend| friend.steam_id).collect()
+        };
+        assert_eq!(ids(current_friends(true, &known, &at_login)), ["2"]);
+        // Before the watcher loaded anything, the login list is all there is.
+        assert_eq!(
+            ids(current_friends(false, &BTreeMap::new(), &at_login)),
+            ["1"]
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 6;
+pub const PROTOCOL_MINOR: u16 = 7;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -173,6 +173,21 @@ pub enum Request {
         /// The status.
         status: Option<OwnStatus>,
     },
+    /// Send a friend request (ADR 0022). Added in protocol 1.7.
+    AddFriend {
+        /// SteamID64, profile URL `…/profiles/<SteamID64>` or friend code.
+        friend: String,
+    },
+    /// Accept a friend request the person sent.
+    AcceptFriend {
+        /// SteamID64 as a decimal string.
+        steam_id: String,
+    },
+    /// Decline a friend request the person sent.
+    DeclineFriend {
+        /// SteamID64 as a decimal string.
+        steam_id: String,
+    },
 }
 
 /// Answers from the daemon.
@@ -256,6 +271,13 @@ pub enum Response {
     Friends {
         /// Friends and pending requests.
         friends: Vec<FriendInfo>,
+    },
+    /// Answer to [`Request::AddFriend`]: Steam accepted the request.
+    FriendRequestSent {
+        /// SteamID64 of the person, as a decimal string.
+        steam_id: String,
+        /// Their profile name, if Steam sent it.
+        name: Option<String>,
     },
     /// Answer to [`Request::Launch`]: the game process was started.
     Launched {
@@ -431,10 +453,16 @@ pub enum Event {
     },
     /// The settings changed (library folder or Proton choice).
     SettingsChanged,
-    /// A friend's name, status or game changed.
+    /// A friend's name, status, game or relationship changed, or a new
+    /// request arrived.
     FriendUpdated {
         /// The friend as now known.
         friend: FriendInfo,
+    },
+    /// A relationship ended (declined request, removed friend).
+    FriendRemoved {
+        /// SteamID64 as a decimal string.
+        steam_id: String,
     },
     /// An app was uninstalled.
     AppUninstalled {
@@ -517,8 +545,11 @@ pub enum FriendRelationship {
     RequestReceived,
     /// The user sent a friend request.
     RequestSent,
-    /// Blocked or ignored.
+    /// Blocked by the user (`Blocked`, or a friend who is blocked).
     Blocked,
+    /// The user ignored their request (`EFriendRelationship::Ignored`). Steam
+    /// reported this briefly after declining a request and did not keep it.
+    Ignored,
     /// Anything else.
     Other,
 }

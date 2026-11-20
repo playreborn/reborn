@@ -129,6 +129,11 @@ pub enum Message {
     SettingsLoaded(Result<Response, String>),
     FriendsLoaded(Result<Response, String>),
     OwnStatusPicked(StatusChoice),
+    AddFriendInput(String),
+    SendFriendRequest,
+    FriendRequestDone(Result<Response, String>),
+    AcceptFriend(String),
+    FriendActionDone(Result<Response, String>),
     LibraryInput(String),
     SaveLibrary,
     ResetLibrary,
@@ -167,6 +172,7 @@ pub struct App {
     library_input: String,
     /// `None` until loaded.
     friends: Option<Vec<FriendInfo>>,
+    add_friend_input: String,
 }
 
 impl App {
@@ -196,6 +202,7 @@ impl App {
             settings: None,
             library_input: String::new(),
             friends: None,
+            add_friend_input: String::new(),
         };
         (
             app,
@@ -322,6 +329,41 @@ impl App {
                 self.tab = tab;
                 if tab == Tab::Friends && self.friends.is_none() {
                     return self.send(Request::Friends, Message::FriendsLoaded);
+                }
+                Task::none()
+            }
+            Message::AddFriendInput(input) => {
+                self.add_friend_input = input;
+                Task::none()
+            }
+            Message::SendFriendRequest => {
+                let friend = self.add_friend_input.trim().to_owned();
+                if friend.is_empty() {
+                    return Task::none();
+                }
+                self.send(Request::AddFriend { friend }, Message::FriendRequestDone)
+            }
+            Message::FriendRequestDone(result) => {
+                match result {
+                    Ok(Response::FriendRequestSent { name, .. }) => {
+                        self.add_friend_input.clear();
+                        self.notice = Some(format!(
+                            "Friend request sent to {}.",
+                            name.as_deref().unwrap_or("that account")
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notice = Some(format!("Friend request: {error}")),
+                }
+                Task::none()
+            }
+            Message::AcceptFriend(steam_id) => self.send(
+                Request::AcceptFriend { steam_id },
+                Message::FriendActionDone,
+            ),
+            Message::FriendActionDone(result) => {
+                if let Err(error) = result {
+                    self.notice = Some(format!("Friend request: {error}"));
                 }
                 Task::none()
             }
@@ -651,6 +693,12 @@ impl App {
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
             }
+            Event::FriendRemoved { steam_id } => {
+                if let Some(friends) = &mut self.friends {
+                    friends.retain(|friend| friend.steam_id != steam_id);
+                }
+                Task::none()
+            }
             Event::FriendUpdated { friend } => {
                 if let Some(friends) = &mut self.friends {
                     match friends.iter_mut().find(|f| f.steam_id == friend.steam_id) {
@@ -895,7 +943,23 @@ impl App {
         ]
         .spacing(10)
         .align_y(Alignment::Center);
-        column![status_row, self.friends_list()].spacing(12).into()
+        let add_row = row![
+            text_input(
+                "Add a friend: friend code or profile URL",
+                &self.add_friend_input
+            )
+            .on_input(Message::AddFriendInput)
+            .on_submit(Message::SendFriendRequest)
+            .padding(8),
+            button("Send request").on_press_maybe(
+                (!self.add_friend_input.trim().is_empty()).then_some(Message::SendFriendRequest)
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        column![status_row, add_row, self.friends_list()]
+            .spacing(12)
+            .into()
     }
 
     fn friends_list(&self) -> Element<'_, Message> {
@@ -928,6 +992,7 @@ impl App {
                 }
                 (FriendRelationship::RequestSent, _, _) => "Friend request sent".to_owned(),
                 (FriendRelationship::Blocked, _, _) => "Blocked".to_owned(),
+                (FriendRelationship::Ignored, _, _) => "Request ignored".to_owned(),
                 (_, Some(game), _) => format!("Playing {game}"),
                 (_, None, Some(app_id)) => match self.owned.iter().find(|app| app.app_id == app_id)
                 {
@@ -941,7 +1006,24 @@ impl App {
             if online {
                 detail_text = detail_text.style(text::success);
             }
-            container(column![text(name).size(16), detail_text].spacing(2))
+            let mut entry = row![
+                column![text(name).size(16), detail_text]
+                    .spacing(2)
+                    .width(Fill)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            // No Decline yet: on current Steam it left the sender unable to
+            // send a new request (live, 2026-11-20); ignore requests in the
+            // official client until this is understood.
+            if friend.relationship == FriendRelationship::RequestReceived {
+                entry = entry.push(
+                    button("Accept")
+                        .style(button::success)
+                        .on_press(Message::AcceptFriend(friend.steam_id.clone())),
+                );
+            }
+            container(entry)
                 .padding(10)
                 .width(Fill)
                 .style(container::rounded_box)

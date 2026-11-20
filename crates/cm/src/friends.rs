@@ -14,7 +14,8 @@ use futures_util::{Stream, StreamExt};
 use steam_vent::ConnectionTrait;
 use steam_vent_proto_common::protobuf::Message;
 use steam_vent_proto_steam::steammessages_clientserver_friends::{
-    CMsgClientChangeStatus, CMsgClientFriendsList, CMsgClientPersonaState,
+    CMsgClientAddFriend, CMsgClientAddFriendResponse, CMsgClientChangeStatus,
+    CMsgClientFriendsList, CMsgClientPersonaState, CMsgClientRemoveFriend,
     CMsgClientRequestFriendData, cmsg_client_persona_state,
 };
 use tokio::sync::Notify;
@@ -32,6 +33,14 @@ const PERSONA_FLAGS: u32 = 1 | 2 | 16 | 64 | 256;
 /// Account type of individual users in a SteamID64 (bits 52-55; SteamKit2
 /// `Types/SteamID.cs`, `EAccountType.Individual` = 1).
 const INDIVIDUAL: u64 = 1;
+
+/// SteamID64 of account ID 0 of an individual account in the public
+/// universe, desktop instance: (1 << 56) | (1 << 52) | (1 << 32)
+/// (SteamKit2 `Types/SteamID.cs`).
+const INDIVIDUAL_BASE: u64 = 0x0110_0001_0000_0000;
+
+/// `EResult::OK`.
+const RESULT_OK: i32 = 1;
 
 /// How the account relates to another (`EFriendRelationship`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,22 +182,48 @@ impl FriendsSlot {
             .clone()
     }
 
-    /// Waits for the list once a background task delivers it.
+    /// Takes the first full (not incremental) list from `lists` in the
+    /// background. `lists` must be a subscription (`on`), not a one-time
+    /// wait (`one`): steam-vent hands the next message of a kind to a
+    /// pending one-time wait before any subscription, so an unused one would
+    /// swallow the first incremental change (live, 2026-11-20).
     pub(crate) fn wait_in_background(
         self: &Arc<Self>,
-        incoming: impl Future<Output = Result<CMsgClientFriendsList, steam_vent::NetworkError>>
+        lists: impl Stream<Item = Result<CMsgClientFriendsList, steam_vent::NetworkError>>
         + Send
         + 'static,
     ) {
         let slot = Arc::clone(self);
         tokio::spawn(async move {
-            match tokio::time::timeout(FRIENDS_LIST_TIMEOUT, incoming).await {
-                Ok(Ok(list)) => slot.store(list),
-                Ok(Err(error)) => debug!(%error, "no friends list"),
+            let mut lists = Box::pin(lists);
+            let full = async {
+                while let Some(list) = lists.next().await {
+                    match list {
+                        Ok(list) if !list.bincremental.unwrap_or(false) => return Some(list),
+                        Ok(_) => {}
+                        Err(error) => debug!(%error, "unreadable friends list"),
+                    }
+                }
+                None
+            };
+            match tokio::time::timeout(FRIENDS_LIST_TIMEOUT, full).await {
+                Ok(Some(list)) => slot.store(list),
+                Ok(None) => debug!("no friends list"),
                 Err(_) => debug!("Steam sent no friends list in time"),
             }
         });
     }
+}
+
+/// Redacted fixture data, see [`Session::record_add_friend`].
+#[derive(Debug)]
+pub struct FriendRequestRecording {
+    /// `CMsgClientAddFriendResponse`, protobuf-encoded.
+    pub response: Vec<u8>,
+    /// Incremental `CMsgClientFriendsList` messages received afterwards.
+    pub changes: Vec<Vec<u8>>,
+    /// Whether Steam accepted the request: the profile name, or the refusal.
+    pub result: Result<Option<String>, Error>,
 }
 
 /// Redacted fixture data, see [`Session::record_friends`].
@@ -242,6 +277,92 @@ impl Session {
         Ok(())
     }
 
+    /// Sends a friend request, or accepts one the person sent (ADR 0022).
+    /// Returns the person's profile name if Steam sent it. Visible to the
+    /// other person.
+    pub async fn add_friend(&self, steam_id: u64) -> Result<Option<String>, Error> {
+        let response = self.add_friend_response(steam_id).await?;
+        check_added(&response)?;
+        Ok(response.persona_name_added)
+    }
+
+    async fn add_friend_response(
+        &self,
+        steam_id: u64,
+    ) -> Result<CMsgClientAddFriendResponse, Error> {
+        let request = CMsgClientAddFriend {
+            steamid_to_add: Some(steam_id),
+            ..CMsgClientAddFriend::default()
+        };
+        Ok(self
+            .connection
+            .job::<CMsgClientAddFriend, CMsgClientAddFriendResponse>(request)
+            .await?)
+    }
+
+    /// Declines a friend request (ADR 0022). Steam sends no answer; the
+    /// change arrives as an incremental friends list.
+    pub async fn decline_friend(&self, steam_id: u64) -> Result<(), Error> {
+        let request = CMsgClientRemoveFriend {
+            friendid: Some(steam_id),
+            ..CMsgClientRemoveFriend::default()
+        };
+        self.connection.send(request).await?;
+        Ok(())
+    }
+
+    /// Relationship changes (incremental friends lists) for as long as the
+    /// connection lasts. Entries with [`Relationship::None`] ended.
+    pub fn friend_changes(&self) -> impl Stream<Item = Vec<Friend>> + 'static {
+        self.connection
+            .on::<CMsgClientFriendsList>()
+            .filter_map(|message| async move {
+                message
+                    .ok()
+                    .filter(|list| list.bincremental.unwrap_or(false))
+                    .map(|list| relationship_changes(&list))
+            })
+    }
+
+    /// Sends a friend request (or accepts one) and records the answer and
+    /// the incremental lists that follow within `wait` as redacted
+    /// fixtures, like [`Session::record_friends`].
+    pub async fn record_add_friend(
+        &self,
+        steam_id: u64,
+        wait: Duration,
+    ) -> Result<FriendRequestRecording, Error> {
+        let mut lists = Box::pin(self.connection.on::<CMsgClientFriendsList>());
+        let response = self.add_friend_response(steam_id).await?;
+        let mut redactor = Redactor::default();
+        let mut redacted = CMsgClientAddFriendResponse {
+            eresult: response.eresult,
+            steam_id_added: response.steam_id_added.map(|id| redactor.id(id)),
+            ..CMsgClientAddFriendResponse::default()
+        };
+        if response.persona_name_added.is_some() {
+            let number = redactor.number(response.steam_id_added.unwrap_or(steam_id));
+            redacted.persona_name_added = Some(format!("Friend {number}"));
+        }
+        let mut changes = Vec::new();
+        let deadline = tokio::time::Instant::now() + wait;
+        while let Ok(Some(message)) = tokio::time::timeout_at(deadline, lists.next()).await {
+            let Ok(list) = message else { continue };
+            changes.push(
+                redact_friends_list(&list, &mut redactor)
+                    .write_to_bytes()
+                    .map_err(|_| Error::IncompleteResponse("friends list"))?,
+            );
+        }
+        Ok(FriendRequestRecording {
+            response: redacted
+                .write_to_bytes()
+                .map_err(|_| Error::IncompleteResponse("add friend"))?,
+            changes,
+            result: check_added(&response).map(|()| response.persona_name_added),
+        })
+    }
+
     /// Persona updates for as long as the connection lasts.
     pub fn persona_updates(&self) -> impl Stream<Item = Vec<Persona>> + 'static {
         self.connection
@@ -292,6 +413,35 @@ fn change_status(state: PersonaState) -> CMsgClientChangeStatus {
     }
 }
 
+/// Turns Steam's answer to a friend request into an error unless it is OK.
+fn check_added(response: &CMsgClientAddFriendResponse) -> Result<(), Error> {
+    match response.eresult {
+        Some(RESULT_OK) => Ok(()),
+        Some(code) => Err(Error::Refused {
+            what: "friend",
+            code,
+        }),
+        None => Err(Error::IncompleteResponse("friend request")),
+    }
+}
+
+/// Reads who to add: a SteamID64 of an individual account, a profile URL
+/// `…/profiles/<SteamID64>`, or a friend code (the account ID; ADR 0022).
+/// Custom profile URLs (`/id/<name>`) are not resolved.
+pub fn steam_id_from_input(input: &str) -> Option<u64> {
+    let input = input.trim().trim_end_matches('/');
+    let number = match input.rfind("/profiles/") {
+        Some(at) => &input[at + "/profiles/".len()..],
+        None if input.contains('/') => return None,
+        None => input,
+    };
+    let value: u64 = number.parse().ok()?;
+    if value > u64::from(u32::MAX) {
+        return is_individual(value).then_some(value);
+    }
+    (value != 0).then_some(INDIVIDUAL_BASE + value)
+}
+
 fn is_individual(steam_id: u64) -> bool {
     (steam_id >> 52) & 0xF == INDIVIDUAL
 }
@@ -307,6 +457,21 @@ pub fn friends_from(list: &CMsgClientFriendsList) -> Vec<Friend> {
             (is_individual(steam_id) && relationship != Relationship::None).then_some(Friend {
                 steam_id,
                 relationship,
+            })
+        })
+        .collect()
+}
+
+/// Relationship changes of a list message, including ended relationships
+/// ([`Relationship::None`]); individual accounts only.
+pub fn relationship_changes(list: &CMsgClientFriendsList) -> Vec<Friend> {
+    list.friends
+        .iter()
+        .filter_map(|entry| {
+            let steam_id = entry.ulfriendid?;
+            is_individual(steam_id).then_some(Friend {
+                steam_id,
+                relationship: Relationship::from_raw(entry.efriendrelationship.unwrap_or(0)),
             })
         })
         .collect()
@@ -526,6 +691,109 @@ mod tests {
             "no persona_state sent"
         );
         assert_eq!(friend.game_app_id, None);
+    }
+
+    #[tokio::test]
+    async fn background_wait_takes_the_first_full_list() {
+        let incremental = CMsgClientFriendsList {
+            bincremental: Some(true),
+            friends: vec![entry(BOB, 2)],
+            ..Default::default()
+        };
+        let slot = Arc::new(FriendsSlot::default());
+        let ready = slot.ready.notified();
+        slot.wait_in_background(futures_util::stream::iter([Ok(incremental), Ok(list())]));
+        tokio::time::timeout(Duration::from_secs(1), ready)
+            .await
+            .unwrap();
+        let stored = slot.get().unwrap();
+        assert_eq!(
+            stored.bincremental,
+            Some(false),
+            "the full list, not the change"
+        );
+        assert_eq!(friends_from(&stored).len(), 2);
+    }
+
+    #[test]
+    fn reads_who_to_add() {
+        let id = 0x0110_0001_0000_002A; // account ID 42
+        assert_eq!(steam_id_from_input("42"), Some(id), "friend code");
+        assert_eq!(steam_id_from_input(&id.to_string()), Some(id));
+        assert_eq!(
+            steam_id_from_input(&format!(" https://steamcommunity.com/profiles/{id}/ ")),
+            Some(id)
+        );
+        assert_eq!(INDIVIDUAL_BASE, 76_561_197_960_265_728);
+        for bad in [
+            "",
+            "0",
+            "abc",
+            "https://steamcommunity.com/id/someone",
+            "-5",
+        ] {
+            assert_eq!(steam_id_from_input(bad), None, "{bad}");
+        }
+        // A clan is not a person.
+        assert_eq!(steam_id_from_input(&CLAN.to_string()), None);
+    }
+
+    #[test]
+    fn incremental_lists_report_ended_relationships() {
+        let list = CMsgClientFriendsList {
+            bincremental: Some(true),
+            friends: vec![entry(ALICE, 0), entry(BOB, 3), entry(CLAN, 3)],
+            ..Default::default()
+        };
+        assert_eq!(
+            relationship_changes(&list),
+            [
+                Friend {
+                    steam_id: ALICE,
+                    relationship: Relationship::None
+                },
+                Friend {
+                    steam_id: BOB,
+                    relationship: Relationship::Friend
+                },
+            ]
+        );
+    }
+
+    /// Recorded with the test account (see `tests/data/README.md`).
+    const ADD_FRIEND_REFUSED: &[u8] = include_bytes!("../tests/data/add_friend_refused.bin");
+
+    #[test]
+    fn replays_a_refused_friend_request() {
+        let response = CMsgClientAddFriendResponse::parse_from_bytes(ADD_FRIEND_REFUSED).unwrap();
+        assert_eq!(
+            response.steam_id_added.map(|id| id >> 56),
+            Some(4),
+            "placeholder"
+        );
+        let error = check_added(&response).unwrap_err();
+        assert!(matches!(error, Error::Refused { code: 24, .. }));
+        assert_eq!(
+            error.to_string(),
+            "Steam refused the friend request (EResult 24)"
+        );
+    }
+
+    #[test]
+    fn refused_requests_carry_the_eresult() {
+        let ok = CMsgClientAddFriendResponse {
+            eresult: Some(1),
+            ..Default::default()
+        };
+        assert!(check_added(&ok).is_ok());
+        let refused = CMsgClientAddFriendResponse {
+            eresult: Some(25),
+            ..Default::default()
+        };
+        assert!(matches!(
+            check_added(&refused),
+            Err(Error::Refused { code: 25, .. })
+        ));
     }
 
     #[test]

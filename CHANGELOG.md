@@ -15,6 +15,11 @@ All notable changes to Reborn are listed here. The format follows
 - **Your own online status** (online, away, busy, invisible, offline) can
   be chosen in the Friends tab; Reborn sets it after every sign-in. Nothing
   changes until you choose one (ADR 0021).
+- **Friend requests:** accept incoming requests and send your own by friend
+  code, SteamID64 or profile URL, in the Friends tab or with
+  `reborn-cli friends add|accept` (ADR 0022). Declining is switched off for
+  now: on current Steam the sender could not send a new request afterwards;
+  decline in the official client meanwhile (ADR 0023).
 
 ### Fixed
 

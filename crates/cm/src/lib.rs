@@ -37,7 +37,8 @@ mod session;
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use content::{ContentServer, DepotDecryptionKey};
 pub use friends::{
-    Friend, FriendsRecording, Persona, PersonaState, Relationship, friends_from, personas_from,
+    Friend, FriendRequestRecording, FriendsRecording, Persona, PersonaState, Relationship,
+    friends_from, personas_from, relationship_changes, steam_id_from_input,
 };
 pub use library::OwnedApp;
 pub use secret::Secret;

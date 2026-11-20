@@ -128,10 +128,15 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
-    /// Show your friends with status and game (read-only).
+    /// Show your friends with status and game, or answer and send friend
+    /// requests.
     Friends {
-        /// Instead, record the friends list and persona answers as redacted
-        /// test fixtures into this folder (SteamIDs and names replaced).
+        /// Send, accept or decline a friend request.
+        #[command(subcommand)]
+        action: Option<FriendAction>,
+        /// Instead of listing, record the friends list and persona answers as
+        /// redacted test fixtures into this folder (SteamIDs and names
+        /// replaced).
         #[arg(long)]
         record: Option<PathBuf>,
         /// Account to use (defaults to the last account that signed in).
@@ -187,7 +192,16 @@ async fn main() -> Result<()> {
         } => install(account, app_id, library, branch, true).await,
         Command::Daemon(command) => daemon(command).await,
         Command::Logout { account } => logout(account),
-        Command::Friends { record, account } => friends(account, record.as_deref()).await,
+        Command::Friends {
+            action: Some(action),
+            account,
+            ..
+        } => friend_action(account, action).await,
+        Command::Friends {
+            action: None,
+            record,
+            account,
+        } => friends(account, record.as_deref()).await,
     }
 }
 
@@ -578,6 +592,29 @@ fn print_event(event: InstallEvent) {
 }
 
 #[derive(Debug, Subcommand)]
+enum FriendAction {
+    /// Send a friend request (visible to the other person).
+    Add {
+        /// Friend code, SteamID64 or profile URL (`…/profiles/<number>`).
+        who: String,
+        /// Also record Steam's answer and the following list changes as
+        /// redacted fixtures into this folder.
+        #[arg(long)]
+        record: Option<PathBuf>,
+    },
+    /// Accept a friend request someone sent you.
+    Accept {
+        /// Their SteamID64, friend code or profile URL.
+        who: String,
+    },
+    /// Decline a friend request someone sent you.
+    Decline {
+        /// Their SteamID64, friend code or profile URL.
+        who: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum DaemonCommand {
     /// Version, account and active jobs of the daemon.
     Status,
@@ -805,6 +842,63 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
     Ok(())
 }
 
+async fn friend_action(account: Option<String>, action: FriendAction) -> Result<()> {
+    let parse = |who: &str| {
+        reborn_cm::steam_id_from_input(who)
+            .ok_or_else(|| anyhow!("`{who}` is not a friend code, SteamID64 or profile URL"))
+    };
+    let session = account::sign_in(account).await?;
+    match action {
+        FriendAction::Add { who, record } => {
+            let steam_id = parse(&who)?;
+            if let Some(dir) = record {
+                let recording = session
+                    .record_add_friend(steam_id, std::time::Duration::from_secs(5))
+                    .await?;
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("cannot create {}", dir.display()))?;
+                std::fs::write(dir.join("add_friend_response.bin"), &recording.response)?;
+                for (index, bytes) in recording.changes.iter().enumerate() {
+                    std::fs::write(dir.join(format!("friends_change_{index}.bin")), bytes)?;
+                }
+                println!(
+                    "Recorded the answer and {} list changes (redacted) into {}.",
+                    recording.changes.len(),
+                    dir.display()
+                );
+                let name = recording.result?;
+                println!(
+                    "Friend request sent to {}.",
+                    name.as_deref().unwrap_or("that account")
+                );
+            } else {
+                let name = session.add_friend(steam_id).await?;
+                println!(
+                    "Friend request sent to {}.",
+                    name.as_deref().unwrap_or("that account")
+                );
+            }
+        }
+        FriendAction::Accept { who } => {
+            let name = session.add_friend(parse(&who)?).await?;
+            println!(
+                "Accepted the request of {}.",
+                name.as_deref().unwrap_or("that account")
+            );
+        }
+        FriendAction::Decline { who } => {
+            parse(&who)?;
+            // On today's Steam, `ClientRemoveFriend` on a pending request left
+            // the sender blocked (live, 2026-11-20).
+            bail!(
+                "declining is disabled for now: on current Steam it blocked the sender. \
+                 Ignore the request in the official client or on the Steam website"
+            );
+        }
+    }
+    Ok(())
+}
+
 async fn friends(account: Option<String>, record: Option<&Path>) -> Result<()> {
     use futures_util::StreamExt;
     use reborn_cm::{Persona, PersonaState, Relationship};
@@ -828,6 +922,11 @@ async fn friends(account: Option<String>, record: Option<&Path>) -> Result<()> {
     }
 
     let list = session.friends().await?;
+    // The friend code is the account ID, the low 32 bits (ADR 0022).
+    println!(
+        "Your friend code: {}",
+        session.steam_id() & u64::from(u32::MAX)
+    );
     let mut updates = Box::pin(session.persona_updates());
     let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
     session.request_personas(&ids).await?;
@@ -862,7 +961,10 @@ async fn friends(account: Option<String>, record: Option<&Path>) -> Result<()> {
             Relationship::Friend => "",
             Relationship::RequestRecipient => "  (sent you a friend request)",
             Relationship::RequestInitiator => "  (your friend request)",
-            _ => "  (blocked/ignored)",
+            Relationship::Blocked => "  (Blocked, value 1)",
+            Relationship::Ignored => "  (Ignored, value 5)",
+            Relationship::IgnoredFriend => "  (IgnoredFriend, value 6)",
+            _ => "  (other relationship)",
         };
         println!("{name:<32} {status:<8}{game}{relation}");
     }

@@ -27,3 +27,5 @@ it is accepted; a new ADR supersedes it instead.
 | [0019](0019-settings.md) | Settings for the library folder and the Proton build | Accepted |
 | [0020](0020-friends-and-presence.md) | Friends and presence, read-only first | Accepted |
 | [0021](0021-own-online-status.md) | The user's own online status | Accepted |
+| [0022](0022-friend-requests.md) | Friend requests: send, accept, decline | Accepted (decline: see 0023) |
+| [0023](0023-decline-disabled.md) | Declining friend requests disabled until verified | Accepted |

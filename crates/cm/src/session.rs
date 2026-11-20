@@ -205,7 +205,9 @@ async fn receive_initial(
 ) -> Result<(Vec<License>, Arc<FriendsSlot>), Error> {
     // Subscribe first, so nothing can slip through between the two checks.
     let licenses_incoming = connection.one::<CMsgClientLicenseList>();
-    let friends_incoming = connection.one::<CMsgClientFriendsList>();
+    // A subscription, not `one`: an unused one-time wait would swallow the
+    // first incremental friends list later (see `FriendsSlot`).
+    let friends_incoming = connection.on::<CMsgClientFriendsList>();
     let mut licenses = None;
     let friends = Arc::new(FriendsSlot::default());
     let mut friends_found = false;

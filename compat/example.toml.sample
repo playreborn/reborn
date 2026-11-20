@@ -1,0 +1,25 @@
+# EXAMPLE ONLY. This is not a real report and not a real game.
+#
+# To add a report, copy this file to <app_id>.toml (for example 12345.toml,
+# the number from the game's store URL) and replace every value with what
+# you actually tested. See README.md for the schema. The file extension
+# .sample keeps this example out of the database.
+
+app_id = 0
+name = "Example Game"
+
+# One [[report]] per test. Newest report first.
+[[report]]
+tier = 2                          # 0-5, see README.md
+platform = "linux-proton"         # windows | linux-native | linux-proton
+reborn_version = "0.1.0"          # Reborn version or commit hash
+proton_version = "Proton 9.0-4"   # only for linux-proton, otherwise leave out
+date = "2026-01-01"               # YYYY-MM-DD, the day you tested
+notes = "Example text: singleplayer works, achievements not tested."
+
+[[report]]
+tier = 0
+platform = "windows"
+reborn_version = "0.1.0"
+date = "2026-01-01"
+notes = ""

@@ -57,6 +57,8 @@ steam-vent = "0.5"
 steam-vent-proto-common = "0.5"
 steam-vent-proto-steam = "0.5"
 thiserror = "2"
+# Compatibility database files in compat/ (plan section 8.5, ADR 0015). MIT OR Apache-2.0.
+toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

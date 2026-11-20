@@ -1,0 +1,84 @@
+name: Compatibility report
+description: Tell us how well a specific game works with Reborn. No programming needed.
+labels: ["compat", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! Please only report what you actually tested yourself with
+        Reborn on your own account. Do not copy results from other sites or
+        from the official client. The fields match `compat/README.md`.
+  - type: input
+    id: app_id
+    attributes:
+      label: App ID
+      description: The number in the game's store URL, e.g. store.steampowered.com/app/<App ID>/
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Game name
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Tier
+      description: Each tier includes everything below it.
+      options:
+        - "0 - does not start"
+        - "1 - starts, but only with the official client as fallback"
+        - "2 - starts without the official client, singleplayer playable"
+        - "3 - additionally achievements and cloud"
+        - "4 - additionally multiplayer"
+        - "5 - no known differences to the official client"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: SteamOS desktop mode counts as Linux; mention it in the notes.
+      options:
+        - "windows"
+        - "linux-native (native Linux build of the game)"
+        - "linux-proton (Windows build through Proton)"
+    validations:
+      required: true
+  - type: input
+    id: reborn_version
+    attributes:
+      label: Reborn version or commit
+      description: For example 0.1.0, or the commit hash you built.
+    validations:
+      required: true
+  - type: input
+    id: proton_version
+    attributes:
+      label: Proton version
+      description: Only for linux-proton, e.g. "Proton 9.0-4" or "GE-Proton9-20". Leave empty otherwise.
+    validations:
+      required: false
+  - type: input
+    id: date
+    attributes:
+      label: Date of the test
+      description: YYYY-MM-DD
+      placeholder: "2026-11-20"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What works, what does not, workarounds, launch options.
+    validations:
+      required: false
+  - type: checkboxes
+    id: real_test
+    attributes:
+      label: Real test
+      options:
+        - label: I tested this myself with the Reborn version above.
+          required: true

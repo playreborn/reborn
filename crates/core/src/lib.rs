@@ -5,6 +5,7 @@
 //! - [`install`]: installing, updating and verifying apps in a library.
 //! - [`launch`]: starting installed games.
 //! - [`library`]: apps installed in a library folder.
+//! - [`uninstall`]: removing an installed app.
 //!
 //! This crate glues `reborn-cm` (Steam), `reborn-content` (downloads),
 //! `reborn-formats` (Steam files) and `reborn-platform` (keyring, paths)
@@ -17,5 +18,6 @@ mod error;
 pub mod install;
 pub mod launch;
 pub mod library;
+pub mod uninstall;
 
 pub use error::CoreError;

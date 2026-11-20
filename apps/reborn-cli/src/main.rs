@@ -602,6 +602,14 @@ enum DaemonCommand {
         /// Job ID.
         job_id: u64,
     },
+    /// Remove an installed app through the daemon (deletes its files).
+    Uninstall {
+        /// App ID.
+        app_id: u32,
+        /// Library folder (defaults to Reborn's own library).
+        #[arg(long)]
+        library: Option<PathBuf>,
+    },
     /// Start an installed game through the daemon.
     Launch {
         /// App ID.
@@ -654,6 +662,10 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             }
             return Ok(());
         }
+        DaemonCommand::Uninstall { app_id, library } => Request::Uninstall {
+            app_id: *app_id,
+            library: library.clone(),
+        },
         DaemonCommand::Launch {
             app_id,
             library,

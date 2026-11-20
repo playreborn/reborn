@@ -17,7 +17,7 @@ you can read, build and change yourself.
 
 - Sign in with password and Steam Guard (code or approval in the mobile app);
   the login is kept in your system's keyring.
-- Your library, with install, update, verify and resume, using Reborn's own
+- Your library, with install, update, verify, resume and uninstall, using Reborn's own
   download engine and the Steam library format.
 - Play: native games start directly; on Linux, Windows-only games run
   through an installed Proton build.

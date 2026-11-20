@@ -226,6 +226,7 @@ impl Daemon {
             Request::SubmitGuardCode { code } => self.submit_guard_code(&code),
             Request::CancelSignIn => self.cancel_sign_in(),
             Request::SignOut => self.sign_out().await,
+            Request::Uninstall { app_id, library } => self.uninstall(app_id, library).await,
             Request::Launch {
                 app_id,
                 library,
@@ -368,6 +369,46 @@ impl Daemon {
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
         Response::Ok
+    }
+
+    /// Removes an installed app (ADR 0018). Deleting files needs a running
+    /// or queued job and a running game to be ruled out first.
+    async fn uninstall(&self, app_id: u32, library: Option<PathBuf>) -> Response {
+        if self.running().contains(&app_id) {
+            return Response::Error {
+                message: format!("app {app_id} is running; close it first"),
+            };
+        }
+        let busy = self.jobs().entries.iter().any(|entry| {
+            entry.info.app_id == app_id && !matches!(entry.info.state, JobState::Finished { .. })
+        });
+        if busy {
+            return Response::Error {
+                message: format!("app {app_id} is being installed or verified; cancel it first"),
+            };
+        }
+        let library = match library {
+            Some(library) => library,
+            None => match settings::default_library() {
+                Ok(library) => library,
+                Err(error) => return error_response(&CoreError::from(error)),
+            },
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            reborn_core::uninstall::uninstall_app(&library, app_id)
+        })
+        .await;
+        match result {
+            Ok(Ok(report)) => {
+                info!(app_id, folder = ?report.removed_dir, "app uninstalled");
+                self.emit(Event::AppUninstalled { app_id });
+                Response::Ok
+            }
+            Ok(Err(error)) => error_response(&error),
+            Err(error) => Response::Error {
+                message: format!("uninstalling failed: {error}"),
+            },
+        }
     }
 
     /// Starts an installed game and reports when its process exits.
@@ -735,6 +776,27 @@ mod tests {
 
         daemon.handle(install(10)).await;
         let Response::Error { message } = daemon.handle(launch(10)).await else {
+            panic!("expected an error");
+        };
+        assert!(message.contains("being installed"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn uninstall_is_refused_while_running_or_installing() {
+        // Both checks happen before any file is touched.
+        let daemon = Daemon::new();
+        let uninstall = |app_id| Request::Uninstall {
+            app_id,
+            library: None,
+        };
+        daemon.running().insert(480);
+        let Response::Error { message } = daemon.handle(uninstall(480)).await else {
+            panic!("expected an error");
+        };
+        assert!(message.contains("running"), "{message}");
+
+        daemon.handle(install(10)).await;
+        let Response::Error { message } = daemon.handle(uninstall(10)).await else {
             panic!("expected an error");
         };
         assert!(message.contains("being installed"), "{message}");

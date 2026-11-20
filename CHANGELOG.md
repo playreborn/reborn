@@ -17,11 +17,11 @@ without the command line, on Windows and Linux.
   Secret Service on Linux).
 - **Library** of all apps your account owns, read from your licenses.
 - **Own download engine:** install, update, resume interrupted downloads,
-  verify and repair. Installs use the Steam library format, so the
+  verify and repair, and uninstall. Installs use the Steam library format, so the
   official client recognizes them.
 - **Desktop app** (`reborn`): sign in and out, library with search,
-  install / update / verify, download queue with progress and cancel, Play,
-  Quit.
+  install / update / verify / uninstall, download queue with progress and
+  cancel, Play, Quit.
 - **Background service** (`rebornd`): owns the Steam session and the
   download queue; the app starts it when needed. It is reachable only by
   your own user.

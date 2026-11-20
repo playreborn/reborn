@@ -23,3 +23,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0015](0015-compatibility-database.md) | Compatibility database | Proposed |
 | [0016](0016-launching-games.md) | Launching games | Accepted (Proton: see 0017) |
 | [0017](0017-windows-games-through-proton.md) | Windows games on Linux through Proton | Accepted |
+| [0018](0018-uninstalling-apps.md) | Uninstalling apps | Accepted |

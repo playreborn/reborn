@@ -77,6 +77,8 @@ pub enum Message {
     QuitDone(Result<Response, String>),
     Play(u32),
     PlayDone(u32, Result<Response, String>),
+    Uninstall(u32),
+    UninstallDone(Result<Response, String>),
 }
 
 pub struct App {
@@ -105,6 +107,8 @@ pub struct App {
     running: BTreeSet<u32>,
     /// Games whose launch request is on its way.
     starting: BTreeSet<u32>,
+    /// The app whose "Uninstall" was clicked once; a second click deletes.
+    confirm_uninstall: Option<u32>,
 }
 
 impl App {
@@ -130,6 +134,7 @@ impl App {
             quit_armed: false,
             running: BTreeSet::new(),
             starting: BTreeSet::new(),
+            confirm_uninstall: None,
         };
         (
             app,
@@ -359,6 +364,29 @@ impl App {
                     None => Task::none(),
                 }
             }
+            Message::Uninstall(app_id) => {
+                if self.confirm_uninstall != Some(app_id) {
+                    self.confirm_uninstall = Some(app_id);
+                    return Task::none();
+                }
+                self.confirm_uninstall = None;
+                self.send(
+                    Request::Uninstall {
+                        app_id,
+                        library: None,
+                    },
+                    Message::UninstallDone,
+                )
+            }
+            Message::UninstallDone(result) => {
+                if let Err(error) = result {
+                    self.notice = Some(format!("Cannot uninstall: {error}"));
+                }
+                self.send(
+                    Request::Installed { library: None },
+                    Message::InstalledLoaded,
+                )
+            }
             Message::PlayDone(app_id, result) => {
                 self.starting.remove(&app_id);
                 match result {
@@ -498,6 +526,10 @@ impl App {
                 self.owned.clear();
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
+            }
+            Event::AppUninstalled { app_id } => {
+                self.installed.remove(&app_id);
+                Task::none()
             }
             Event::GameStarted { app_id, .. } => {
                 self.running.insert(app_id);
@@ -762,6 +794,7 @@ impl App {
                         button("Verify")
                             .style(button::secondary)
                             .on_press_maybe((!busy).then_some(Message::Verify(app.app_id))),
+                        self.uninstall_button(app.app_id, busy),
                     ]
                     .spacing(8)
                     .into(),
@@ -792,6 +825,24 @@ impl App {
         )
         .padding(10)
         .style(container::rounded_box)
+        .into()
+    }
+
+    /// Two clicks: "Uninstall", then "Really delete?".
+    fn uninstall_button(&self, app_id: u32, busy: bool) -> Element<'_, Message> {
+        let confirming = self.confirm_uninstall == Some(app_id);
+        let blocked = busy || self.running.contains(&app_id);
+        button(if confirming {
+            "Really delete?"
+        } else {
+            "Uninstall"
+        })
+        .style(if confirming {
+            button::danger
+        } else {
+            button::secondary
+        })
+        .on_press_maybe((!blocked).then_some(Message::Uninstall(app_id)))
         .into()
     }
 

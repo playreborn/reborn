@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 2;
+pub const PROTOCOL_MINOR: u16 = 3;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -140,6 +140,15 @@ pub enum Request {
         library: Option<PathBuf>,
         /// Launch entry index (`None`: the default entry for this computer).
         option: Option<u32>,
+    },
+    /// Remove an installed app: its game folder, download leftovers and
+    /// appmanifest (ADR 0018). Permanent. Refused while the app is running,
+    /// installing or verifying. Added in protocol 1.3.
+    Uninstall {
+        /// The app.
+        app_id: u32,
+        /// Library folder (`None`: Reborn's own library).
+        library: Option<PathBuf>,
     },
 }
 
@@ -374,6 +383,11 @@ pub enum Event {
         app_id: u32,
         /// App name, if known.
         name: Option<String>,
+    },
+    /// An app was uninstalled.
+    AppUninstalled {
+        /// The app.
+        app_id: u32,
     },
     /// A game started by the daemon exited. Games that hand over to a
     /// launcher may "exit" while the launcher keeps running.

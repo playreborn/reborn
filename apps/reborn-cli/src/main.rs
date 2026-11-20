@@ -394,11 +394,34 @@ async fn manifest(
         } else {
             "file"
         };
-        println!("  {kind} {:>10}  {}", human_size(file.size), file.name);
+        println!(
+            "  {kind} {:>10}  flags {:#06x}{}  {}",
+            human_size(file.size),
+            file.flags,
+            if file.is_executable() { " x" } else { "  " },
+            file.name
+        );
     }
     if manifest.files.len() > 15 {
         println!("  ... {} more", manifest.files.len() - 15);
     }
+    let executables: Vec<&str> = manifest
+        .files
+        .iter()
+        .filter(|file| file.is_executable())
+        .map(|file| file.name.as_str())
+        .collect();
+    println!(
+        "{} files are marked executable{}{}",
+        executables.len(),
+        if executables.is_empty() { "" } else { ": " },
+        executables
+            .iter()
+            .take(10)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     if let Some((file, chunk)) = manifest
         .files

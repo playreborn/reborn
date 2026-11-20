@@ -110,3 +110,21 @@ See ADR 0013.
   `verify` keeps all 8 files, and a file with appended bytes is repaired from
   its own still-valid chunk without downloading. A real version update has
   not been seen live yet.
+
+### File permissions on Unix
+
+- **What:** Every installed file gets an x bit wherever it has an r bit
+  (`0644` becomes `0755`, `0664` becomes `0775`), regardless of the
+  manifest's executable flag. Files kept unchanged from an earlier install
+  are fixed as well.
+- **Why:** Some depots flag no file as executable. Example: the Linux depot
+  3419433 of app 3419430 (Bongo Cat) has flags `0x0000` on all files,
+  including `BongoCat.x86_64` and `launch.sh`. Installed only by the flags,
+  the game cannot start (`Permission denied`).
+- **Source:** observed behaviour of the official Steam client on Linux
+  (Debian 13 VM, 2026-11-20): right after installing app 3419430, all 189
+  files were `rwxrwxr-x` (umask 002), before the first start.
+  DepotDownloader only marks flagged files (`ContentDownloader.cs`, around
+  the `EDepotFileFlag.Executable` check), so it is not followed here.
+- **Verified:** observation of the official client as above; Reborn's
+  behaviour is covered by a Unix-only test. Live test of the fix pending.

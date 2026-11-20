@@ -418,11 +418,21 @@ pub async fn install(
         tokio::fs::rename(staging.join(path), &destination)
             .await
             .map_err(commit_error(&destination))?;
-        if planned.file.is_executable() {
-            make_executable(&destination).await?;
-        }
         report.files += 1;
         report.bytes_written += planned.file.size;
+    }
+    // On Unix the official client makes every installed file executable,
+    // whatever the manifest flags say: after it installed app 3419430, whose
+    // Linux depot flags no file as executable, all 189 files had the x bits
+    // where they had r bits (`rwxrwxr-x` with umask 002; Steam client on
+    // Debian 13, observed 2026-11-20, see docs/protocol/content.md).
+    // DepotDownloader only marks flagged files (`ContentDownloader.cs`), which
+    // leaves such games unable to start. Reborn follows the client, and also
+    // fixes files kept unchanged from an earlier install.
+    for (path, entry) in &plan.entries {
+        if matches!(entry, Planned::File(_)) {
+            add_execute_bits(&install_dir.join(path)).await?;
+        }
     }
     for path in &plan.removed_files {
         let destination = install_dir.join(path);
@@ -765,16 +775,27 @@ async fn remove_dir_if_exists(path: &Path) -> Result<(), InstallError> {
     }
 }
 
+/// Adds an x bit wherever the regular file has an r bit (`0644` becomes
+/// `0755`, `0664` becomes `0775`). Symlinks and missing files are left alone.
 #[cfg(unix)]
-async fn make_executable(path: &Path) -> Result<(), InstallError> {
+async fn add_execute_bits(path: &Path) -> Result<(), InstallError> {
     use std::os::unix::fs::PermissionsExt;
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+    let metadata = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_file() => metadata,
+        _ => return Ok(()),
+    };
+    let mode = metadata.permissions().mode();
+    let wanted = mode | ((mode & 0o444) >> 2);
+    if wanted == mode {
+        return Ok(());
+    }
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(wanted))
         .await
         .map_err(commit_error(path))
 }
 
 #[cfg(not(unix))]
-async fn make_executable(_path: &Path) -> Result<(), InstallError> {
+async fn add_execute_bits(_path: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
@@ -1020,6 +1041,43 @@ mod tests {
         assert_eq!(last.bytes_done, last.bytes_total);
         assert_eq!(last.chunks_done, last.chunks_total);
         assert_eq!(report.bytes_written, big.len() as u64 + 13);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn every_installed_file_becomes_executable_like_the_client() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("exec");
+        let mut source = MemorySource::default();
+        // No file carries the executable flag, as in app 3419430's Linux depot.
+        let files = vec![
+            file("game.x86_64", b"\x7fELF", 1024, 0, &mut source),
+            file("data/level0", &sample(2000), 1024, 0, &mut source),
+        ];
+        run(&dir, depot(files.clone()), &source).await;
+        let mode = |name: &str| {
+            std::fs::metadata(dir.game().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        for name in ["game.x86_64", "data/level0"] {
+            assert_eq!(mode(name) & 0o100, 0o100, "{name}: {:o}", mode(name));
+        }
+
+        // A file kept from an earlier install without x bits is fixed too.
+        let game = dir.game().join("game.x86_64");
+        std::fs::set_permissions(&game, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let verify = InstallOptions {
+            verify_existing: true,
+            ..options()
+        };
+        let report = install(&[depot(files)], &dir.target(), &source, verify, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(report.files_unchanged, 2);
+        assert_eq!(mode("game.x86_64"), 0o755);
     }
 
     #[tokio::test]

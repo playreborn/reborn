@@ -9,13 +9,20 @@
 //! The game gets `SteamAppId` and `SteamGameId` in its environment, as the
 //! Steam client provides them: Valve's Proton launcher reads both
 //! (ValveSoftware/Proton, `proton` script, branch `proton_9.0`).
+//!
+//! On Linux, a game with only Windows launch entries runs through an
+//! installed Proton build ([`reborn_platform::proton`], ADR 0017). The Wine
+//! prefix lives in Reborn's data folder, `compatdata/<app id>`, one per app.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use reborn_cm::{AppDetails, LaunchOption, PUBLIC_BRANCH, Platform, Session};
 use reborn_content::path::install_path;
+use reborn_platform::proton::{self, ProtonInstall, ProtonLaunch, ProtonSource, SearchRoots};
 use reborn_platform::settings;
+use tracing::warn;
 
 use crate::CoreError;
 use crate::library::{app_manifest_path, read_app_manifest};
@@ -38,16 +45,22 @@ pub struct LaunchPlan {
     pub app_id: u32,
     /// App name, if known.
     pub name: Option<String>,
-    /// Program to run.
+    /// Program to run: the game itself, or Proton's launcher script.
     pub program: PathBuf,
     /// Its arguments.
-    pub args: Vec<String>,
+    pub args: Vec<OsString>,
     /// Working directory.
     pub working_dir: PathBuf,
     /// Extra environment variables.
-    pub env: Vec<(String, String)>,
+    pub env: Vec<(String, OsString)>,
     /// The launch entry that was chosen.
     pub option: LaunchOption,
+    /// The game's own executable (the same as `program` without Proton).
+    pub executable: PathBuf,
+    /// The Proton build, if the game runs through one.
+    pub proton: Option<String>,
+    /// Directory to create before starting (Proton's per-app data).
+    pub create_dir: Option<PathBuf>,
 }
 
 /// Resolves a launch for an installed app: reads its appmanifest, loads the
@@ -62,13 +75,93 @@ pub async fn plan_launch(
     };
     let game_dir = installed_game_dir(&library, request.app_id)?;
     let details = session.app_details(request.app_id, PUBLIC_BRANCH).await?;
-    plan_from(
+    let platform = Platform::current();
+    match plan_from(
         &details,
         &game_dir,
-        &Platform::current(),
+        &platform,
         PUBLIC_BRANCH,
         request.option,
-    )
+    ) {
+        Err(CoreError::NeedsProton(name)) if platform.os == "linux" => {
+            let windows = Platform {
+                os: "windows".to_owned(),
+                ..platform
+            };
+            let plan = plan_from(&details, &game_dir, &windows, PUBLIC_BRANCH, request.option)?;
+            let roots = SearchRoots::from_environment();
+            let discovery = proton::discover(&roots);
+            for problem in &discovery.problems {
+                warn!(%problem, "while looking for Proton");
+            }
+            let install = choose_proton(&discovery.installs).ok_or(CoreError::NoProton(name))?;
+            let compat_data = settings::data_dir()?
+                .join("compatdata")
+                .join(request.app_id.to_string());
+            let steam_client = roots.steam_roots.iter().find(|root| root.is_dir());
+            with_proton(
+                plan,
+                install,
+                &compat_data,
+                steam_client.map(PathBuf::as_path),
+            )
+        }
+        other => other,
+    }
+}
+
+/// The Proton build to use: the newest numbered official build (`Proton
+/// 9.0`, `Proton 10.0`, ...), else another official build such as `Proton
+/// Experimental`, else a custom build from `compatibilitytools.d`. This is
+/// Reborn's own default until a setting lets the user choose.
+pub fn choose_proton(installs: &[ProtonInstall]) -> Option<&ProtonInstall> {
+    installs.iter().max_by_key(|install| {
+        let official = matches!(install.source, ProtonSource::SteamLibrary(_));
+        let version: Option<Vec<u32>> = install.name.strip_prefix("Proton ").and_then(|rest| {
+            rest.split('.')
+                .map(|part| part.trim().parse().ok())
+                .collect()
+        });
+        match (official, version) {
+            (true, Some(version)) => (2, version),
+            (true, None) => (1, Vec::new()),
+            (false, _) => (0, Vec::new()),
+        }
+    })
+}
+
+/// Turns a plan for the Windows executable into one that runs it through
+/// Proton. Pure apart from what [`proton::proton_command`] checks.
+pub fn with_proton(
+    plan: LaunchPlan,
+    install: &ProtonInstall,
+    compat_data: &Path,
+    steam_client: Option<&Path>,
+) -> Result<LaunchPlan, CoreError> {
+    let args: Vec<String> = plan
+        .args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let command = proton::proton_command(&ProtonLaunch {
+        proton_dir: &install.dir,
+        verb: proton::ProtonVerb::default(),
+        executable: &plan.executable,
+        args: &args,
+        compat_data_dir: compat_data,
+        steam_client_dir: steam_client,
+        app_id: plan.app_id,
+        working_dir: &plan.working_dir,
+    })?;
+    Ok(LaunchPlan {
+        program: command.program,
+        args: command.args,
+        working_dir: command.current_dir,
+        env: command.env.into_iter().collect(),
+        proton: Some(install.name.clone()),
+        create_dir: Some(compat_data.to_path_buf()),
+        ..plan
+    })
 }
 
 /// The install folder of a fully installed app.
@@ -141,29 +234,38 @@ pub fn plan_from(
         Some(dir) if !is_current_dir(dir) => game_dir.join(relative(dir)?),
         _ => game_dir.to_path_buf(),
     };
-    let app_id = details.app_id.to_string();
+    let app_id = OsString::from(details.app_id.to_string());
     Ok(LaunchPlan {
         app_id: details.app_id,
         name: details.name.clone(),
+        executable: program.clone(),
         program,
         args: option
             .arguments
             .as_deref()
             .map(split_arguments)
-            .unwrap_or_default(),
+            .unwrap_or_default()
+            .into_iter()
+            .map(OsString::from)
+            .collect(),
         working_dir,
         env: vec![
             ("SteamAppId".to_owned(), app_id.clone()),
             ("SteamGameId".to_owned(), app_id),
         ],
         option: option.clone(),
+        proton: None,
+        create_dir: None,
     })
 }
 
 /// Starts the planned process with no stdin/stdout/stderr attached.
 pub fn spawn(plan: &LaunchPlan) -> Result<Child, CoreError> {
-    if !plan.program.is_file() {
-        return Err(CoreError::MissingExecutable(plan.program.clone()));
+    if !plan.executable.is_file() {
+        return Err(CoreError::MissingExecutable(plan.executable.clone()));
+    }
+    if let Some(dir) = &plan.create_dir {
+        std::fs::create_dir_all(dir).map_err(crate::error::io_error(dir))?;
     }
     Command::new(&plan.program)
         .args(&plan.args)
@@ -277,14 +379,8 @@ mod tests {
         assert_eq!(plan.program, dir.join("bin").join("Game.exe"));
         assert_eq!(plan.working_dir, dir.join("bin"));
         assert_eq!(plan.args, ["-windowed", "+name Some Player"]);
-        assert!(
-            plan.env
-                .contains(&("SteamAppId".to_owned(), "480".to_owned()))
-        );
-        assert!(
-            plan.env
-                .contains(&("SteamGameId".to_owned(), "480".to_owned()))
-        );
+        assert!(plan.env.contains(&("SteamAppId".to_owned(), "480".into())));
+        assert!(plan.env.contains(&("SteamGameId".to_owned(), "480".into())));
 
         let plan = plan_from(&details, &dir, &platform("linux"), PUBLIC_BRANCH, None).unwrap();
         assert_eq!(plan.program, dir.join("game.sh"), "leading ./ dropped");
@@ -389,8 +485,95 @@ mod tests {
             working_dir: PathBuf::from("."),
             env: Vec::new(),
             option: LaunchOption::default(),
+            executable: PathBuf::from("definitely-missing-reborn-test.exe"),
+            proton: None,
+            create_dir: None,
         };
         assert!(matches!(spawn(&plan), Err(CoreError::MissingExecutable(_))));
+    }
+
+    fn proton(name: &str, official: bool) -> ProtonInstall {
+        ProtonInstall {
+            name: name.to_owned(),
+            dir: absolute(&["tools", name]),
+            source: if official {
+                ProtonSource::SteamLibrary(absolute(&["lib"]))
+            } else {
+                ProtonSource::CompatibilityTool
+            },
+            version: None,
+            required_tool_app_id: None,
+        }
+    }
+
+    /// An absolute path on every OS (`C:\a\b` or `/a/b`).
+    fn absolute(parts: &[&str]) -> PathBuf {
+        let mut path = if cfg!(windows) {
+            PathBuf::from("C:\\")
+        } else {
+            PathBuf::from("/")
+        };
+        path.extend(parts);
+        path
+    }
+
+    #[test]
+    fn chooses_the_newest_official_proton() {
+        let installs = [
+            proton("GE-Proton9-20", false),
+            proton("Proton Experimental", true),
+            proton("Proton 9.0", true),
+            proton("Proton 10.0", true),
+        ];
+        assert_eq!(choose_proton(&installs).unwrap().name, "Proton 10.0");
+        assert_eq!(
+            choose_proton(&installs[..2]).unwrap().name,
+            "Proton Experimental"
+        );
+        assert_eq!(choose_proton(&installs[..1]).unwrap().name, "GE-Proton9-20");
+        assert!(choose_proton(&[]).is_none());
+    }
+
+    #[test]
+    fn runs_windows_games_through_proton() {
+        let mut windows = option(0, "Game.exe", "windows");
+        windows.arguments = Some("-windowed".to_owned());
+        let details = app(vec![windows]);
+        let game_dir = absolute(&["lib", "steamapps", "common", "Game"]);
+        let plan = plan_from(
+            &details,
+            &game_dir,
+            &platform("windows"),
+            PUBLIC_BRANCH,
+            None,
+        )
+        .unwrap();
+        let install = proton("Proton 9.0", true);
+        let compat = absolute(&["data", "compatdata", "480"]);
+        let plan = with_proton(plan, &install, &compat, None).unwrap();
+
+        assert_eq!(plan.program, install.dir.join("proton"));
+        let game = game_dir.join("Game.exe");
+        assert_eq!(
+            plan.args,
+            [
+                OsString::from("run"),
+                game.clone().into_os_string(),
+                OsString::from("-windowed")
+            ]
+        );
+        assert_eq!(plan.executable, game, "the game file is still checked");
+        assert_eq!(plan.working_dir, game_dir);
+        assert_eq!(plan.proton.as_deref(), Some("Proton 9.0"));
+        assert_eq!(plan.create_dir.as_deref(), Some(compat.as_path()));
+        let env = |key: &str| {
+            plan.env
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(env("STEAM_COMPAT_DATA_PATH"), Some(compat.into_os_string()));
+        assert_eq!(env("SteamAppId"), Some("480".into()));
     }
 
     #[test]

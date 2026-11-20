@@ -405,7 +405,7 @@ impl Daemon {
             Err(error) => return error_response(&error),
         };
         self.running().insert(app_id);
-        info!(app_id, program = %plan.program.display(), "game started");
+        info!(app_id, program = %plan.executable.display(), proton = ?plan.proton, "game started");
         self.emit(Event::GameStarted {
             app_id,
             name: plan.name.clone(),

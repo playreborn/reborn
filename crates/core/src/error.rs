@@ -100,9 +100,18 @@ pub enum CoreError {
         /// Operating system.
         os: String,
     },
-    /// The game only has Windows launch entries; Proton support comes later.
-    #[error("{0} only runs on Windows; starting it through Proton is not supported yet")]
+    /// The game only has Windows launch entries (and this is not Linux, or
+    /// the caller did not try Proton).
+    #[error("{0} only runs on Windows")]
     NeedsProton(String),
+    /// The game needs Proton, but no Proton build is installed.
+    #[error(
+        "{0} only runs on Windows and needs Proton; install a Proton build, e.g. in the Steam client under Library > Tools"
+    )]
+    NoProton(String),
+    /// Building the Proton command failed.
+    #[error(transparent)]
+    Proton(#[from] reborn_platform::proton::ProtonError),
     /// The requested launch entry does not exist for this computer.
     #[error("launch entry {0} does not exist for this computer")]
     UnknownLaunchOption(u32),

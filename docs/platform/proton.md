@@ -99,3 +99,13 @@ Left out because the sources above do not settle them:
   client uses could not be verified from these sources.
 - **Manifest files directly in `compatibilitytools.d`** (instead of in a tool
   subdirectory, `compatibilitytool.vdf.template` lines 7-13) are not read.
+
+## How Reborn uses it (ADR 0017)
+
+- **Install:** on Linux, an app without a Linux version (no Linux launch
+  entry but a Windows one, or no Linux depots but Windows ones) gets its
+  Windows depots (`reborn-core::install::install_platform`). Fetching another
+  OS's depots is what DepotDownloader's `-os` option does.
+- **Launch:** the same apps start through the chosen Proton build with the
+  prefix in Reborn's data folder, `compatdata/<app id>`
+  (`reborn-core::launch`).

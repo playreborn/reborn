@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use reborn_cm::{Platform, Session};
+use reborn_cm::{AppDetails, Platform, Session};
 use reborn_content::DepotKey;
 use reborn_content::cdn::{CdnClient, CdnHost};
 use reborn_content::install::{
@@ -53,6 +53,9 @@ pub enum InstallAction {
 pub enum InstallEvent {
     /// The library is a Steam library; the official client must be closed.
     SteamLibrary(PathBuf),
+    /// The app has no Linux version; its Windows depots are installed to
+    /// run it through Proton (ADR 0017).
+    WindowsDepotsForProton,
     /// Work starts.
     Started {
         /// Install, update or verify.
@@ -120,6 +123,31 @@ pub struct InstallSummary {
     pub elapsed: Duration,
 }
 
+/// The platform whose depots to install. On Linux this is Windows when the
+/// app has no Linux version (no Linux launch entry but a Windows one, or no
+/// Linux depots but Windows ones), so it can run through Proton; the launch
+/// uses the same rule (ADR 0017). Fetching another OS's depots is what
+/// DepotDownloader's `-os` option does (`ContentDownloader.cs`, depot
+/// filtering by `oslist`).
+pub fn install_platform(app: &AppDetails, current: Platform, branch: &str) -> Platform {
+    if current.os != "linux" {
+        return current;
+    }
+    let windows = Platform {
+        os: "windows".to_owned(),
+        ..current.clone()
+    };
+    let no_linux_launch = app.launch_options_for(&current, branch).next().is_none()
+        && app.launch_options_for(&windows, branch).next().is_some();
+    let no_linux_depots =
+        app.depots_for(&current).next().is_none() && app.depots_for(&windows).next().is_some();
+    if no_linux_launch || no_linux_depots {
+        windows
+    } else {
+        current
+    }
+}
+
 /// Installs, updates or verifies an app. Dropping the future cancels the
 /// run; the staging directory is kept, so the next run resumes.
 pub async fn install_app(
@@ -141,7 +169,10 @@ pub async fn install_app(
         .filter(|path| path.components().count() == 1)
         .ok_or_else(|| CoreError::UnsafeInstallDir(install_dir_name.clone()))?;
 
-    let platform = Platform::current();
+    let platform = install_platform(&app, Platform::current(), branch);
+    if platform.os == "windows" && !cfg!(windows) {
+        on_event(InstallEvent::WindowsDepotsForProton);
+    }
     let depots: Vec<_> = app.depots_for(&platform).collect();
     if depots.is_empty() {
         return Err(CoreError::NoDepots {
@@ -394,4 +425,79 @@ pub async fn fetch_depot(
         server,
         was_encrypted,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reborn_cm::{DepotInfo, LaunchOption, PUBLIC_BRANCH};
+
+    fn depot(depot_id: u32, os: &str) -> DepotInfo {
+        DepotInfo {
+            depot_id,
+            os_list: vec![os.to_owned()],
+            manifest_id: Some(1),
+            ..DepotInfo::default()
+        }
+    }
+
+    fn launch(os: &str) -> LaunchOption {
+        LaunchOption {
+            executable: "game".to_owned(),
+            os_list: vec![os.to_owned()],
+            ..LaunchOption::default()
+        }
+    }
+
+    fn linux() -> Platform {
+        Platform {
+            os: "linux".to_owned(),
+            arch: "64".to_owned(),
+            language: "english".to_owned(),
+        }
+    }
+
+    #[test]
+    fn windows_only_apps_get_windows_depots_on_linux() {
+        let windows_only = AppDetails {
+            depots: vec![depot(1, "windows")],
+            launch: vec![launch("windows")],
+            ..AppDetails::default()
+        };
+        assert_eq!(
+            install_platform(&windows_only, linux(), PUBLIC_BRANCH).os,
+            "windows"
+        );
+
+        // Shared content for all systems, but only a Windows launch entry.
+        let mut shared = windows_only.clone();
+        shared.depots.push(DepotInfo {
+            depot_id: 2,
+            manifest_id: Some(1),
+            ..DepotInfo::default()
+        });
+        assert_eq!(
+            install_platform(&shared, linux(), PUBLIC_BRANCH).os,
+            "windows"
+        );
+
+        let native = AppDetails {
+            depots: vec![depot(1, "windows"), depot(2, "linux")],
+            launch: vec![launch("windows"), launch("linux")],
+            ..AppDetails::default()
+        };
+        assert_eq!(
+            install_platform(&native, linux(), PUBLIC_BRANCH).os,
+            "linux"
+        );
+
+        let windows = Platform {
+            os: "windows".to_owned(),
+            ..linux()
+        };
+        assert_eq!(
+            install_platform(&windows_only, windows, PUBLIC_BRANCH).os,
+            "windows"
+        );
+    }
 }

@@ -3828,6 +3828,7 @@ dependencies = [
  "directories",
  "keyring",
  "reborn-cm",
+ "reborn-formats",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
 ]

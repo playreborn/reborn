@@ -13,6 +13,7 @@ publish = true
 directories.workspace = true
 keyring.workspace = true
 reborn-cm.workspace = true
+reborn-formats.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -1,5 +1,7 @@
 //! Operating system integration for Reborn.
 //!
+//! - [`proton`]: finding Proton builds on Linux and building the command
+//!   line that runs a Windows program through one (nothing is spawned).
 //! - [`secrets`]: refresh tokens and Steam Guard data in the OS credential
 //!   store (Windows Credential Manager, Secret Service on Linux).
 //! - [`settings`]: small non-secret settings such as the default account.
@@ -14,6 +16,7 @@
 //! `// SAFETY:` comment and must be reviewed by a human.
 #![deny(unsafe_code)]
 
+pub mod proton;
 pub mod secrets;
 pub mod settings;
 pub mod user;

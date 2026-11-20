@@ -516,7 +516,7 @@ Etappen (Stand 2026-11-19):
 
 **Release 0.1.0 veröffentlicht am 2026-11-20** (GitHub Release `v0.1.0` mit Programmen für Windows und Linux).
 
-**0.1.1 (in Arbeit):** Einstellungen in der GUI für den Bibliotheksordner und die Proton-Version (ADR 0019).
+**0.1.1:** Einstellungen in der GUI für den Bibliotheksordner und die Proton-Version (ADR 0019), live geprüft am 2026-11-20 unter Windows (Bibliotheksordner) und Linux (Proton-Auswahl).
 
 ### M3 – Social → Release 0.2
 

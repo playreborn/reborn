@@ -3,6 +3,7 @@
 //! - [`account`]: signing in (password + Steam Guard, stored token), signing out.
 //! - [`compat`]: the compatibility database in `compat/` (tiers 0-5 per app and platform).
 //! - [`install`]: installing, updating and verifying apps in a library.
+//! - [`launch`]: starting installed games.
 //! - [`library`]: apps installed in a library folder.
 //!
 //! This crate glues `reborn-cm` (Steam), `reborn-content` (downloads),
@@ -14,6 +15,7 @@ pub mod account;
 pub mod compat;
 mod error;
 pub mod install;
+pub mod launch;
 pub mod library;
 
 pub use error::CoreError;

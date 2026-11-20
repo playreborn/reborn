@@ -1,6 +1,6 @@
 //! App state, messages, update logic and views.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -75,6 +75,8 @@ pub enum Message {
     SignOutDone(Result<Response, String>),
     Quit,
     QuitDone(Result<Response, String>),
+    Play(u32),
+    PlayDone(u32, Result<Response, String>),
 }
 
 pub struct App {
@@ -99,6 +101,10 @@ pub struct App {
     sign_in_error: Option<String>,
     /// The first click on "Quit" while downloads run only asks for a second.
     quit_armed: bool,
+    /// Games started through the daemon that are still running.
+    running: BTreeSet<u32>,
+    /// Games whose launch request is on its way.
+    starting: BTreeSet<u32>,
 }
 
 impl App {
@@ -122,6 +128,8 @@ impl App {
             code_input: String::new(),
             sign_in_error: None,
             quit_armed: false,
+            running: BTreeSet::new(),
+            starting: BTreeSet::new(),
         };
         (
             app,
@@ -175,9 +183,11 @@ impl App {
                     Ok(Response::Status {
                         account,
                         stored_login,
+                        running_games,
                         ..
                     }) => {
                         let first = self.stored_login.is_none();
+                        self.running = running_games.into_iter().collect();
                         self.account = account;
                         self.stored_login = Some(stored_login);
                         if stored_login && self.account_input.is_empty() {
@@ -331,6 +341,35 @@ impl App {
                     None => iced::exit(),
                 }
             }
+            Message::Play(app_id) => {
+                self.starting.insert(app_id);
+                self.notice = None;
+                match &self.client {
+                    Some(client) => Task::perform(
+                        daemon::request(
+                            Arc::clone(client),
+                            Request::Launch {
+                                app_id,
+                                library: None,
+                                option: None,
+                            },
+                        ),
+                        move |result| Message::PlayDone(app_id, result),
+                    ),
+                    None => Task::none(),
+                }
+            }
+            Message::PlayDone(app_id, result) => {
+                self.starting.remove(&app_id);
+                match result {
+                    Ok(Response::Launched { app_id }) => {
+                        self.running.insert(app_id);
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notice = Some(format!("Cannot start the game: {error}")),
+                }
+                Task::none()
+            }
             Message::QuitDone(result) => {
                 // Close the window even if the daemon did not answer.
                 if let Err(error) = result {
@@ -459,6 +498,14 @@ impl App {
                 self.owned.clear();
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
+            }
+            Event::GameStarted { app_id, .. } => {
+                self.running.insert(app_id);
+                Task::none()
+            }
+            Event::GameExited { app_id, .. } => {
+                self.running.remove(&app_id);
+                Task::none()
             }
             Event::ShuttingDown => {
                 self.connection = Connection::Failed("rebornd was stopped".to_owned());
@@ -695,7 +742,12 @@ impl App {
             match self.installed.get(&app.app_id) {
                 Some(installed) => (
                     format!(
-                        "Installed · build {} · {}",
+                        "{} · build {} · {}",
+                        if self.running.contains(&app.app_id) {
+                            "Running"
+                        } else {
+                            "Installed"
+                        },
                         installed
                             .build_id
                             .map(|build| build.to_string())
@@ -703,7 +755,9 @@ impl App {
                         installed.size_on_disk.map(human_size).unwrap_or_default()
                     ),
                     row![
+                        self.play_button(app.app_id, installed.fully_installed && !busy),
                         button("Update")
+                            .style(button::secondary)
                             .on_press_maybe((!busy).then_some(Message::Install(app.app_id))),
                         button("Verify")
                             .style(button::secondary)
@@ -739,6 +793,20 @@ impl App {
         .padding(10)
         .style(container::rounded_box)
         .into()
+    }
+
+    fn play_button(&self, app_id: u32, ready: bool) -> Element<'_, Message> {
+        let (label, enabled) = if self.running.contains(&app_id) {
+            ("Running", false)
+        } else if self.starting.contains(&app_id) {
+            ("Starting ...", false)
+        } else {
+            ("Play", ready)
+        };
+        button(label)
+            .style(button::success)
+            .on_press_maybe(enabled.then_some(Message::Play(app_id)))
+            .into()
     }
 
     fn downloads_view(&self) -> Element<'_, Message> {

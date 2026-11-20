@@ -5,9 +5,9 @@
 #![forbid(unsafe_code)]
 
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgAction, Parser, Subcommand};
 use reborn_cm::confirmation::{
     AuthConfirmationHandler, ConsoleAuthConfirmationHandler, DeviceConfirmationHandler,
@@ -56,7 +56,21 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Show the depots of an app and which ones fit this computer.
+    /// Save an app's info as Steam sends it (text VDF), e.g. to record a
+    /// test fixture. App info is public data; still check the file before
+    /// sharing it.
+    Appinfo {
+        /// App ID.
+        app_id: u32,
+        /// File to write.
+        #[arg(long)]
+        output: PathBuf,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
+    /// Show the depots and launch entries of an app and which ones fit
+    /// this computer.
     Depots {
         /// App ID, e.g. 480 for Spacewar.
         app_id: u32,
@@ -133,6 +147,11 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Login { account } => login(account).await,
         Command::Library { account, all } => library(account, all).await,
+        Command::Appinfo {
+            app_id,
+            output,
+            account,
+        } => appinfo(account, app_id, &output).await,
         Command::Depots {
             app_id,
             branch,
@@ -255,6 +274,42 @@ async fn depots(account: Option<String>, app_id: u32, branch: &str) -> Result<()
             depot.name.as_deref().unwrap_or(""),
         );
     }
+    if app.launch.is_empty() {
+        println!("No launch entries.");
+    }
+    for option in &app.launch {
+        let selected = option.applies_to(&platform, branch);
+        let os = if option.os_list.is_empty() {
+            "all".to_owned()
+        } else {
+            option.os_list.join(",")
+        };
+        println!(
+            "{} launch {:>2}  {:<14} {:<8} {} {}{}",
+            if selected { '*' } else { ' ' },
+            option.index,
+            os,
+            option.launch_type.as_deref().unwrap_or("-"),
+            option.executable,
+            option.arguments.as_deref().unwrap_or(""),
+            option
+                .description
+                .as_deref()
+                .map(|d| format!("  ({d})"))
+                .unwrap_or_default(),
+        );
+    }
+    Ok(())
+}
+
+async fn appinfo(account: Option<String>, app_id: u32, output: &Path) -> Result<()> {
+    let session = account::sign_in(account).await?;
+    let text = session.app_info_text(app_id).await?;
+    std::fs::write(output, text).with_context(|| format!("cannot write {}", output.display()))?;
+    println!(
+        "Saved the app info of app {app_id} to {}.",
+        output.display()
+    );
     Ok(())
 }
 
@@ -524,6 +579,17 @@ enum DaemonCommand {
         /// Job ID.
         job_id: u64,
     },
+    /// Start an installed game through the daemon.
+    Launch {
+        /// App ID.
+        app_id: u32,
+        /// Library folder (defaults to Reborn's own library).
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// Launch entry index (defaults to the entry for this computer).
+        #[arg(long)]
+        option: Option<u32>,
+    },
     /// Print events from the daemon until Ctrl+C.
     Watch,
     /// Stop the daemon.
@@ -565,6 +631,15 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             }
             return Ok(());
         }
+        DaemonCommand::Launch {
+            app_id,
+            library,
+            option,
+        } => Request::Launch {
+            app_id: *app_id,
+            library: library.clone(),
+            option: *option,
+        },
         DaemonCommand::Shutdown => Request::Shutdown,
     };
 
@@ -577,14 +652,16 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             signed_in,
             active_jobs,
             stored_login,
+            running_games,
         } => println!(
-            "rebornd {daemon_version}: account {}, {}, {active_jobs} active jobs",
+            "rebornd {daemon_version}: account {}, {}, {active_jobs} active jobs, {} games running",
             account.as_deref().unwrap_or("(none)"),
             match (signed_in, stored_login) {
                 (true, _) => "signed in",
                 (false, true) => "not signed in yet (login stored)",
                 (false, false) => "no stored login",
-            }
+            },
+            running_games.len()
         ),
         Response::Library { mut apps } => {
             apps.sort_by_cached_key(|app| app.name.to_lowercase());
@@ -675,6 +752,7 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             }
             bail!("connection to rebornd closed");
         }
+        Response::Launched { app_id } => println!("Started app {app_id}."),
         Response::Ok => println!("ok"),
         other => println!("{other:?}"),
     }

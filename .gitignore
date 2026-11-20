@@ -16,3 +16,6 @@ Thumbs.db
 # Unredacted protocol recordings. NEVER commit these.
 # Only redacted fixtures under fixtures/ (outside raw/) belong in git.
 /fixtures/raw/
+
+# Agent worktrees of Claude Code sessions.
+/.claude/worktrees/

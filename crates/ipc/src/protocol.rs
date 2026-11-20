@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 1;
+pub const PROTOCOL_MINOR: u16 = 2;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -132,6 +132,15 @@ pub enum Request {
     /// Remove the stored login of the current account from this computer.
     /// Refused while downloads are queued or running.
     SignOut,
+    /// Start an installed game (ADR 0016). Added in protocol 1.2.
+    Launch {
+        /// The app.
+        app_id: u32,
+        /// Library folder (`None`: Reborn's own library).
+        library: Option<PathBuf>,
+        /// Launch entry index (`None`: the default entry for this computer).
+        option: Option<u32>,
+    },
 }
 
 /// Answers from the daemon.
@@ -162,6 +171,10 @@ pub enum Response {
         /// Added in protocol 1.1.
         #[serde(default)]
         stored_login: bool,
+        /// Games started by the daemon that are still running.
+        /// Added in protocol 1.2.
+        #[serde(default)]
+        running_games: Vec<u32>,
     },
     /// Answer to [`Request::Library`].
     Library {
@@ -189,6 +202,11 @@ pub enum Response {
     SignedIn {
         /// The account.
         account: String,
+    },
+    /// Answer to [`Request::Launch`]: the game process was started.
+    Launched {
+        /// The app.
+        app_id: u32,
     },
     /// The request was carried out.
     Ok,
@@ -350,6 +368,21 @@ pub enum Event {
     },
     /// The stored login was removed.
     SignedOut,
+    /// A game started by the daemon is running.
+    GameStarted {
+        /// The app.
+        app_id: u32,
+        /// App name, if known.
+        name: Option<String>,
+    },
+    /// A game started by the daemon exited. Games that hand over to a
+    /// launcher may "exit" while the launcher keeps running.
+    GameExited {
+        /// The app.
+        app_id: u32,
+        /// Exit code, if the process returned one.
+        exit_code: Option<i32>,
+    },
 }
 
 /// Which Steam Guard code is asked for.
@@ -444,6 +477,30 @@ mod tests {
             panic!("expected status");
         };
         assert!(!stored_login);
+    }
+
+    #[test]
+    fn launch_json() {
+        let frame = ClientFrame {
+            id: 2,
+            request: Request::Launch {
+                app_id: 480,
+                library: None,
+                option: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&frame).unwrap(),
+            r#"{"id":2,"request":{"type":"launch","app_id":480,"library":null,"option":null}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::GameExited {
+                app_id: 480,
+                exit_code: Some(0)
+            })
+            .unwrap(),
+            r#"{"type":"game_exited","app_id":480,"exit_code":0}"#
+        );
     }
 
     #[test]

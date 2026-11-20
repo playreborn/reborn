@@ -1,6 +1,6 @@
 //! Daemon state, request handling and the job queue.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -10,6 +10,7 @@ use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
 use reborn_cm::{PUBLIC_BRANCH, Session};
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
+use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
     Event, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp, Request, Response,
     Secret,
@@ -83,6 +84,8 @@ pub struct Daemon {
     session: tokio::sync::Mutex<Option<Arc<Session>>>,
     sign_in: Mutex<Option<PendingSignIn>>,
     next_sign_in: AtomicU64,
+    /// Apps whose game process (started by us) is still running.
+    running: Arc<Mutex<BTreeSet<u32>>>,
     jobs: Mutex<Jobs>,
     job_added: Notify,
     shutdown: Notify,
@@ -95,6 +98,7 @@ impl Daemon {
             session: tokio::sync::Mutex::new(None),
             sign_in: Mutex::new(None),
             next_sign_in: AtomicU64::new(1),
+            running: Arc::new(Mutex::new(BTreeSet::new())),
             jobs: Mutex::new(Jobs {
                 next_id: 1,
                 ..Jobs::default()
@@ -118,6 +122,10 @@ impl Daemon {
         self.jobs
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn running(&self) -> MutexGuard<'_, BTreeSet<u32>> {
+        lock(&self.running)
     }
 
     fn pending_sign_in(&self) -> MutexGuard<'_, Option<PendingSignIn>> {
@@ -171,6 +179,7 @@ impl Daemon {
                     signed_in: self.session.lock().await.is_some(),
                     active_jobs: self.jobs().active(),
                     stored_login,
+                    running_games: self.running().iter().copied().collect(),
                 }
             }
             Request::Library => match self.library().await {
@@ -217,6 +226,18 @@ impl Daemon {
             Request::SubmitGuardCode { code } => self.submit_guard_code(&code),
             Request::CancelSignIn => self.cancel_sign_in(),
             Request::SignOut => self.sign_out().await,
+            Request::Launch {
+                app_id,
+                library,
+                option,
+            } => {
+                self.launch(LaunchRequest {
+                    app_id,
+                    library,
+                    option,
+                })
+                .await
+            }
             _ => Response::Error {
                 message: "request not supported by this daemon".to_owned(),
             },
@@ -347,6 +368,59 @@ impl Daemon {
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
         Response::Ok
+    }
+
+    /// Starts an installed game and reports when its process exits.
+    async fn launch(&self, request: LaunchRequest) -> Response {
+        let app_id = request.app_id;
+        if self.running().contains(&app_id) {
+            return Response::Error {
+                message: format!("app {app_id} is already running"),
+            };
+        }
+        let busy = self.jobs().entries.iter().any(|entry| {
+            entry.info.app_id == app_id && !matches!(entry.info.state, JobState::Finished { .. })
+        });
+        if busy {
+            return Response::Error {
+                message: format!("app {app_id} is being installed or verified"),
+            };
+        }
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => {
+                self.forget_session_after(&error).await;
+                return error_response(&error);
+            }
+        };
+        let plan = match plan_launch(&session, &request).await {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.forget_session_after(&error).await;
+                return error_response(&error);
+            }
+        };
+        let mut child = match spawn(&plan) {
+            Ok(child) => child,
+            Err(error) => return error_response(&error),
+        };
+        self.running().insert(app_id);
+        info!(app_id, program = %plan.program.display(), "game started");
+        self.emit(Event::GameStarted {
+            app_id,
+            name: plan.name.clone(),
+        });
+
+        let events = self.events.clone();
+        let running = Arc::clone(&self.running);
+        tokio::task::spawn_blocking(move || {
+            let exit_code = child.wait().ok().and_then(|status| status.code());
+            lock(&running).remove(&app_id);
+            info!(app_id, ?exit_code, "game exited");
+            // No receivers just means no frontend is connected.
+            let _ = events.send(Event::GameExited { app_id, exit_code });
+        });
+        Response::Launched { app_id }
     }
 
     async fn library(&self) -> Result<Vec<OwnedApp>, CoreError> {
@@ -558,6 +632,14 @@ fn installed(library: Option<PathBuf>) -> Result<(PathBuf, Vec<InstalledApp>), C
     Ok((library, apps))
 }
 
+/// Locks a mutex; a poisoned lock only means another thread panicked while
+/// holding it, the data is still usable.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn error_response(error: &CoreError) -> Response {
     Response::Error {
         message: error.to_string(),
@@ -630,6 +712,32 @@ mod tests {
             panic!("expected status");
         };
         assert_eq!((active_jobs, signed_in), (1, false));
+    }
+
+    #[tokio::test]
+    async fn launch_is_refused_while_running_or_installing() {
+        // Both checks happen before signing in, so no network is used.
+        let daemon = Daemon::new();
+        let launch = |app_id| Request::Launch {
+            app_id,
+            library: None,
+            option: None,
+        };
+        daemon.running().insert(480);
+        assert!(matches!(
+            daemon.handle(launch(480)).await,
+            Response::Error { .. }
+        ));
+        let Response::Status { running_games, .. } = daemon.handle(Request::Status).await else {
+            panic!("expected status");
+        };
+        assert_eq!(running_games, [480]);
+
+        daemon.handle(install(10)).await;
+        let Response::Error { message } = daemon.handle(launch(10)).await else {
+            panic!("expected an error");
+        };
+        assert!(message.contains("being installed"), "{message}");
     }
 
     #[tokio::test]

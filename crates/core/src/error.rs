@@ -89,6 +89,37 @@ pub enum CoreError {
     /// The HTTP client could not be created.
     #[error("HTTP client: {0}")]
     Http(String),
+    /// The app is not (fully) installed in the library.
+    #[error("app {0} is not installed")]
+    NotInstalled(u32),
+    /// No launch entry fits this computer.
+    #[error("{name} has no launch entry for {os}")]
+    NoLaunchOption {
+        /// App name.
+        name: String,
+        /// Operating system.
+        os: String,
+    },
+    /// The game only has Windows launch entries; Proton support comes later.
+    #[error("{0} only runs on Windows; starting it through Proton is not supported yet")]
+    NeedsProton(String),
+    /// The requested launch entry does not exist for this computer.
+    #[error("launch entry {0} does not exist for this computer")]
+    UnknownLaunchOption(u32),
+    /// A path in the launch entry could escape the install folder.
+    #[error("unsafe path `{0}` in the launch entry")]
+    UnsafeLaunchPath(String),
+    /// The program of the launch entry is not there.
+    #[error("{} is missing; verify the game", .0.display())]
+    MissingExecutable(PathBuf),
+    /// Starting the program failed.
+    #[error("cannot start {}: {source}", program.display())]
+    Launch {
+        /// The program.
+        program: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
 }
 
 pub(crate) fn io_error(path: &std::path::Path) -> impl FnOnce(std::io::Error) -> CoreError + '_ {

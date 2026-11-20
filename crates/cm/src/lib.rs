@@ -33,7 +33,7 @@ mod prompt;
 mod secret;
 mod session;
 
-pub use apps::{AppDetails, DepotInfo, PUBLIC_BRANCH, Platform};
+pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use content::{ContentServer, DepotDecryptionKey};
 pub use library::OwnedApp;
 pub use secret::Secret;

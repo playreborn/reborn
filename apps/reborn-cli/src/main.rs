@@ -466,7 +466,7 @@ async fn achievements(
 
 /// `YYYY-MM-DD HH:MM UTC` for seconds since the Unix epoch. Days to dates
 /// with Howard Hinnant's `civil_from_days` (public domain,
-/// https://howardhinnant.github.io/date_algorithms.html).
+/// <https://howardhinnant.github.io/date_algorithms.html>).
 fn utc_time(seconds: u32) -> String {
     let seconds = i64::from(seconds);
     let days = seconds.div_euclid(86_400);

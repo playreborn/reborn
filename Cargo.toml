@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Reborn contributors"]
@@ -13,13 +13,13 @@ repository = "https://github.com/playreborn/reborn"
 # Internal crates are added here once a crate actually uses another one.
 # Always give path AND version, so the crate can be published and cargo-deny
 # does not treat it as a wildcard dependency, e.g.:
-# reborn-proto = { path = "crates/proto", version = "0.1.1" }
-reborn-cm = { path = "crates/cm", version = "0.1.1" }
-reborn-content = { path = "crates/content", version = "0.1.1" }
-reborn-core = { path = "crates/core", version = "0.1.1" }
-reborn-formats = { path = "crates/formats", version = "0.1.1" }
-reborn-ipc = { path = "crates/ipc", version = "0.1.1" }
-reborn-platform = { path = "crates/platform", version = "0.1.1" }
+# reborn-proto = { path = "crates/proto", version = "0.2.0" }
+reborn-cm = { path = "crates/cm", version = "0.2.0" }
+reborn-content = { path = "crates/content", version = "0.2.0" }
+reborn-core = { path = "crates/core", version = "0.2.0" }
+reborn-formats = { path = "crates/formats", version = "0.2.0" }
+reborn-ipc = { path = "crates/ipc", version = "0.2.0" }
+reborn-platform = { path = "crates/platform", version = "0.2.0" }
 
 # External crates. Add new ones here first and justify them in the PR.
 anyhow = "1"

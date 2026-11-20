@@ -520,6 +520,8 @@ Etappen (Stand 2026-11-19):
 
 ### M3 – Social → Release 0.2
 
+**Release 0.2.0 vorbereitet am 2026-11-20:** Freundesliste, eigener Status, Freundschaftsanfragen (senden, annehmen; Ablehnen vorerst aus, ADR 0023) und Einzelchat (ADR 0024), alles live geprüft.
+
 Stand 2026-11-20: Etappe 1 (nur lesen, ADR 0020) gebaut und live geprüft: Freundesliste mit Namen und Status in Daemon, CLI und GUI, Fixture aus dem Testkonto. Dabei gefunden und behoben: Lizenz- und Freundesliste aus dem Login-Paket wurden wegen falsch gelesener Nachrichtennummern nicht erkannt.
 Etappe 2: eigener Online-Status (ADR 0021), live geprüft; läuft der Original-Client mit demselben Konto, gilt sein Status. Nächste Etappen: Freundschaftsanfragen annehmen, ablehnen und senden, Chat.
 

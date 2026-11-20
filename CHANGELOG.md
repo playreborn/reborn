@@ -4,14 +4,16 @@ All notable changes to Reborn are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-20
+
+Friends and chat: see who is online and what they play, set your own
+status, answer and send friend requests, and chat with your friends.
 
 ### Added
 
 - **Friends** tab in the desktop app and `reborn-cli friends`: your friends
   and pending friend requests with name, online status and current game,
-  updated live. Read-only: Reborn does not change your own status yet
-  (ADR 0020).
+  updated live (ADR 0020).
 - **Your own online status** (online, away, busy, invisible, offline) can
   be chosen in the Friends tab; Reborn sets it after every sign-in. Nothing
   changes until you choose one (ADR 0021).
@@ -31,6 +33,19 @@ All notable changes to Reborn are listed here. The format follows
 - After Steam closed the connection (for example when the same account
   signed in elsewhere), friends and chat kept failing until the daemon was
   restarted; now the next action signs in again.
+
+### Known limitations
+
+- Declining friend requests is off for now (see above).
+- No group chats, no "is typing" indicator, and messages read in Reborn are
+  not marked as read on Steam, so the official client may still show them
+  as unread.
+- Signing in with the same account in `reborn-cli` while the desktop app
+  runs ends the app's connection; its next action signs in again.
+- After a lost connection, Reborn signs in again only on the next action,
+  so new messages and status changes wait until then.
+- Sending friend requests needs an account that Steam allows to (new
+  accounts without purchases are refused).
 
 ## [0.1.1] - 2026-11-20
 
@@ -87,5 +102,6 @@ without the command line, on Windows and Linux.
 - On Windows PCs shared with other users, another user could in theory
   impersonate the background service before it starts (see ADR 0014).
 
+[0.2.0]: https://github.com/playreborn/reborn/releases/tag/v0.2.0
 [0.1.1]: https://github.com/playreborn/reborn/releases/tag/v0.1.1
 [0.1.0]: https://github.com/playreborn/reborn/releases/tag/v0.1.0

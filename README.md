@@ -13,7 +13,7 @@ you can read, build and change yourself.
 > Reborn is not affiliated with, endorsed by or sponsored by Valve Corporation.
 > Steam is a trademark of Valve Corporation.
 
-## What works (0.1)
+## What works (0.2)
 
 - Sign in with password and Steam Guard (code or approval in the mobile app);
   the login is kept in your system's keyring.
@@ -21,6 +21,8 @@ you can read, build and change yourself.
   download engine and the Steam library format.
 - Play: native games start directly; on Linux, Windows-only games run
   through an installed Proton build.
+- Friends with online status and current game, your own status, friend
+  requests (send and accept) and one-to-one chat.
 - A desktop app, a background service and a command line tool.
 
 Most games still need the **official Steam client running in the
@@ -29,8 +31,7 @@ background**, because they talk to it through Steamworks. See the
 
 ## What comes next
 
-- QR-code sign-in, settings, game details.
-- Friends, presence and chat.
+- QR-code sign-in, game details, group chats.
 - Run Steamworks games **without the official Steam client** through Reborn's
   own `steamclient` replacement.
 
@@ -57,7 +58,7 @@ farm cards, run trading bots, or ship Valve code or assets. See
 | M0 | CLI: login and list owned games | done |
 | M1 | CLI: download and verify a game with our own content engine | done |
 | M2 | Daemon + Iced GUI → **0.1** | done |
-| M3 | Friends and chat → 0.2 | |
+| M3 | Friends and chat → 0.2 | done |
 | M4 | `steamclient` replacement for singleplayer games → 0.3 | |
 | M5 | Multiplayer (lobbies, Steam networking) | |
 | M6 | Workshop, store browsing, polish → **1.0** | |

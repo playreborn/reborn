@@ -77,6 +77,21 @@ pub enum Error {
     IncompleteResponse(&'static str),
 }
 
+impl Error {
+    /// Whether the connection to Steam is gone: closed, or dropped by Steam
+    /// (for example when another session of the same account signed in,
+    /// live 2026-11-20). The session cannot be used any more; sign in again.
+    pub fn is_connection_lost(&self) -> bool {
+        matches!(
+            self,
+            Error::Network(NetworkError::Ws(_) | NetworkError::EOF)
+                | Error::Login(ConnectionError::Network(
+                    NetworkError::Ws(_) | NetworkError::EOF
+                ))
+        )
+    }
+}
+
 /// An authenticated connection to Steam.
 pub struct Session {
     pub(crate) connection: Connection,
@@ -260,6 +275,13 @@ fn licenses_from(list: CMsgClientLicenseList) -> Vec<License> {
 mod tests {
     use super::*;
     use steam_vent_proto_steam::steammessages_clientserver::cmsg_client_license_list::License as ProtoLicense;
+
+    #[test]
+    fn lost_connections_are_recognized() {
+        assert!(Error::Network(NetworkError::EOF).is_connection_lost());
+        assert!(!Error::Network(NetworkError::Timeout).is_connection_lost());
+        assert!(!Error::LicenseListTimeout.is_connection_lost());
+    }
 
     #[test]
     fn message_kinds_are_the_wire_numbers() {

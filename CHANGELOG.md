@@ -20,11 +20,17 @@ All notable changes to Reborn are listed here. The format follows
   `reborn-cli friends add|accept` (ADR 0022). Declining is switched off for
   now: on current Steam the sender could not send a new request afterwards;
   decline in the official client meanwhile (ADR 0023).
+- **Chat** with friends: open a conversation from the Friends tab, see the
+  recent messages, send and receive messages live; friends with unread
+  messages are marked. Also `reborn-cli chat` (ADR 0024).
 
 ### Fixed
 
 - Signing in could fail with "Steam did not send the license list in time"
   when Steam bundled the license list with the logon reply.
+- After Steam closed the connection (for example when the same account
+  signed in elsewhere), friends and chat kept failing until the daemon was
+  restarted; now the next action signs in again.
 
 ## [0.1.1] - 2026-11-20
 

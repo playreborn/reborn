@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod apps;
+mod chat;
 mod content;
 mod friends;
 mod guard;
@@ -35,6 +36,7 @@ mod secret;
 mod session;
 
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
+pub use chat::{ChatMessage, ChatRecording, history_from, incoming_from};
 pub use content::{ContentServer, DepotDecryptionKey};
 pub use friends::{
     Friend, FriendRequestRecording, FriendsRecording, Persona, PersonaState, Relationship,

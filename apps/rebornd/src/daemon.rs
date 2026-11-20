@@ -8,13 +8,14 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
-use reborn_cm::{Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session};
+use reborn_cm::{ChatMessage, Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session};
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
-    Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind,
-    JobResult, JobState, OwnStatus, OwnedApp, Request, Response, Secret,
+    ChatMessageInfo, ChatText, Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
+    InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp, Request, Response,
+    Secret,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, oneshot};
@@ -200,6 +201,7 @@ impl Daemon {
             // Subscribe before asking, so no answer is missed.
             let mut updates = Box::pin(session.persona_updates());
             let mut changes = Box::pin(session.friend_changes());
+            let mut chat = Box::pin(session.chat_messages());
             let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
             if let Err(error) = session.request_personas(&ids).await {
                 warn!(%error, "cannot request friend data");
@@ -251,6 +253,11 @@ impl Daemon {
                             warn!(%error, "cannot request friend data");
                         }
                     }
+                    Some(message) = chat.next() => {
+                        // The text is never logged (ADR 0024).
+                        let message = chat_info(&message);
+                        let _ = events.send(Event::ChatMessage { message });
+                    }
                     else => break,
                 }
             }
@@ -267,6 +274,67 @@ impl Daemon {
         }
         self.friends_loaded.store(false, Ordering::SeqCst);
         lock(&self.friends).clear();
+    }
+
+    /// The recent messages with a friend (ADR 0024).
+    async fn chat_history(&self, steam_id: &str) -> Response {
+        let Ok(friend) = steam_id.parse::<u64>() else {
+            return Response::Error {
+                message: format!("`{steam_id}` is not a SteamID64"),
+            };
+        };
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        let mut result = session.recent_messages(friend, 50).await;
+        if result
+            .as_ref()
+            .is_err_and(reborn_cm::Error::is_connection_lost)
+        {
+            // Reading is safe to repeat: sign in again and retry once.
+            *self.session.lock().await = None;
+            match self.session().await {
+                Ok(session) => result = session.recent_messages(friend, 50).await,
+                Err(error) => return error_response(&error),
+            }
+        }
+        match result {
+            Ok(messages) => Response::ChatMessages {
+                steam_id: steam_id.to_owned(),
+                messages: messages.iter().map(chat_info).collect(),
+            },
+            Err(error) => self.steam_failure(error).await,
+        }
+    }
+
+    /// Sends a message (ADR 0024). Visible to the friend; the text is not
+    /// logged.
+    async fn send_chat_message(&self, steam_id: &str, text: &ChatText) -> Response {
+        let Ok(friend) = steam_id.parse::<u64>() else {
+            return Response::Error {
+                message: format!("`{steam_id}` is not a SteamID64"),
+            };
+        };
+        if text.as_str().trim().is_empty() {
+            return Response::Error {
+                message: "the message is empty".to_owned(),
+            };
+        }
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        // Not retried: Steam may already have the message.
+        match session.send_message(friend, text.as_str()).await {
+            Ok(message) => {
+                info!(friend, "chat message sent");
+                Response::ChatMessageSent {
+                    message: chat_info(&message),
+                }
+            }
+            Err(error) => self.steam_failure(error).await,
+        }
     }
 
     /// Sends a friend request (ADR 0022).
@@ -292,7 +360,7 @@ impl Daemon {
             Err(reborn_cm::Error::Refused { code: 24, .. }) => Response::Error {
                 message: INSUFFICIENT_PRIVILEGE.to_owned(),
             },
-            Err(error) => error_response(&CoreError::from(error)),
+            Err(error) => self.steam_failure(error).await,
         }
     }
 
@@ -327,7 +395,7 @@ impl Daemon {
                 info!(steam_id, accept, "answered friend request");
                 Response::Ok
             }
-            Err(error) => error_response(&CoreError::from(error)),
+            Err(error) => self.steam_failure(error).await,
         }
     }
 
@@ -337,6 +405,20 @@ impl Daemon {
         let list = session.friends().await?;
         let loaded = self.friends_loaded.load(Ordering::SeqCst);
         Ok(current_friends(loaded, &lock(&self.friends), &list))
+    }
+
+    /// Answers a failed Steam request: forgets the session so the next
+    /// request signs in again, and explains a lost connection.
+    async fn steam_failure(&self, error: reborn_cm::Error) -> Response {
+        let lost = error.is_connection_lost();
+        let error = CoreError::from(error);
+        self.forget_session_after(&error).await;
+        if lost {
+            return Response::Error {
+                message: CONNECTION_LOST.to_owned(),
+            };
+        }
+        error_response(&error)
     }
 
     /// Forgets the session after a Steam error, so the next request signs
@@ -414,6 +496,10 @@ impl Daemon {
             Request::GetSettings => current_settings(),
             Request::SetOwnStatus { status } => self.set_own_status(status).await,
             Request::AddFriend { friend } => self.add_friend(&friend).await,
+            Request::ChatHistory { steam_id } => self.chat_history(&steam_id).await,
+            Request::SendChatMessage { steam_id, text } => {
+                self.send_chat_message(&steam_id, &text).await
+            }
             Request::AcceptFriend { steam_id } => self.answer_friend_request(&steam_id, true).await,
             // Disabled: on today's Steam, `ClientRemoveFriend` on a pending
             // request left the sender blocked (live, 2026-11-20).
@@ -601,7 +687,7 @@ impl Daemon {
         if let (Some(status), Some(session)) = (status, session)
             && let Err(error) = session.set_persona_state(persona_state(status)).await
         {
-            return error_response(&CoreError::from(error));
+            return self.steam_failure(error).await;
         }
         info!(status = ?status, "own online status changed");
         self.emit(Event::SettingsChanged);
@@ -927,6 +1013,11 @@ fn installed(library: Option<PathBuf>) -> Result<(PathBuf, Vec<InstalledApp>), C
     Ok((library, apps))
 }
 
+/// Shown when Steam closed the connection, e.g. because the same account
+/// signed in elsewhere (`reborn-cli` included; live 2026-11-20).
+const CONNECTION_LOST: &str = "The connection to Steam was lost, for example because this \
+     account signed in elsewhere (also reborn-cli). Try again; Reborn signs in again.";
+
 /// Why declining is switched off until a safe way is verified.
 const DECLINE_DISABLED: &str = "Declining friend requests is disabled for now: on current \
      Steam it blocked the sender instead of just declining. Ignore the request in the \
@@ -961,6 +1052,16 @@ fn current_friends(
                 .unwrap_or_else(|| friend_info(friend))
         })
         .collect()
+}
+
+fn chat_info(message: &ChatMessage) -> ChatMessageInfo {
+    ChatMessageInfo {
+        steam_id: message.friend.to_string(),
+        from_me: message.from_me,
+        text: ChatText::new(message.text.clone()),
+        timestamp: message.timestamp,
+        ordinal: message.ordinal,
+    }
 }
 
 /// A list entry before Steam sent its persona.
@@ -1215,6 +1316,25 @@ mod tests {
             })
             .await;
         assert!(matches!(response, Response::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn chat_requests_are_checked_before_signing_in() {
+        let daemon = Daemon::new();
+        for request in [
+            Request::ChatHistory {
+                steam_id: "not a number".to_owned(),
+            },
+            Request::SendChatMessage {
+                steam_id: "42".to_owned(),
+                text: ChatText::new("   "),
+            },
+        ] {
+            assert!(matches!(
+                daemon.handle(request).await,
+                Response::Error { .. }
+            ));
+        }
     }
 
     #[tokio::test]

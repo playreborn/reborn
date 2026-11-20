@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 7;
+pub const PROTOCOL_MINOR: u16 = 8;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -40,6 +40,30 @@ impl Secret {
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(<redacted>)")
+    }
+}
+
+/// The text of a chat message. A plain JSON string on the wire, but
+/// `Debug` prints only its length, so it cannot end up in logs (ADR 0024).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ChatText(String);
+
+impl ChatText {
+    /// Wraps a text.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ChatText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ChatText(<{} chars>)", self.0.chars().count())
     }
 }
 
@@ -188,6 +212,18 @@ pub enum Request {
         /// SteamID64 as a decimal string.
         steam_id: String,
     },
+    /// The recent messages with a friend (ADR 0024). Added in protocol 1.8.
+    ChatHistory {
+        /// The friend's SteamID64 as a decimal string.
+        steam_id: String,
+    },
+    /// Send a message to a friend (visible to them).
+    SendChatMessage {
+        /// The friend's SteamID64 as a decimal string.
+        steam_id: String,
+        /// The text.
+        text: ChatText,
+    },
 }
 
 /// Answers from the daemon.
@@ -271,6 +307,18 @@ pub enum Response {
     Friends {
         /// Friends and pending requests.
         friends: Vec<FriendInfo>,
+    },
+    /// Answer to [`Request::ChatHistory`], oldest first.
+    ChatMessages {
+        /// The friend's SteamID64.
+        steam_id: String,
+        /// The messages.
+        messages: Vec<ChatMessageInfo>,
+    },
+    /// Answer to [`Request::SendChatMessage`]: the message as Steam stored it.
+    ChatMessageSent {
+        /// The message.
+        message: ChatMessageInfo,
     },
     /// Answer to [`Request::AddFriend`]: Steam accepted the request.
     FriendRequestSent {
@@ -459,6 +507,11 @@ pub enum Event {
         /// The friend as now known.
         friend: FriendInfo,
     },
+    /// A chat message arrived, or the user wrote one in another client.
+    ChatMessage {
+        /// The message.
+        message: ChatMessageInfo,
+    },
     /// A relationship ended (declined request, removed friend).
     FriendRemoved {
         /// SteamID64 as a decimal string.
@@ -477,6 +530,21 @@ pub enum Event {
         /// Exit code, if the process returned one.
         exit_code: Option<i32>,
     },
+}
+
+/// A message of a one-to-one conversation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMessageInfo {
+    /// The friend the conversation is with (SteamID64 as a decimal string).
+    pub steam_id: String,
+    /// Whether the user wrote it.
+    pub from_me: bool,
+    /// The text, without BBCode.
+    pub text: ChatText,
+    /// Server time, seconds since 1970.
+    pub timestamp: u32,
+    /// Orders messages with the same timestamp.
+    pub ordinal: u32,
 }
 
 /// A friend or pending friend request.
@@ -646,6 +714,22 @@ mod tests {
             panic!("expected status");
         };
         assert!(!stored_login);
+    }
+
+    #[test]
+    fn chat_text_is_a_string_on_the_wire_but_hidden_in_debug() {
+        let request = Request::SendChatMessage {
+            steam_id: "292733980074049537".to_owned(),
+            text: ChatText::new("see you at eight"),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains(r#""text":"see you at eight""#), "{json}");
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        let printed = format!("{request:?}");
+        assert!(
+            !printed.contains("eight") && printed.contains("16 chars"),
+            "{printed}"
+        );
     }
 
     #[test]

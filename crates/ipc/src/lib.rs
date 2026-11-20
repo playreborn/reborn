@@ -16,4 +16,4 @@ pub mod protocol;
 pub mod socket;
 
 pub use client::{Client, ClientError};
-pub use protocol::{Event, PROTOCOL_MAJOR, PROTOCOL_MINOR, Request, Response, Secret};
+pub use protocol::{ChatText, Event, PROTOCOL_MAJOR, PROTOCOL_MINOR, Request, Response, Secret};

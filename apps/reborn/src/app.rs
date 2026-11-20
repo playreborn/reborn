@@ -10,10 +10,10 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
-    FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult,
-    JobState, OwnStatus, OwnedApp,
+    ChatMessageInfo, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job,
+    JobKind, JobResult, JobState, OwnStatus, OwnedApp,
 };
-use reborn_ipc::{Client, Event, Request, Response, Secret};
+use reborn_ipc::{ChatText, Client, Event, Request, Response, Secret};
 
 use crate::daemon;
 
@@ -133,6 +133,12 @@ pub enum Message {
     SendFriendRequest,
     FriendRequestDone(Result<Response, String>),
     AcceptFriend(String),
+    OpenChat(String),
+    CloseChat,
+    ChatLoaded(Result<Response, String>),
+    ChatInput(ChatText),
+    SendChat,
+    ChatSent(Result<Response, String>),
     FriendActionDone(Result<Response, String>),
     LibraryInput(String),
     SaveLibrary,
@@ -173,6 +179,14 @@ pub struct App {
     /// `None` until loaded.
     friends: Option<Vec<FriendInfo>>,
     add_friend_input: String,
+    /// The friend whose conversation is open (SteamID64).
+    chat_with: Option<String>,
+    /// Loaded conversations by friend, oldest first.
+    chats: HashMap<String, Vec<ChatMessageInfo>>,
+    /// Messages received while their conversation was not open.
+    unread: HashMap<String, usize>,
+    chat_input: String,
+    sending_chat: bool,
 }
 
 impl App {
@@ -203,6 +217,11 @@ impl App {
             library_input: String::new(),
             friends: None,
             add_friend_input: String::new(),
+            chat_with: None,
+            chats: HashMap::new(),
+            unread: HashMap::new(),
+            chat_input: String::new(),
+            sending_chat: false,
         };
         (
             app,
@@ -354,6 +373,63 @@ impl App {
                     }
                     Ok(_) => {}
                     Err(error) => self.notice = Some(format!("Friend request: {error}")),
+                }
+                Task::none()
+            }
+            Message::OpenChat(steam_id) => {
+                self.unread.remove(&steam_id);
+                self.chat_with = Some(steam_id.clone());
+                if self.chats.contains_key(&steam_id) {
+                    return Task::none();
+                }
+                self.send(Request::ChatHistory { steam_id }, Message::ChatLoaded)
+            }
+            Message::CloseChat => {
+                self.chat_with = None;
+                Task::none()
+            }
+            Message::ChatLoaded(result) => {
+                match result {
+                    Ok(Response::ChatMessages { steam_id, messages }) => {
+                        // Keep messages that arrived while the history loaded.
+                        let mut all = messages;
+                        for message in self.chats.remove(&steam_id).unwrap_or_default() {
+                            add_chat_message(&mut all, message);
+                        }
+                        self.chats.insert(steam_id, all);
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notice = Some(format!("Chat: {error}")),
+                }
+                Task::none()
+            }
+            Message::ChatInput(text) => {
+                self.chat_input = text.as_str().to_owned();
+                Task::none()
+            }
+            Message::SendChat => {
+                let Some(steam_id) = self.chat_with.clone() else {
+                    return Task::none();
+                };
+                if self.chat_input.trim().is_empty() || self.sending_chat {
+                    return Task::none();
+                }
+                self.sending_chat = true;
+                let text = ChatText::new(std::mem::take(&mut self.chat_input));
+                self.send(
+                    Request::SendChatMessage { steam_id, text },
+                    Message::ChatSent,
+                )
+            }
+            Message::ChatSent(result) => {
+                self.sending_chat = false;
+                match result {
+                    Ok(Response::ChatMessageSent { message }) => {
+                        let chat = self.chats.entry(message.steam_id.clone()).or_default();
+                        add_chat_message(chat, message);
+                    }
+                    Ok(_) => {}
+                    Err(error) => self.notice = Some(format!("Message not sent: {error}")),
                 }
                 Task::none()
             }
@@ -690,8 +766,23 @@ impl App {
                 self.stored_login = Some(false);
                 self.owned.clear();
                 self.friends = None;
+                self.chat_with = None;
+                self.chats.clear();
+                self.unread.clear();
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
+            }
+            Event::ChatMessage { message } => {
+                let open = self.chat_with.as_deref() == Some(message.steam_id.as_str());
+                if !open && !message.from_me {
+                    *self.unread.entry(message.steam_id.clone()).or_default() += 1;
+                }
+                // Loaded conversations get the message; others load their
+                // history (which contains it) when opened.
+                if let Some(chat) = self.chats.get_mut(&message.steam_id) {
+                    add_chat_message(chat, message);
+                }
+                Task::none()
             }
             Event::FriendRemoved { steam_id } => {
                 if let Some(friends) = &mut self.friends {
@@ -935,6 +1026,9 @@ impl App {
     }
 
     fn friends_view(&self) -> Element<'_, Message> {
+        if let Some(steam_id) = &self.chat_with {
+            return self.chat_view(steam_id);
+        }
         let status = StatusChoice(self.settings.as_ref().and_then(|s| s.own_status));
         let status_row = row![
             text("Your status:"),
@@ -1013,6 +1107,16 @@ impl App {
             ]
             .spacing(8)
             .align_y(Alignment::Center);
+            if let Some(count) = self.unread.get(&friend.steam_id) {
+                entry = entry.push(text(format!("{count} new")).style(text::primary));
+            }
+            if friend.relationship == FriendRelationship::Friend {
+                entry = entry.push(
+                    button("Chat")
+                        .style(button::secondary)
+                        .on_press(Message::OpenChat(friend.steam_id.clone())),
+                );
+            }
             // No Decline yet: on current Steam it left the sender unable to
             // send a new request (live, 2026-11-20); ignore requests in the
             // official client until this is understood.
@@ -1032,6 +1136,75 @@ impl App {
         scrollable(Column::with_children(rows).spacing(6))
             .height(Fill)
             .into()
+    }
+
+    fn chat_view<'a>(&'a self, steam_id: &'a str) -> Element<'a, Message> {
+        let name = self
+            .friends
+            .iter()
+            .flatten()
+            .find(|friend| friend.steam_id == steam_id)
+            .and_then(|friend| friend.name.clone())
+            .unwrap_or_else(|| "Friend".to_owned());
+        let header = row![
+            button("< Friends")
+                .style(button::secondary)
+                .on_press(Message::CloseChat),
+            text(name.clone()).size(20),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+        let body: Element<'_, Message> = match self.chats.get(steam_id) {
+            None => center_text("Loading messages ..."),
+            Some(messages) if messages.is_empty() => center_text("No messages yet. Say hi!"),
+            Some(messages) => {
+                let rows = messages.iter().map(|message| {
+                    let who = if message.from_me {
+                        "You".to_owned()
+                    } else {
+                        name.clone()
+                    };
+                    let bubble = container(
+                        column![
+                            text(who).size(11),
+                            text(message.text.as_str().to_owned()).size(15)
+                        ]
+                        .spacing(2),
+                    )
+                    .padding(8)
+                    .max_width(560)
+                    .style(container::rounded_box);
+                    let line = if message.from_me {
+                        row![space().width(Fill), bubble]
+                    } else {
+                        row![bubble, space().width(Fill)]
+                    };
+                    line.into()
+                });
+                scrollable(Column::with_children(rows).spacing(6))
+                    .anchor_bottom()
+                    .height(Fill)
+                    .into()
+            }
+        };
+
+        let can_send = !self.chat_input.trim().is_empty() && !self.sending_chat;
+        let input = row![
+            text_input("Write a message", &self.chat_input)
+                .on_input(|text| Message::ChatInput(ChatText::new(text)))
+                .on_submit(Message::SendChat)
+                .padding(8),
+            button(if self.sending_chat {
+                "Sending ..."
+            } else {
+                "Send"
+            })
+            .on_press_maybe(can_send.then_some(Message::SendChat)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        column![header, body, input].spacing(12).into()
     }
 
     fn settings_view(&self) -> Element<'_, Message> {
@@ -1261,6 +1434,20 @@ impl App {
         scrollable(Column::with_children(rows).spacing(6))
             .height(Fill)
             .into()
+    }
+}
+
+/// Adds a message to a conversation unless it is already there (the same
+/// message can arrive as history and as an event), keeping time order.
+fn add_chat_message(chat: &mut Vec<ChatMessageInfo>, message: ChatMessageInfo) {
+    let duplicate = chat.iter().any(|known| {
+        known.timestamp == message.timestamp
+            && known.ordinal == message.ordinal
+            && known.from_me == message.from_me
+    });
+    if !duplicate {
+        chat.push(message);
+        chat.sort_by_key(|message| (message.timestamp, message.ordinal));
     }
 }
 

@@ -117,6 +117,10 @@ Read-only part of M3 (ADR 0020). Each section names its sources.
   afterwards. The test account's block list on the Steam website did not
   contain the sender, and after a new login the full list had no entry for
   them.
+- Later the same day, the main account could send a request to neither
+  test account ("Anfrage konnte nicht gesendet werden"), so the hold-back
+  lasts at least hours, or Steam limited the main account's invites after
+  several in a short time.
 - Not verified: the exact value, how long the sender is held back, and
   whether the official client's "Ignore" does the same. Declining is
   disabled until this is compared.

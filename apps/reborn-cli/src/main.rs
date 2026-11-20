@@ -143,6 +143,22 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Show the recent messages with a friend, or send one.
+    Chat {
+        /// The friend: friend code, SteamID64 or profile URL.
+        who: String,
+        /// Send this message (visible to the friend).
+        #[arg(long)]
+        send: Option<String>,
+        /// Instead, record the recent history and the messages arriving in
+        /// the next 30 seconds as redacted fixtures into this folder (texts,
+        /// SteamIDs replaced).
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Talk to a running `rebornd` instead of doing the work here.
     #[command(subcommand)]
     Daemon(DaemonCommand),
@@ -192,6 +208,12 @@ async fn main() -> Result<()> {
         } => install(account, app_id, library, branch, true).await,
         Command::Daemon(command) => daemon(command).await,
         Command::Logout { account } => logout(account),
+        Command::Chat {
+            who,
+            send,
+            record,
+            account,
+        } => chat(account, &who, send.as_deref(), record.as_deref()).await,
         Command::Friends {
             action: Some(action),
             account,
@@ -838,6 +860,51 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
         Response::Launched { app_id } => println!("Started app {app_id}."),
         Response::Ok => println!("ok"),
         other => println!("{other:?}"),
+    }
+    Ok(())
+}
+
+async fn chat(
+    account: Option<String>,
+    who: &str,
+    send: Option<&str>,
+    record: Option<&Path>,
+) -> Result<()> {
+    let friend = reborn_cm::steam_id_from_input(who)
+        .ok_or_else(|| anyhow!("`{who}` is not a friend code, SteamID64 or profile URL"))?;
+    let session = account::sign_in(account).await?;
+    if let Some(dir) = record {
+        println!("Recording; messages arriving in the next 30 seconds are included.");
+        let recording = session
+            .record_chat(friend, std::time::Duration::from_secs(30))
+            .await?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::write(dir.join("chat_history.bin"), &recording.history)?;
+        for (index, bytes) in recording.incoming.iter().enumerate() {
+            std::fs::write(dir.join(format!("chat_incoming_{index}.bin")), bytes)?;
+        }
+        println!(
+            "Recorded the history and {} incoming messages (redacted) into {}.",
+            recording.incoming.len(),
+            dir.display()
+        );
+        return Ok(());
+    }
+    if let Some(text) = send {
+        if text.trim().is_empty() {
+            bail!("the message is empty");
+        }
+        session.send_message(friend, text).await?;
+        println!("Sent.");
+        return Ok(());
+    }
+    let messages = session.recent_messages(friend, 30).await?;
+    if messages.is_empty() {
+        println!("No messages yet.");
+    }
+    for message in &messages {
+        let who = if message.from_me { "you" } else { "them" };
+        println!("[{}] {who}: {}", message.timestamp, message.text);
     }
     Ok(())
 }

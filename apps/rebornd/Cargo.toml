@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+futures-util.workspace = true
 interprocess.workspace = true
 reborn-cm.workspace = true
 reborn-core.workspace = true

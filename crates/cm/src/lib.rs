@@ -26,6 +26,7 @@
 
 mod apps;
 mod content;
+mod friends;
 mod guard;
 mod library;
 mod pics;
@@ -35,6 +36,9 @@ mod session;
 
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use content::{ContentServer, DepotDecryptionKey};
+pub use friends::{
+    Friend, FriendsRecording, Persona, PersonaState, Relationship, friends_from, personas_from,
+};
 pub use library::OwnedApp;
 pub use secret::Secret;
 pub use session::{Error, PasswordLogin, Session, login_with_password, login_with_token};

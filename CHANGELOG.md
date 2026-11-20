@@ -4,6 +4,20 @@ All notable changes to Reborn are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Friends** tab in the desktop app and `reborn-cli friends`: your friends
+  and pending friend requests with name, online status and current game,
+  updated live. Read-only: Reborn does not change your own status yet
+  (ADR 0020).
+
+### Fixed
+
+- Signing in could fail with "Steam did not send the license list in time"
+  when Steam bundled the license list with the logon reply.
+
 ## [0.1.1] - 2026-11-20
 
 ### Added

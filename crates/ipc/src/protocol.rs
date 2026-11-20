@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 4;
+pub const PROTOCOL_MINOR: u16 = 5;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -163,6 +163,9 @@ pub enum Request {
         /// One of [`Response::Settings`]'s `protons`.
         name: Option<String>,
     },
+    /// The friends list with names and status (ADR 0020). Signs in if
+    /// needed. Added in protocol 1.5.
+    Friends,
 }
 
 /// Answers from the daemon.
@@ -237,6 +240,12 @@ pub enum Response {
         /// Installed Proton builds, best automatic choice first. Empty on
         /// Windows.
         protons: Vec<String>,
+    },
+    /// Answer to [`Request::Friends`]. Names and status may still be
+    /// missing; they follow as [`Event::FriendUpdated`].
+    Friends {
+        /// Friends and pending requests.
+        friends: Vec<FriendInfo>,
     },
     /// Answer to [`Request::Launch`]: the game process was started.
     Launched {
@@ -412,6 +421,11 @@ pub enum Event {
     },
     /// The settings changed (library folder or Proton choice).
     SettingsChanged,
+    /// A friend's name, status or game changed.
+    FriendUpdated {
+        /// The friend as now known.
+        friend: FriendInfo,
+    },
     /// An app was uninstalled.
     AppUninstalled {
         /// The app.
@@ -425,6 +439,62 @@ pub enum Event {
         /// Exit code, if the process returned one.
         exit_code: Option<i32>,
     },
+}
+
+/// A friend or pending friend request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FriendInfo {
+    /// SteamID64 as a decimal string (JSON numbers lose precision in some
+    /// languages).
+    pub steam_id: String,
+    /// Profile name, once Steam sent it.
+    pub name: Option<String>,
+    /// Online status.
+    pub status: FriendStatus,
+    /// How the account relates to this person.
+    pub relationship: FriendRelationship,
+    /// The Steam app being played, if any.
+    pub game_app_id: Option<u32>,
+    /// Name of a non-Steam game being played, if any.
+    pub game_name: Option<String>,
+}
+
+/// Online status of a friend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FriendStatus {
+    /// Not known yet.
+    Unknown,
+    /// Offline.
+    Offline,
+    /// Online.
+    Online,
+    /// Busy.
+    Busy,
+    /// Away.
+    Away,
+    /// Snooze.
+    Snooze,
+    /// Looking to trade.
+    LookingToTrade,
+    /// Looking to play.
+    LookingToPlay,
+}
+
+/// How the account relates to someone on the friends list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FriendRelationship {
+    /// Friends.
+    Friend,
+    /// They sent a friend request.
+    RequestReceived,
+    /// The user sent a friend request.
+    RequestSent,
+    /// Blocked or ignored.
+    Blocked,
+    /// Anything else.
+    Other,
 }
 
 /// Which Steam Guard code is asked for.
@@ -519,6 +589,23 @@ mod tests {
             panic!("expected status");
         };
         assert!(!stored_login);
+    }
+
+    #[test]
+    fn steam_ids_are_strings_on_the_wire() {
+        let friend = FriendInfo {
+            steam_id: "292733980074049537".to_owned(),
+            name: Some("Someone".to_owned()),
+            status: FriendStatus::LookingToPlay,
+            relationship: FriendRelationship::RequestReceived,
+            game_app_id: None,
+            game_name: None,
+        };
+        let json = serde_json::to_string(&Event::FriendUpdated { friend }).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"friend_updated","friend":{"steam_id":"292733980074049537","name":"Someone","status":"looking_to_play","relationship":"request_received","game_app_id":null,"game_name":null}}"#
+        );
     }
 
     #[test]

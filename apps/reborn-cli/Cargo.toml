@@ -11,6 +11,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+futures-util.workspace = true
 reborn-cm.workspace = true
 reborn-content.workspace = true
 reborn-core.workspace = true

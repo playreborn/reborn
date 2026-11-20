@@ -1,19 +1,20 @@
 //! Daemon state, request handling and the job queue.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
-use reborn_cm::{PUBLIC_BRANCH, Session};
+use reborn_cm::{Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session};
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
-    Event, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp, Request, Response,
-    Secret,
+    Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind,
+    JobResult, JobState, OwnedApp, Request, Response, Secret,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, oneshot};
@@ -86,6 +87,10 @@ pub struct Daemon {
     next_sign_in: AtomicU64,
     /// Apps whose game process (started by us) is still running.
     running: Arc<Mutex<BTreeSet<u32>>>,
+    /// Friends of the signed-in account with their latest persona.
+    friends: Arc<Mutex<BTreeMap<u64, FriendInfo>>>,
+    /// The task that follows persona updates of the current session.
+    friends_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
     jobs: Mutex<Jobs>,
     job_added: Notify,
     shutdown: Notify,
@@ -99,6 +104,8 @@ impl Daemon {
             sign_in: Mutex::new(None),
             next_sign_in: AtomicU64::new(1),
             running: Arc::new(Mutex::new(BTreeSet::new())),
+            friends: Arc::new(Mutex::new(BTreeMap::new())),
+            friends_watch: Mutex::new(None),
             jobs: Mutex::new(Jobs {
                 next_id: 1,
                 ..Jobs::default()
@@ -152,7 +159,80 @@ impl Daemon {
         let session = Arc::new(reborn_core::account::sign_in(None).await?);
         info!(account = session.account(), "signed in to Steam");
         *cached = Some(Arc::clone(&session));
+        self.watch_friends(Arc::clone(&session));
         Ok(session)
+    }
+
+    /// Follows the friends of a new session: fills the list, asks for
+    /// persona data and forwards every change (ADR 0020). A previous
+    /// watcher is stopped.
+    fn watch_friends(&self, session: Arc<Session>) {
+        let friends = Arc::clone(&self.friends);
+        let events = self.events.clone();
+        let task = tokio::spawn(async move {
+            let list = match session.friends().await {
+                Ok(list) => list,
+                Err(error) => {
+                    warn!(%error, "cannot load the friends list");
+                    return;
+                }
+            };
+            {
+                let mut known = lock(&friends);
+                known.clear();
+                for friend in &list {
+                    known.insert(friend.steam_id, friend_info(friend));
+                }
+            }
+            // Subscribe before asking, so no answer is missed.
+            let mut updates = Box::pin(session.persona_updates());
+            let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
+            if let Err(error) = session.request_personas(&ids).await {
+                warn!(%error, "cannot request friend data");
+            }
+            while let Some(personas) = updates.next().await {
+                for persona in personas {
+                    let updated = {
+                        let mut known = lock(&friends);
+                        known.get_mut(&persona.steam_id).map(|info| {
+                            merge_persona(info, &persona);
+                            info.clone()
+                        })
+                    };
+                    if let Some(friend) = updated {
+                        // No receivers just means no frontend is connected.
+                        let _ = events.send(Event::FriendUpdated { friend });
+                    }
+                }
+            }
+        });
+        if let Some(old) = lock(&self.friends_watch).replace(task) {
+            old.abort();
+        }
+    }
+
+    /// Stops following friends and forgets them.
+    fn forget_friends(&self) {
+        if let Some(task) = lock(&self.friends_watch).take() {
+            task.abort();
+        }
+        lock(&self.friends).clear();
+    }
+
+    /// The friends list, signing in if needed.
+    async fn friends(&self) -> Result<Vec<FriendInfo>, CoreError> {
+        let session = self.session().await?;
+        let list = session.friends().await?;
+        let known = lock(&self.friends);
+        Ok(list
+            .iter()
+            .map(|friend| {
+                known
+                    .get(&friend.steam_id)
+                    .cloned()
+                    .unwrap_or_else(|| friend_info(friend))
+            })
+            .collect())
     }
 
     /// Forgets the session after a Steam error, so the next request signs
@@ -228,6 +308,13 @@ impl Daemon {
             Request::SignOut => self.sign_out().await,
             Request::Uninstall { app_id, library } => self.uninstall(app_id, library).await,
             Request::GetSettings => current_settings(),
+            Request::Friends => match self.friends().await {
+                Ok(friends) => Response::Friends { friends },
+                Err(error) => {
+                    self.forget_session_after(&error).await;
+                    error_response(&error)
+                }
+            },
             Request::SetLibrary { library } => self.set_library(library),
             Request::SetProton { name } => self.set_proton(name),
             Request::Launch {
@@ -310,7 +397,9 @@ impl Daemon {
             }
             Some(Ok(session)) => {
                 info!(%account, "signed in to Steam");
-                *self.session.lock().await = Some(Arc::new(session));
+                let session = Arc::new(session);
+                *self.session.lock().await = Some(Arc::clone(&session));
+                self.watch_friends(session);
                 self.emit(Event::SignedIn {
                     account: account.clone(),
                 });
@@ -369,6 +458,7 @@ impl Daemon {
         }
         *session = None;
         drop(session);
+        self.forget_friends();
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
         Response::Ok
@@ -708,6 +798,56 @@ fn installed(library: Option<PathBuf>) -> Result<(PathBuf, Vec<InstalledApp>), C
     Ok((library, apps))
 }
 
+/// A list entry before Steam sent its persona.
+fn friend_info(friend: &Friend) -> FriendInfo {
+    FriendInfo {
+        steam_id: friend.steam_id.to_string(),
+        name: None,
+        status: FriendStatus::Unknown,
+        relationship: match friend.relationship {
+            Relationship::Friend => FriendRelationship::Friend,
+            Relationship::RequestRecipient => FriendRelationship::RequestReceived,
+            Relationship::RequestInitiator => FriendRelationship::RequestSent,
+            Relationship::Blocked | Relationship::Ignored | Relationship::IgnoredFriend => {
+                FriendRelationship::Blocked
+            }
+            _ => FriendRelationship::Other,
+        },
+        game_app_id: None,
+        game_name: None,
+    }
+}
+
+/// Applies what Steam sent; fields it left out keep their known value
+/// (node-steam-user merges the same way, `ClientPersonaState` handler).
+fn merge_persona(info: &mut FriendInfo, persona: &Persona) {
+    if let Some(name) = &persona.name {
+        info.name = Some(name.clone());
+    }
+    if let Some(state) = persona.state {
+        info.status = match state {
+            PersonaState::Offline | PersonaState::Invisible => FriendStatus::Offline,
+            PersonaState::Online => FriendStatus::Online,
+            PersonaState::Busy => FriendStatus::Busy,
+            PersonaState::Away => FriendStatus::Away,
+            PersonaState::Snooze => FriendStatus::Snooze,
+            PersonaState::LookingToTrade => FriendStatus::LookingToTrade,
+            PersonaState::LookingToPlay => FriendStatus::LookingToPlay,
+            PersonaState::Unknown(_) => FriendStatus::Unknown,
+        };
+        if info.status == FriendStatus::Offline {
+            info.game_app_id = None;
+            info.game_name = None;
+        }
+    }
+    if let Some(app) = persona.game_app_id {
+        info.game_app_id = (app != 0).then_some(app);
+    }
+    if persona.game_name.is_some() || persona.game_app_id == Some(0) {
+        info.game_name = persona.game_name.clone();
+    }
+}
+
 /// The settings as the daemon uses them.
 fn current_settings() -> Response {
     let library = match settings::default_library() {
@@ -874,6 +1014,43 @@ mod tests {
             })
             .await;
         assert!(matches!(response, Response::Error { .. }));
+    }
+
+    #[test]
+    fn personas_merge_into_known_friends() {
+        let friend = Friend {
+            steam_id: 42,
+            relationship: Relationship::Friend,
+        };
+        let mut info = friend_info(&friend);
+        assert_eq!(info.steam_id, "42");
+        assert_eq!(info.status, FriendStatus::Unknown);
+
+        merge_persona(
+            &mut info,
+            &Persona {
+                steam_id: 42,
+                name: Some("Alice".to_owned()),
+                state: Some(PersonaState::Online),
+                game_app_id: Some(480),
+                ..Persona::default()
+            },
+        );
+        assert_eq!(info.name.as_deref(), Some("Alice"));
+        assert_eq!(info.game_app_id, Some(480));
+
+        // An update without name keeps the name; going offline ends the game.
+        merge_persona(
+            &mut info,
+            &Persona {
+                steam_id: 42,
+                state: Some(PersonaState::Offline),
+                ..Persona::default()
+            },
+        );
+        assert_eq!(info.name.as_deref(), Some("Alice"));
+        assert_eq!(info.status, FriendStatus::Offline);
+        assert_eq!(info.game_app_id, None);
     }
 
     #[tokio::test]

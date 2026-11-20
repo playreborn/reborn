@@ -20,10 +20,14 @@ use steam_vent::auth::AuthConfirmationHandler;
 use steam_vent::{
     Connection, ConnectionError, ConnectionTrait, NetworkError, ServerDiscoveryError, ServerList,
 };
+use steam_vent_proto_common::MsgKind;
+use steam_vent_proto_steam::enums_clientserver::EMsg;
 use steam_vent_proto_steam::steammessages_clientserver::CMsgClientLicenseList;
+use steam_vent_proto_steam::steammessages_clientserver_friends::CMsgClientFriendsList;
 use tracing::{debug, info};
 
 use crate::Secret;
+use crate::friends::FriendsSlot;
 use crate::guard::MemoryGuardStore;
 use crate::pics::License;
 
@@ -50,6 +54,9 @@ pub enum Error {
     /// Steam did not send the account's license list after logon.
     #[error("Steam did not send the license list in time")]
     LicenseListTimeout,
+    /// Steam did not send the friends list after logon.
+    #[error("Steam did not send the friends list in time")]
+    FriendsListTimeout,
     /// Steam sent no app info for this app (unknown app, no access, or only
     /// offered over HTTP, which is not supported yet).
     #[error("no app info available for app {0}")]
@@ -76,6 +83,8 @@ pub struct Session {
     account: String,
     /// Licenses (packages) of the account, sent by Steam right after logon.
     pub(crate) licenses: Vec<License>,
+    /// The friends list, sent by Steam after logon (ADR 0020).
+    pub(crate) friends: Arc<FriendsSlot>,
 }
 
 impl Session {
@@ -149,11 +158,12 @@ pub async fn login_with_password<H: AuthConfirmationHandler>(
         .ok_or(Error::MissingRefreshToken)?;
     let new_guard_data = take(&received).map(Secret::new);
 
-    let licenses = receive_licenses(&connection).await?;
+    let (licenses, friends) = receive_initial(&connection).await?;
     let session = Session {
         connection,
         account: account.to_owned(),
         licenses,
+        friends,
     };
     info!(account, "logged in with password");
     Ok(PasswordLogin {
@@ -169,11 +179,12 @@ pub async fn login_with_token(account: &str, refresh_token: &Secret) -> Result<S
     debug!(account, "starting token login");
     let connection = Connection::access(&servers, account, refresh_token.expose()).await?;
     info!(account, "logged in with refresh token");
-    let licenses = receive_licenses(&connection).await?;
+    let (licenses, friends) = receive_initial(&connection).await?;
     Ok(Session {
         connection,
         account: account.to_owned(),
         licenses,
+        friends,
     })
 }
 
@@ -186,19 +197,45 @@ fn take(slot: &Arc<Mutex<Option<String>>>) -> Option<String> {
 /// Waits for `CMsgClientLicenseList`, which Steam sends unasked right after
 /// logon (node-steam-user `components/apps.js`, `ClientLicenseList` handler).
 /// It may already have arrived while logging in, so the messages steam-vent
-/// kept unprocessed are checked too.
-async fn receive_licenses(connection: &Connection) -> Result<Vec<License>, Error> {
-    // Subscribe first, so the list cannot slip through between the two checks.
-    let incoming = connection.one::<CMsgClientLicenseList>();
+/// kept unprocessed are checked too. The same holds for the friends list
+/// (node-steam-user `components/friends.js`, `ClientFriendsList` handler),
+/// which is kept for [`Session::friends`] or awaited in the background.
+async fn receive_initial(
+    connection: &Connection,
+) -> Result<(Vec<License>, Arc<FriendsSlot>), Error> {
+    // Subscribe first, so nothing can slip through between the two checks.
+    let licenses_incoming = connection.one::<CMsgClientLicenseList>();
+    let friends_incoming = connection.one::<CMsgClientFriendsList>();
+    let mut licenses = None;
+    let friends = Arc::new(FriendsSlot::default());
+    let mut friends_found = false;
     for raw in connection.take_unprocessed() {
-        if let Ok(list) = raw.into_message::<CMsgClientLicenseList>() {
-            return Ok(licenses_from(list));
+        // `into_message` consumes the message, so look at its kind first.
+        // `EMsg` variants carry no discriminants (`as i32` would give the
+        // position in the enum), so compare through `MsgKind`.
+        let kind = raw.kind;
+        if kind == MsgKind::from(EMsg::k_EMsgClientLicenseList) {
+            if let Ok(list) = raw.into_message::<CMsgClientLicenseList>() {
+                licenses = Some(licenses_from(list));
+            }
+        } else if kind == MsgKind::from(EMsg::k_EMsgClientFriendsList)
+            && let Ok(list) = raw.into_message::<CMsgClientFriendsList>()
+        {
+            friends.store(list);
+            friends_found = true;
         }
     }
-    match tokio::time::timeout(LICENSE_LIST_TIMEOUT, incoming).await {
-        Ok(list) => Ok(licenses_from(list?)),
-        Err(_) => Err(Error::LicenseListTimeout),
+    if !friends_found {
+        friends.wait_in_background(friends_incoming);
     }
+    let licenses = match licenses {
+        Some(licenses) => licenses,
+        None => match tokio::time::timeout(LICENSE_LIST_TIMEOUT, licenses_incoming).await {
+            Ok(list) => licenses_from(list?),
+            Err(_) => return Err(Error::LicenseListTimeout),
+        },
+    };
+    Ok((licenses, friends))
 }
 
 fn licenses_from(list: CMsgClientLicenseList) -> Vec<License> {
@@ -221,6 +258,16 @@ fn licenses_from(list: CMsgClientLicenseList) -> Vec<License> {
 mod tests {
     use super::*;
     use steam_vent_proto_steam::steammessages_clientserver::cmsg_client_license_list::License as ProtoLicense;
+
+    #[test]
+    fn message_kinds_are_the_wire_numbers() {
+        // Regression: `EMsg::... as i32` is the enum position, not the EMsg
+        // number, so login messages were not recognized (live, 2026-11-20).
+        // Numbers: SteamKit2 `enums.steamd` (EMsg ClientLicenseList 780,
+        // ClientFriendsList 767).
+        assert_eq!(MsgKind::from(EMsg::k_EMsgClientLicenseList).0, 780);
+        assert_eq!(MsgKind::from(EMsg::k_EMsgClientFriendsList).0, 767);
+    }
 
     #[test]
     fn converts_the_license_list() {

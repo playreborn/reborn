@@ -520,6 +520,8 @@ Etappen (Stand 2026-11-19):
 
 ### M3 – Social → Release 0.2
 
+Stand 2026-11-20: Etappe 1 (nur lesen, ADR 0020) gebaut und live geprüft: Freundesliste mit Namen und Status in Daemon, CLI und GUI, Fixture aus dem Testkonto. Dabei gefunden und behoben: Lizenz- und Freundesliste aus dem Login-Paket wurden wegen falsch gelesener Nachrichtennummern nicht erkannt.
+
 Freunde, Online-Status, Chat, Benachrichtigungen, Freundschaftsanfragen, Achievements anzeigen.
 
 **Fertig, wenn:** Man im Alltag über Reborn chatten kann.

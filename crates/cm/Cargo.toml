@@ -13,6 +13,7 @@ publish = true
 futures-util.workspace = true
 reborn-formats.workspace = true
 steam-vent.workspace = true
+steam-vent-proto-common.workspace = true
 steam-vent-proto-steam.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

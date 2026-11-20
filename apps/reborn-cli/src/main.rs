@@ -128,6 +128,16 @@ enum Command {
         #[arg(long)]
         account: Option<String>,
     },
+    /// Show your friends with status and game (read-only).
+    Friends {
+        /// Instead, record the friends list and persona answers as redacted
+        /// test fixtures into this folder (SteamIDs and names replaced).
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Account to use (defaults to the last account that signed in).
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Talk to a running `rebornd` instead of doing the work here.
     #[command(subcommand)]
     Daemon(DaemonCommand),
@@ -177,6 +187,7 @@ async fn main() -> Result<()> {
         } => install(account, app_id, library, branch, true).await,
         Command::Daemon(command) => daemon(command).await,
         Command::Logout { account } => logout(account),
+        Command::Friends { record, account } => friends(account, record.as_deref()).await,
     }
 }
 
@@ -790,6 +801,70 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
         Response::Launched { app_id } => println!("Started app {app_id}."),
         Response::Ok => println!("ok"),
         other => println!("{other:?}"),
+    }
+    Ok(())
+}
+
+async fn friends(account: Option<String>, record: Option<&Path>) -> Result<()> {
+    use futures_util::StreamExt;
+    use reborn_cm::{Persona, PersonaState, Relationship};
+
+    let session = account::sign_in(account).await?;
+    if let Some(dir) = record {
+        let recording = session
+            .record_friends(std::time::Duration::from_secs(5))
+            .await?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        std::fs::write(dir.join("friends_list.bin"), &recording.friends_list)?;
+        for (index, bytes) in recording.persona_states.iter().enumerate() {
+            std::fs::write(dir.join(format!("persona_state_{index}.bin")), bytes)?;
+        }
+        println!(
+            "Recorded the friends list and {} persona messages (redacted) into {}.",
+            recording.persona_states.len(),
+            dir.display()
+        );
+        return Ok(());
+    }
+
+    let list = session.friends().await?;
+    let mut updates = Box::pin(session.persona_updates());
+    let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
+    session.request_personas(&ids).await?;
+    let mut personas: std::collections::HashMap<u64, Persona> = std::collections::HashMap::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    while let Ok(Some(batch)) = tokio::time::timeout_at(deadline, updates.next()).await {
+        for persona in batch {
+            personas.insert(persona.steam_id, persona);
+        }
+    }
+    if list.is_empty() {
+        println!("No friends on this account yet.");
+    }
+    for friend in &list {
+        let persona = personas.get(&friend.steam_id);
+        let name = persona
+            .and_then(|p| p.name.as_deref())
+            .unwrap_or("(name not received)");
+        let status = match persona.and_then(|p| p.state) {
+            Some(PersonaState::Offline | PersonaState::Invisible) => "offline",
+            Some(PersonaState::Online) => "online",
+            Some(PersonaState::Busy) => "busy",
+            Some(PersonaState::Away | PersonaState::Snooze) => "away",
+            Some(PersonaState::LookingToTrade | PersonaState::LookingToPlay) => "online",
+            Some(PersonaState::Unknown(_)) | None => "?",
+        };
+        let game = match persona.and_then(|p| p.game_app_id).filter(|app| *app != 0) {
+            Some(app) => format!("  playing app {app}"),
+            None => String::new(),
+        };
+        let relation = match friend.relationship {
+            Relationship::Friend => "",
+            Relationship::RequestRecipient => "  (sent you a friend request)",
+            Relationship::RequestInitiator => "  (your friend request)",
+            _ => "  (blocked/ignored)",
+        };
+        println!("{name:<32} {status:<8}{game}{relation}");
     }
     Ok(())
 }

@@ -9,7 +9,10 @@ use iced::widget::{
     text_input,
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
-use reborn_ipc::protocol::{GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnedApp};
+use reborn_ipc::protocol::{
+    FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult,
+    JobState, OwnedApp,
+};
 use reborn_ipc::{Client, Event, Request, Response, Secret};
 
 use crate::daemon;
@@ -19,6 +22,7 @@ use crate::daemon;
 pub enum Tab {
     Library,
     Downloads,
+    Friends,
     Settings,
 }
 
@@ -94,6 +98,7 @@ pub enum Message {
     Uninstall(u32),
     UninstallDone(Result<Response, String>),
     SettingsLoaded(Result<Response, String>),
+    FriendsLoaded(Result<Response, String>),
     LibraryInput(String),
     SaveLibrary,
     ResetLibrary,
@@ -130,6 +135,8 @@ pub struct App {
     confirm_uninstall: Option<u32>,
     settings: Option<SettingsView>,
     library_input: String,
+    /// `None` until loaded.
+    friends: Option<Vec<FriendInfo>>,
 }
 
 impl App {
@@ -158,6 +165,7 @@ impl App {
             confirm_uninstall: None,
             settings: None,
             library_input: String::new(),
+            friends: None,
         };
         (
             app,
@@ -282,6 +290,20 @@ impl App {
             ]),
             Message::SwitchTab(tab) => {
                 self.tab = tab;
+                if tab == Tab::Friends && self.friends.is_none() {
+                    return self.send(Request::Friends, Message::FriendsLoaded);
+                }
+                Task::none()
+            }
+            Message::FriendsLoaded(result) => {
+                match result {
+                    Ok(Response::Friends { friends }) => self.friends = Some(friends),
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.friends = Some(Vec::new());
+                        self.notice = Some(format!("Friends: {error}"));
+                    }
+                }
                 Task::none()
             }
             Message::Filter(filter) => {
@@ -590,8 +612,18 @@ impl App {
             Event::SignedOut => {
                 self.stored_login = Some(false);
                 self.owned.clear();
+                self.friends = None;
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
+            }
+            Event::FriendUpdated { friend } => {
+                if let Some(friends) = &mut self.friends {
+                    match friends.iter_mut().find(|f| f.steam_id == friend.steam_id) {
+                        Some(known) => *known = friend,
+                        None => friends.push(friend),
+                    }
+                }
+                Task::none()
             }
             Event::SettingsChanged => Task::batch([
                 self.send(Request::GetSettings, Message::SettingsLoaded),
@@ -648,6 +680,7 @@ impl App {
                 Some(true) => match self.tab {
                     Tab::Library => self.library_view(),
                     Tab::Downloads => self.downloads_view(),
+                    Tab::Friends => self.friends_view(),
                     Tab::Settings => self.settings_view(),
                 },
             },
@@ -691,6 +724,7 @@ impl App {
             text("Reborn").size(26),
             tab_button("Library".to_owned(), Tab::Library),
             tab_button(downloads, Tab::Downloads),
+            tab_button("Friends".to_owned(), Tab::Friends),
             tab_button("Settings".to_owned(), Tab::Settings),
             space().width(Fill),
             text(status).size(14),
@@ -814,6 +848,60 @@ impl App {
         container(container(content).max_width(440))
             .center_x(Fill)
             .padding(40)
+            .into()
+    }
+
+    fn friends_view(&self) -> Element<'_, Message> {
+        let Some(friends) = &self.friends else {
+            return center_text("Loading your friends ...");
+        };
+        if friends.is_empty() {
+            return center_text("No friends on this account yet.");
+        }
+        let mut sorted: Vec<&FriendInfo> = friends.iter().collect();
+        // Playing first, then online, then the rest; by name within.
+        sorted.sort_by_key(|friend| {
+            let rank = match (friend.relationship, friend.status) {
+                (FriendRelationship::Friend, _)
+                    if friend.game_app_id.is_some() || friend.game_name.is_some() =>
+                {
+                    0
+                }
+                (FriendRelationship::Friend, FriendStatus::Offline | FriendStatus::Unknown) => 2,
+                (FriendRelationship::Friend, _) => 1,
+                _ => 3,
+            };
+            (rank, friend.name.clone().unwrap_or_default().to_lowercase())
+        });
+        let rows = sorted.into_iter().map(|friend| {
+            let name = friend.name.clone().unwrap_or_else(|| "...".to_owned());
+            let detail = match (friend.relationship, &friend.game_name, friend.game_app_id) {
+                (FriendRelationship::RequestReceived, _, _) => {
+                    "Sent you a friend request".to_owned()
+                }
+                (FriendRelationship::RequestSent, _, _) => "Friend request sent".to_owned(),
+                (FriendRelationship::Blocked, _, _) => "Blocked".to_owned(),
+                (_, Some(game), _) => format!("Playing {game}"),
+                (_, None, Some(app_id)) => match self.owned.iter().find(|app| app.app_id == app_id)
+                {
+                    Some(app) => format!("Playing {}", app.name),
+                    None => format!("Playing app {app_id}"),
+                },
+                _ => status_text(friend.status).to_owned(),
+            };
+            let online = !matches!(friend.status, FriendStatus::Offline | FriendStatus::Unknown);
+            let mut detail_text = text(detail).size(12);
+            if online {
+                detail_text = detail_text.style(text::success);
+            }
+            container(column![text(name).size(16), detail_text].spacing(2))
+                .padding(10)
+                .width(Fill)
+                .style(container::rounded_box)
+                .into()
+        });
+        scrollable(Column::with_children(rows).spacing(6))
+            .height(Fill)
             .into()
     }
 
@@ -1044,6 +1132,19 @@ impl App {
         scrollable(Column::with_children(rows).spacing(6))
             .height(Fill)
             .into()
+    }
+}
+
+fn status_text(status: FriendStatus) -> &'static str {
+    match status {
+        FriendStatus::Unknown => "...",
+        FriendStatus::Offline => "Offline",
+        FriendStatus::Online => "Online",
+        FriendStatus::Busy => "Busy",
+        FriendStatus::Away => "Away",
+        FriendStatus::Snooze => "Snooze",
+        FriendStatus::LookingToTrade => "Looking to trade",
+        FriendStatus::LookingToPlay => "Looking to play",
     }
 }
 

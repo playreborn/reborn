@@ -109,3 +109,8 @@ Left out because the sources above do not settle them:
 - **Launch:** the same apps start through the chosen Proton build with the
   prefix in Reborn's data folder, `compatdata/<app id>`
   (`reborn-core::launch`).
+- **Live (2026-11-20):** in a Debian 13 VM (llvmpipe software Vulkan), app
+  2158270 (Quatro!, Windows only) installed its Windows depots and started
+  through Proton Experimental (app 1493710, installed by the Steam client),
+  run directly without the runtime container. Other builds and games may
+  still need the container.

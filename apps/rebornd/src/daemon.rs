@@ -1,6 +1,6 @@
 //! Daemon state, request handling and the job queue.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -8,14 +8,16 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reborn_cm::confirmation::{GuardCodeKind, GuardPrompt, GuardPromptHandle};
-use reborn_cm::{ChatMessage, Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session};
+use reborn_cm::{
+    ChatEvent, ChatMessage, Friend, PUBLIC_BRANCH, Persona, PersonaState, Relationship, Session,
+};
 use reborn_core::CoreError;
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_ipc::protocol::{
     ChatMessageInfo, ChatText, Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
     InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp, Request, Response,
-    Secret,
+    Secret, UnreadChatInfo,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
@@ -28,6 +30,9 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 /// network outage could hang and hold the session lock, blocking every
 /// request (live 2026-11-20).
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Least time between two typing notices to the same friend (ADR 0026).
+const TYPING_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Why the connection to Steam ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +133,8 @@ pub struct Daemon {
     friends_loaded: Arc<AtomicBool>,
     /// The task that follows persona updates of the current session.
     friends_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// When the last typing notice went to each friend.
+    typing_sent: Mutex<HashMap<u64, Instant>>,
     /// Reports a lost connection to the keeper task.
     lost: mpsc::UnboundedSender<Lost>,
     /// Taken once by [`keep_connected`].
@@ -151,6 +158,7 @@ impl Daemon {
             friends: Arc::new(Mutex::new(BTreeMap::new())),
             friends_loaded: Arc::new(AtomicBool::new(false)),
             friends_watch: Mutex::new(None),
+            typing_sent: Mutex::new(HashMap::new()),
             jobs: Mutex::new(Jobs {
                 next_id: 1,
                 ..Jobs::default()
@@ -246,7 +254,7 @@ impl Daemon {
             // Subscribe before asking, so no answer is missed.
             let mut updates = Box::pin(session.persona_updates());
             let mut changes = Box::pin(session.friend_changes());
-            let mut chat = Box::pin(session.chat_messages());
+            let mut chat = Box::pin(session.chat_events());
             let ids: Vec<u64> = list.iter().map(|friend| friend.steam_id).collect();
             if let Err(error) = session.request_personas(&ids).await {
                 warn!(%error, "cannot request friend data");
@@ -298,10 +306,17 @@ impl Daemon {
                             warn!(%error, "cannot request friend data");
                         }
                     }
-                    Some(message) = chat.next() => {
+                    Some(event) = chat.next() => {
                         // The text is never logged (ADR 0024).
-                        let message = chat_info(&message);
-                        let _ = events.send(Event::ChatMessage { message });
+                        let event = match event {
+                            ChatEvent::Message(message) => Event::ChatMessage {
+                                message: chat_info(&message),
+                            },
+                            ChatEvent::Typing { friend } => Event::FriendTyping {
+                                steam_id: friend.to_string(),
+                            },
+                        };
+                        let _ = events.send(event);
                     }
                     Some(eresult) = &mut logged_off => {
                         let _ = lost.send(Lost::LoggedOff(eresult));
@@ -444,6 +459,60 @@ impl Daemon {
                     message: chat_info(&message),
                 }
             }
+            Err(error) => self.steam_failure(error).await,
+        }
+    }
+
+    /// Tells the friend the user is typing, at most once every
+    /// [`TYPING_INTERVAL`] per friend (ADR 0026).
+    async fn send_typing(&self, steam_id: &str) -> Response {
+        let Ok(friend) = steam_id.parse::<u64>() else {
+            return not_a_steam_id(steam_id);
+        };
+        if !typing_due(&mut lock(&self.typing_sent), friend, Instant::now()) {
+            return Response::Ok;
+        }
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        match session.send_typing(friend).await {
+            Ok(()) => Response::Ok,
+            Err(error) => self.steam_failure(error).await,
+        }
+    }
+
+    /// Marks a conversation as read (ADR 0026).
+    async fn mark_chat_read(&self, steam_id: &str, timestamp: u32) -> Response {
+        let Ok(friend) = steam_id.parse::<u64>() else {
+            return not_a_steam_id(steam_id);
+        };
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        match session.mark_read(friend, timestamp).await {
+            Ok(()) => Response::Ok,
+            Err(error) => self.steam_failure(error).await,
+        }
+    }
+
+    /// Conversations with unread messages (ADR 0026).
+    async fn unread_chats(&self) -> Response {
+        let session = match self.session().await {
+            Ok(session) => session,
+            Err(error) => return error_response(&error),
+        };
+        match session.unread_chats().await {
+            Ok(chats) => Response::UnreadChats {
+                chats: chats
+                    .iter()
+                    .map(|chat| UnreadChatInfo {
+                        steam_id: chat.friend.to_string(),
+                        count: chat.count,
+                    })
+                    .collect(),
+            },
             Err(error) => self.steam_failure(error).await,
         }
     }
@@ -611,6 +680,12 @@ impl Daemon {
             Request::SendChatMessage { steam_id, text } => {
                 self.send_chat_message(&steam_id, &text).await
             }
+            Request::SendTyping { steam_id } => self.send_typing(&steam_id).await,
+            Request::MarkChatRead {
+                steam_id,
+                timestamp,
+            } => self.mark_chat_read(&steam_id, timestamp).await,
+            Request::UnreadChats => self.unread_chats().await,
             Request::AcceptFriend { steam_id } => self.answer_friend_request(&steam_id, true).await,
             // Disabled: on today's Steam, `ClientRemoveFriend` on a pending
             // request left the sender blocked (live, 2026-11-20).
@@ -1190,6 +1265,24 @@ fn current_friends(
         .collect()
 }
 
+fn not_a_steam_id(steam_id: &str) -> Response {
+    Response::Error {
+        message: format!("`{steam_id}` is not a SteamID64"),
+    }
+}
+
+/// Whether a typing notice to `friend` may go out now; records it if so.
+fn typing_due(sent: &mut HashMap<u64, Instant>, friend: u64, now: Instant) -> bool {
+    if sent
+        .get(&friend)
+        .is_some_and(|last| now.duration_since(*last) < TYPING_INTERVAL)
+    {
+        return false;
+    }
+    sent.insert(friend, now);
+    true
+}
+
 fn chat_info(message: &ChatMessage) -> ChatMessageInfo {
     ChatMessageInfo {
         steam_id: message.friend.to_string(),
@@ -1454,6 +1547,19 @@ mod tests {
         assert!(matches!(response, Response::Error { .. }));
     }
 
+    #[test]
+    fn typing_notices_are_spaced_out() {
+        let mut sent = HashMap::new();
+        let start = Instant::now();
+        assert!(typing_due(&mut sent, 1, start));
+        assert!(!typing_due(&mut sent, 1, start + Duration::from_secs(9)));
+        assert!(
+            typing_due(&mut sent, 2, start),
+            "other friends are separate"
+        );
+        assert!(typing_due(&mut sent, 1, start + TYPING_INTERVAL));
+    }
+
     #[tokio::test]
     async fn chat_requests_are_checked_before_signing_in() {
         let daemon = Daemon::new();
@@ -1464,6 +1570,13 @@ mod tests {
             Request::SendChatMessage {
                 steam_id: "42".to_owned(),
                 text: ChatText::new("   "),
+            },
+            Request::SendTyping {
+                steam_id: "not a number".to_owned(),
+            },
+            Request::MarkChatRead {
+                steam_id: "-1".to_owned(),
+                timestamp: 1,
             },
         ] {
             assert!(matches!(

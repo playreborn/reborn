@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 9;
+pub const PROTOCOL_MINOR: u16 = 10;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -224,6 +224,22 @@ pub enum Request {
         /// The text.
         text: ChatText,
     },
+    /// Tell a friend the user is typing (ADR 0026). The daemon sends at
+    /// most one notice per friend every 10 seconds. Added in protocol 1.10.
+    SendTyping {
+        /// The friend's SteamID64 as a decimal string.
+        steam_id: String,
+    },
+    /// Mark a conversation as read up to a message, so other clients clear
+    /// their unread count. Added in protocol 1.10.
+    MarkChatRead {
+        /// The friend's SteamID64 as a decimal string.
+        steam_id: String,
+        /// Server time of the newest message read.
+        timestamp: u32,
+    },
+    /// Conversations with unread messages. Added in protocol 1.10.
+    UnreadChats,
 }
 
 /// Answers from the daemon.
@@ -319,6 +335,11 @@ pub enum Response {
     ChatMessageSent {
         /// The message.
         message: ChatMessageInfo,
+    },
+    /// Answer to [`Request::UnreadChats`].
+    UnreadChats {
+        /// Conversations with at least one unread message.
+        chats: Vec<UnreadChatInfo>,
     },
     /// Answer to [`Request::AddFriend`]: Steam accepted the request.
     FriendRequestSent {
@@ -524,6 +545,13 @@ pub enum Event {
         /// The message.
         message: ChatMessageInfo,
     },
+    /// A friend is typing (ADR 0026). Steam sends no "stopped typing";
+    /// frontends hide the notice after a while or when a message arrives.
+    /// Added in protocol 1.10.
+    FriendTyping {
+        /// The friend's SteamID64 as a decimal string.
+        steam_id: String,
+    },
     /// A relationship ended (declined request, removed friend).
     FriendRemoved {
         /// SteamID64 as a decimal string.
@@ -557,6 +585,15 @@ pub struct ChatMessageInfo {
     pub timestamp: u32,
     /// Orders messages with the same timestamp.
     pub ordinal: u32,
+}
+
+/// A conversation with unread messages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnreadChatInfo {
+    /// The friend's SteamID64 as a decimal string.
+    pub steam_id: String,
+    /// How many of the friend's messages are unread.
+    pub count: u32,
 }
 
 /// A friend or pending friend request.

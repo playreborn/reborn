@@ -150,9 +150,9 @@ enum Command {
         /// Send this message (visible to the friend).
         #[arg(long)]
         send: Option<String>,
-        /// Instead, record the recent history and the messages arriving in
-        /// the next 30 seconds as redacted fixtures into this folder (texts,
-        /// SteamIDs replaced).
+        /// Instead, record the recent history, the unread counts and the
+        /// messages and typing notices arriving in the next 30 seconds as
+        /// redacted fixtures into this folder (texts, SteamIDs replaced).
         #[arg(long)]
         record: Option<PathBuf>,
         /// Account to use (defaults to the last account that signed in).
@@ -880,11 +880,12 @@ async fn chat(
             .await?;
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
         std::fs::write(dir.join("chat_history.bin"), &recording.history)?;
+        std::fs::write(dir.join("chat_sessions.bin"), &recording.sessions)?;
         for (index, bytes) in recording.incoming.iter().enumerate() {
             std::fs::write(dir.join(format!("chat_incoming_{index}.bin")), bytes)?;
         }
         println!(
-            "Recorded the history and {} incoming messages (redacted) into {}.",
+            "Recorded the history, unread counts and {} incoming notices (redacted) into {}.",
             recording.incoming.len(),
             dir.display()
         );

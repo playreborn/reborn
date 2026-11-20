@@ -1,4 +1,4 @@
-//! One-to-one chat with friends (ADR 0024).
+//! One-to-one chat with friends (ADR 0024, ADR 0026).
 //!
 //! Methods and fields, see `docs/protocol/chat.md`; source: node-steam-user
 //! `components/chatroom.js` (MIT), values from SteamKit2 `enums.steamd`.
@@ -8,18 +8,33 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
-use steam_vent::ConnectionTrait;
+use steam_vent::message::EncodableMessage;
+use steam_vent::{ConnectionTrait, NetMessage, NetMessageHeader, ServiceMethodRequest};
 use steam_vent_proto_common::protobuf::Message;
+use steam_vent_proto_steam::enums_clientserver::EMsg;
 use steam_vent_proto_steam::steammessages_friendmessages_steamclient::{
-    CFriendMessages_GetRecentMessages_Request, CFriendMessages_GetRecentMessages_Response,
-    CFriendMessages_IncomingMessage_Notification, CFriendMessages_SendMessage_Request,
+    CFriendMessages_AckMessage_Notification, CFriendMessages_GetRecentMessages_Request,
+    CFriendMessages_GetRecentMessages_Response, CFriendMessages_IncomingMessage_Notification,
+    CFriendMessages_SendMessage_Request, CFriendsMessages_GetActiveMessageSessions_Request,
+    CFriendsMessages_GetActiveMessageSessions_Response,
     cfriend_messages_get_recent_messages_response::FriendMessage,
+    cfriends_messages_get_active_message_sessions_response::FriendMessageSession,
 };
 
 use crate::{Error, Session};
 
 /// `EChatEntryType::ChatMsg`.
 const CHAT_MSG: i32 = 1;
+
+/// `EChatEntryType::Typing`.
+const TYPING: i32 = 2;
+
+/// The SteamID64 of an individual account from its account ID (universe
+/// public, type individual, instance 1; SteamKit2 `Types/SteamID.cs`), as
+/// node-steam-user's `SteamID.fromIndividualAccountID`.
+fn individual_steam_id(account: u32) -> u64 {
+    (1 << 56) | (1 << 52) | (1 << 32) | u64::from(account)
+}
 
 /// "No upper bound" for `time_last` in history requests (node-steam-user
 /// `getFriendMessageHistory` default, 2^31 − 1).
@@ -45,6 +60,28 @@ pub struct ChatMessage {
     pub ordinal: u32,
 }
 
+/// Something that happened in a conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChatEvent {
+    /// A message arrived, or the user wrote one in another client.
+    Message(ChatMessage),
+    /// The friend is typing.
+    Typing {
+        /// The friend (SteamID64).
+        friend: u64,
+    },
+}
+
+/// A conversation with unread messages, from
+/// `FriendMessages.GetActiveMessageSessions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnreadChat {
+    /// The friend (SteamID64).
+    pub friend: u64,
+    /// How many of the friend's messages the user has not read yet.
+    pub count: u32,
+}
+
 impl std::fmt::Debug for ChatMessage {
     /// Leaves the text out, so it cannot end up in logs.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -66,6 +103,8 @@ impl std::fmt::Debug for ChatMessage {
 pub struct ChatRecording {
     /// `CFriendMessages_GetRecentMessages_Response`, protobuf-encoded.
     pub history: Vec<u8>,
+    /// `CFriendsMessages_GetActiveMessageSessions_Response`, protobuf-encoded.
+    pub sessions: Vec<u8>,
     /// Every `CFriendMessages_IncomingMessage_Notification` received.
     pub incoming: Vec<Vec<u8>>,
 }
@@ -114,12 +153,48 @@ impl Session {
         })
     }
 
-    /// Incoming messages, and the user's own messages from other clients,
-    /// for as long as the connection lasts. Typing notices are dropped.
-    pub fn chat_messages(&self) -> impl Stream<Item = ChatMessage> + 'static {
+    /// Tells the friend that the user is typing, like node-steam-user's
+    /// `sendFriendTyping`: a `SendMessage` with entry type Typing and no
+    /// text. Callers limit how often (ADR 0026).
+    pub async fn send_typing(&self, friend: u64) -> Result<(), Error> {
+        let mut request = send_request(friend, "");
+        request.chat_entry_type = Some(TYPING);
+        self.connection.service_method(request).await?;
+        Ok(())
+    }
+
+    /// Marks the conversation with `friend` as read up to `timestamp` (the
+    /// newest message's server time), so other clients clear their unread
+    /// count. A notification without an answer, like node-steam-user's
+    /// `ackFriendMessage`.
+    pub async fn mark_read(&self, friend: u64, timestamp: u32) -> Result<(), Error> {
+        self.connection
+            .send(Notification(ack_request(friend, timestamp)))
+            .await?;
+        Ok(())
+    }
+
+    /// Conversations with unread messages.
+    pub async fn unread_chats(&self) -> Result<Vec<UnreadChat>, Error> {
+        let response = self.active_sessions().await?;
+        Ok(unread_from(&response))
+    }
+
+    async fn active_sessions(
+        &self,
+    ) -> Result<CFriendsMessages_GetActiveMessageSessions_Response, Error> {
+        // node-steam-user `getActiveFriendMessageSessions` sets no field
+        // without `conversationsSince`.
+        let request = CFriendsMessages_GetActiveMessageSessions_Request::default();
+        Ok(self.connection.service_method(request).await?)
+    }
+
+    /// Incoming messages, the user's own messages from other clients, and
+    /// typing notices, for as long as the connection lasts.
+    pub fn chat_events(&self) -> impl Stream<Item = ChatEvent> + 'static {
         self.connection
             .on_notification::<CFriendMessages_IncomingMessage_Notification>()
-            .filter_map(|notification| async move { notification.ok().and_then(incoming_from) })
+            .filter_map(|notification| async move { notification.ok().and_then(chat_event_from) })
     }
 
     /// Records the recent history with `friend` and the incoming
@@ -138,6 +213,10 @@ impl Session {
             .history(&response)
             .write_to_bytes()
             .map_err(|_| Error::IncompleteResponse("chat history"))?;
+        let sessions = redactor
+            .sessions(&self.active_sessions().await?)
+            .write_to_bytes()
+            .map_err(|_| Error::IncompleteResponse("chat sessions"))?;
         let mut recorded = Vec::new();
         let deadline = tokio::time::Instant::now() + wait;
         while let Ok(Some(notification)) = tokio::time::timeout_at(deadline, incoming.next()).await
@@ -154,6 +233,7 @@ impl Session {
         }
         Ok(ChatRecording {
             history,
+            sessions,
             incoming: recorded,
         })
     }
@@ -169,6 +249,61 @@ fn send_request(friend: u64, text: &str) -> CFriendMessages_SendMessage_Request 
         contains_bbcode: Some(true),
         ..Default::default()
     }
+}
+
+/// The read notice for `FriendMessages.AckMessage#1`: `steamid_partner` and
+/// `timestamp`, as node-steam-user's `ackFriendMessage`.
+fn ack_request(friend: u64, timestamp: u32) -> CFriendMessages_AckMessage_Notification {
+    CFriendMessages_AckMessage_Notification {
+        steamid_partner: Some(friend),
+        timestamp: Some(timestamp),
+        ..Default::default()
+    }
+}
+
+/// A service method sent as a notification: `ServiceMethodCallFromClient`
+/// with the method as target job name and no source job, so Steam sends no
+/// answer. node-steam-user does this when `_sendUnified` gets no callback
+/// (`components/03-messages.js`); steam-vent's own wrapper always waits for
+/// an answer. Only ever sent, so reading keeps steam-vent's default.
+#[derive(Debug)]
+struct Notification<T>(T);
+
+impl<T: ServiceMethodRequest + Send> EncodableMessage for Notification<T> {
+    fn write_body<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
+        self.0
+            .write(&mut writer)
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))
+    }
+
+    fn encode_size(&self) -> usize {
+        ServiceMethodRequest::encode_size(&self.0)
+    }
+
+    fn process_header(&self, header: &mut NetMessageHeader) {
+        header.target_job_name = Some(T::REQ_NAME.into());
+    }
+}
+
+impl<T: ServiceMethodRequest + Send> NetMessage for Notification<T> {
+    type KindEnum = EMsg;
+    const KIND: Self::KindEnum = EMsg::k_EMsgServiceMethodCallFromClient;
+    const IS_PROTOBUF: bool = true;
+}
+
+/// Conversations with unread messages, from the active sessions.
+pub fn unread_from(
+    response: &CFriendsMessages_GetActiveMessageSessions_Response,
+) -> Vec<UnreadChat> {
+    response
+        .message_sessions
+        .iter()
+        .filter_map(|session: &FriendMessageSession| {
+            let count = session.unread_message_count.unwrap_or(0);
+            let friend = individual_steam_id(session.accountid_friend?);
+            (count > 0).then_some(UnreadChat { friend, count })
+        })
+        .collect()
 }
 
 /// History messages, oldest first. `own` is the user's account ID.
@@ -190,6 +325,22 @@ pub fn history_from(
         .collect();
     messages.sort_by_key(|message| (message.timestamp, message.ordinal));
     messages
+}
+
+/// A message or typing notice, or `None` for other entry types and for the
+/// user's own typing in another client.
+pub fn chat_event_from(
+    notification: CFriendMessages_IncomingMessage_Notification,
+) -> Option<ChatEvent> {
+    if notification.chat_entry_type == Some(TYPING) {
+        if notification.local_echo.unwrap_or(false) {
+            return None;
+        }
+        return Some(ChatEvent::Typing {
+            friend: notification.steamid_friend?,
+        });
+    }
+    incoming_from(notification).map(ChatEvent::Message)
 }
 
 /// A received chat message, or `None` for typing notices and other entry
@@ -277,6 +428,28 @@ impl ChatRedactor {
             });
         }
         redacted
+    }
+
+    /// Keeps only the friend (as placeholder) and the counts and times.
+    fn sessions(
+        &self,
+        response: &CFriendsMessages_GetActiveMessageSessions_Response,
+    ) -> CFriendsMessages_GetActiveMessageSessions_Response {
+        CFriendsMessages_GetActiveMessageSessions_Response {
+            timestamp: response.timestamp,
+            message_sessions: response
+                .message_sessions
+                .iter()
+                .map(|session| FriendMessageSession {
+                    accountid_friend: session.accountid_friend.map(|a| self.account(a)),
+                    last_message: session.last_message,
+                    last_view: session.last_view,
+                    unread_message_count: session.unread_message_count,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
 
     fn incoming(
@@ -375,6 +548,69 @@ mod tests {
     }
 
     #[test]
+    fn typing_is_sent_as_an_empty_typing_entry() {
+        let mut request = send_request(FRIEND, "");
+        request.chat_entry_type = Some(super::TYPING);
+        assert_eq!(request.chat_entry_type, Some(2));
+        assert_eq!(request.message.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn typing_notices_become_events_but_not_own_ones() {
+        assert_eq!(
+            chat_event_from(incoming(2, "", false)),
+            Some(ChatEvent::Typing { friend: FRIEND })
+        );
+        assert_eq!(chat_event_from(incoming(2, "", true)), None, "own typing");
+        assert!(matches!(
+            chat_event_from(incoming(1, "hi", false)),
+            Some(ChatEvent::Message(_))
+        ));
+        assert_eq!(chat_event_from(incoming(6, "", false)), None, "left");
+    }
+
+    #[test]
+    fn read_notices_are_sent_without_a_job() {
+        let notification = Notification(ack_request(FRIEND, 1_700_000_100));
+        let mut header = NetMessageHeader::default();
+        notification.process_header(&mut header);
+        assert_eq!(
+            header.target_job_name.as_deref(),
+            Some("FriendMessages.AckMessage#1")
+        );
+        assert_eq!(
+            <Notification<CFriendMessages_AckMessage_Notification> as NetMessage>::KIND,
+            EMsg::k_EMsgServiceMethodCallFromClient
+        );
+        let mut body = Vec::new();
+        notification.write_body(&mut body).unwrap();
+        assert_eq!(body.len(), notification.encode_size());
+        let decoded = CFriendMessages_AckMessage_Notification::parse_from_bytes(&body).unwrap();
+        assert_eq!(decoded.steamid_partner, Some(FRIEND));
+        assert_eq!(decoded.timestamp, Some(1_700_000_100));
+    }
+
+    #[test]
+    fn unread_counts_skip_read_conversations() {
+        let session = |account, unread| FriendMessageSession {
+            accountid_friend: Some(account),
+            unread_message_count: Some(unread),
+            ..Default::default()
+        };
+        let response = CFriendsMessages_GetActiveMessageSessions_Response {
+            message_sessions: vec![session(2001, 3), session(2002, 0)],
+            ..Default::default()
+        };
+        assert_eq!(
+            unread_from(&response),
+            [UnreadChat {
+                friend: 0x0110_0001_0000_07D1,
+                count: 3
+            }]
+        );
+    }
+
+    #[test]
     fn debug_output_hides_the_text() {
         let message = incoming_from(incoming(1, "secret plans", false)).unwrap();
         assert!(!format!("{message:?}").contains("secret"));
@@ -384,6 +620,7 @@ mod tests {
     const HISTORY: &[u8] = include_bytes!("../tests/data/chat_history.bin");
     const TYPING: &[u8] = include_bytes!("../tests/data/chat_incoming_typing.bin");
     const MESSAGE: &[u8] = include_bytes!("../tests/data/chat_incoming_message.bin");
+    const SESSIONS: &[u8] = include_bytes!("../tests/data/chat_sessions.bin");
 
     /// The friend's placeholder in the recordings (dev universe, account 2).
     const RECORDED_FRIEND: u64 = 0x0410_0001_0000_0002;
@@ -421,6 +658,12 @@ mod tests {
         let typing =
             CFriendMessages_IncomingMessage_Notification::parse_from_bytes(TYPING).unwrap();
         assert_eq!(typing.chat_entry_type, Some(2), "a typing notice");
+        assert_eq!(
+            chat_event_from(typing.clone()),
+            Some(ChatEvent::Typing {
+                friend: RECORDED_FRIEND
+            })
+        );
         assert!(incoming_from(typing).is_none());
 
         let message =
@@ -430,6 +673,43 @@ mod tests {
         assert_eq!(message.text, "Message 4");
         assert!(!message.from_me);
         assert!(message.timestamp > 0);
+    }
+
+    #[test]
+    fn replays_recorded_unread_counts() {
+        let response =
+            CFriendsMessages_GetActiveMessageSessions_Response::parse_from_bytes(SESSIONS).unwrap();
+        // Three conversations; only the friend's (account 2) has unread
+        // messages, and the user never viewed it.
+        assert_eq!(response.message_sessions.len(), 3);
+        assert_eq!(response.message_sessions[0].last_view, Some(0));
+        assert_eq!(
+            unread_from(&response),
+            [UnreadChat {
+                friend: individual_steam_id(2),
+                count: 3
+            }]
+        );
+    }
+
+    #[test]
+    fn redaction_keeps_only_counts_and_times_of_sessions() {
+        let redactor = ChatRedactor::new(OWN, account_id(FRIEND));
+        let response = CFriendsMessages_GetActiveMessageSessions_Response {
+            message_sessions: vec![FriendMessageSession {
+                accountid_friend: Some(2001),
+                last_message: Some(100),
+                last_view: Some(90),
+                unread_message_count: Some(1),
+                ..Default::default()
+            }],
+            timestamp: Some(101),
+            ..Default::default()
+        };
+        let redacted = redactor.sessions(&response);
+        assert_eq!(redacted.message_sessions[0].accountid_friend, Some(2));
+        assert_eq!(redacted.message_sessions[0].unread_message_count, Some(1));
+        assert_eq!(redacted.timestamp, Some(101));
     }
 
     #[test]

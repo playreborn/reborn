@@ -13,6 +13,10 @@ All notable changes to Reborn are listed here. The format follows
   (5 s up to 5 minutes). If Steam ended the session because the account
   signed in elsewhere, Reborn waits for your next action instead, so two
   sessions do not keep replacing each other (ADR 0025).
+- **Chat:** see when a friend is typing, and your friend sees when you
+  type. Messages you read in Reborn are marked as read on Steam, so the
+  official client and the phone no longer show them as new. Unread counts
+  from Steam appear in the friends list (ADR 0026).
 
 ### Fixed
 

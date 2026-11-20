@@ -48,6 +48,53 @@ in fixtures.
 - **Verified:** yes (2026-11-20: replies arrived live, a typing notice came
   first; fixtures `chat_incoming_typing.bin`, `chat_incoming_message.bin`).
 
+### Typing
+
+- **Sending:** `FriendMessages.SendMessage#1` with `steamid`,
+  `chat_entry_type` 2 (Typing), `message` empty, `contains_bbcode` true.
+  Reborn sends at most one per friend every 10 seconds (ADR 0026).
+- **Receiving:** `FriendMessagesClient.IncomingMessage#1` with type 2 and
+  an empty message; `local_echo` is the user typing in another client.
+  There is no "stopped typing".
+- **Source:** node-steam-user `components/chatroom.js` (`sendFriendTyping`
+  calls `sendFriendMessage` with `chatEntryType` Typing and `''`; the
+  incoming handler maps type 2 to `friendTyping`, no expiry).
+- **Verified:** yes (2026-11-20, both test accounts: typing in Reborn
+  showed in the official client and the other way round; no flicker
+  during 30 seconds of typing. In a recording, the official client sent a
+  notice when typing started and again after each sent message).
+  Fixture `chat_incoming_typing.bin`.
+
+### Read markers
+
+- **Method:** `FriendMessages.AckMessage#1`,
+  `CFriendMessages_AckMessage_Notification` with `steamid_partner` (the
+  friend) and `timestamp` (server time of the newest message read). Sent
+  as `ServiceMethodCallFromClient` with the method as `target_job_name`
+  and no source job; Steam does not answer.
+- **Source:** node-steam-user `components/chatroom.js`
+  (`ackFriendMessage`: these fields, `_sendUnified` without callback) and
+  `components/03-messages.js` (`_sendUnified`: without a callback no
+  source job id).
+- **Verified:** yes (2026-11-20: after opening the conversation in Reborn,
+  the Steam web chat no longer showed it as unread after a reload; the
+  same for a message received while the conversation was open). No
+  fixture: Steam sends no answer.
+
+### Unread counts
+
+- **Method:** `FriendMessages.GetActiveMessageSessions#1`, request without
+  fields; response `message_sessions[]` with `accountid_friend`,
+  `last_message`, `last_view`, `unread_message_count`, and `timestamp`.
+  The friend's SteamID64 is the individual account ID in the public
+  universe.
+- **Source:** node-steam-user `components/chatroom.js`
+  (`getActiveFriendMessageSessions`: `lastmessage_since` only when asked
+  for, these response fields, `SteamID.fromIndividualAccountID`).
+- **Verified:** yes (2026-11-20: three unread messages showed as "3 new"
+  after starting Reborn; fixture `chat_sessions.bin`, where `last_view` is
+  0 for a conversation never viewed).
+
 ### Sessions of the same account
 
 - Signing in with the same account in a second Reborn process (the CLI

@@ -107,6 +107,11 @@ Read-only part of M3 (ADR 0020). Each section names its sources.
   incremental friends list within a second and the GUI showed the friend
   without reloading). The answer to an accepted request and the incremental
   list use the same messages as the recorded fixtures; no separate fixture.
+- **Invite links:** when the other account added the user through the
+  user's friend invite link (steamcommunity.com), Reborn received two
+  incremental lists within 100 ms: RequestInitiator, then Friend (live,
+  2026-11-20, two test accounts that may not send requests). Reborn needs
+  nothing extra for this.
 
 ### Declining: open questions (ADR 0023)
 

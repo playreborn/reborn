@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::widget::{
     Column, button, column, container, pick_list, progress_bar, row, rule, scrollable, space, text,
@@ -25,6 +26,14 @@ pub enum Tab {
     Friends,
     Settings,
 }
+
+/// How long "is typing" stays after a friend's typing notice; Steam sends
+/// no "stopped typing" (ADR 0026).
+const TYPING_SHOWN: Duration = Duration::from_secs(15);
+
+/// Least time between two typing requests to the daemon (it spaces them out
+/// to every 10 seconds per friend anyway).
+const TYPING_RESEND: Duration = Duration::from_secs(10);
 
 /// Label of the automatic Proton choice in the settings.
 const AUTOMATIC_PROTON: &str = "Automatic (newest installed)";
@@ -139,6 +148,11 @@ pub enum Message {
     ChatInput(ChatText),
     SendChat,
     ChatSent(Result<Response, String>),
+    UnreadLoaded(Result<Response, String>),
+    /// Answer to a typing or read notice; failures only matter in the log.
+    ChatNoticeDone(Result<Response, String>),
+    /// A typing notice may have run out.
+    TypingExpired(String),
     FriendActionDone(Result<Response, String>),
     LibraryInput(String),
     SaveLibrary,
@@ -187,6 +201,10 @@ pub struct App {
     unread: HashMap<String, usize>,
     chat_input: String,
     sending_chat: bool,
+    /// When each friend's last typing notice arrived.
+    typing: HashMap<String, Instant>,
+    /// The friend and time of the last typing notice sent.
+    typing_sent: Option<(String, Instant)>,
 }
 
 impl App {
@@ -222,6 +240,8 @@ impl App {
             unread: HashMap::new(),
             chat_input: String::new(),
             sending_chat: false,
+            typing: HashMap::new(),
+            typing_sent: None,
         };
         (
             app,
@@ -380,7 +400,7 @@ impl App {
                 self.unread.remove(&steam_id);
                 self.chat_with = Some(steam_id.clone());
                 if self.chats.contains_key(&steam_id) {
-                    return Task::none();
+                    return self.mark_read(&steam_id);
                 }
                 self.send(Request::ChatHistory { steam_id }, Message::ChatLoaded)
             }
@@ -396,7 +416,10 @@ impl App {
                         for message in self.chats.remove(&steam_id).unwrap_or_default() {
                             add_chat_message(&mut all, message);
                         }
-                        self.chats.insert(steam_id, all);
+                        self.chats.insert(steam_id.clone(), all);
+                        if self.chat_with.as_deref() == Some(steam_id.as_str()) {
+                            return self.mark_read(&steam_id);
+                        }
                     }
                     Ok(_) => {}
                     Err(error) => self.notice = Some(format!("Chat: {error}")),
@@ -405,6 +428,47 @@ impl App {
             }
             Message::ChatInput(text) => {
                 self.chat_input = text.as_str().to_owned();
+                let Some(steam_id) = self.chat_with.clone() else {
+                    return Task::none();
+                };
+                if self.chat_input.trim().is_empty() {
+                    return Task::none();
+                }
+                // The daemon spaces notices out too; this saves requests.
+                let now = Instant::now();
+                let due = self.typing_sent.as_ref().is_none_or(|(friend, at)| {
+                    *friend != steam_id || now.duration_since(*at) >= TYPING_RESEND
+                });
+                if !due {
+                    return Task::none();
+                }
+                self.typing_sent = Some((steam_id.clone(), now));
+                self.send(Request::SendTyping { steam_id }, Message::ChatNoticeDone)
+            }
+            Message::UnreadLoaded(result) => {
+                if let Ok(Response::UnreadChats { chats }) = result {
+                    self.unread = chats
+                        .into_iter()
+                        .filter(|chat| self.chat_with.as_deref() != Some(chat.steam_id.as_str()))
+                        .map(|chat| (chat.steam_id, chat.count as usize))
+                        .collect();
+                }
+                Task::none()
+            }
+            Message::ChatNoticeDone(result) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "chat notice failed");
+                }
+                Task::none()
+            }
+            Message::TypingExpired(steam_id) => {
+                if self
+                    .typing
+                    .get(&steam_id)
+                    .is_some_and(|at| at.elapsed() >= TYPING_SHOWN)
+                {
+                    self.typing.remove(&steam_id);
+                }
                 Task::none()
             }
             Message::SendChat => {
@@ -448,7 +512,10 @@ impl App {
             }
             Message::FriendsLoaded(result) => {
                 match result {
-                    Ok(Response::Friends { friends }) => self.friends = Some(friends),
+                    Ok(Response::Friends { friends }) => {
+                        self.friends = Some(friends);
+                        return self.send(Request::UnreadChats, Message::UnreadLoaded);
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         self.friends = Some(Vec::new());
@@ -684,6 +751,20 @@ impl App {
         )
     }
 
+    /// Tells Steam the open conversation is read up to its newest message.
+    fn mark_read(&self, steam_id: &str) -> Task<Message> {
+        let Some(newest) = self.chats.get(steam_id).and_then(|chat| chat.last()) else {
+            return Task::none();
+        };
+        self.send(
+            Request::MarkChatRead {
+                steam_id: steam_id.to_owned(),
+                timestamp: newest.timestamp,
+            },
+            Message::ChatNoticeDone,
+        )
+    }
+
     /// Sends a request if connected.
     fn send(
         &self,
@@ -769,20 +850,36 @@ impl App {
                 self.chat_with = None;
                 self.chats.clear();
                 self.unread.clear();
+                self.typing.clear();
+                self.typing_sent = None;
                 self.sign_in = SignIn::Form;
                 self.send(Request::Status, Message::StatusLoaded)
             }
             Event::ChatMessage { message } => {
-                let open = self.chat_with.as_deref() == Some(message.steam_id.as_str());
-                if !open && !message.from_me {
-                    *self.unread.entry(message.steam_id.clone()).or_default() += 1;
+                let steam_id = message.steam_id.clone();
+                let open = self.chat_with.as_deref() == Some(steam_id.as_str());
+                if !message.from_me {
+                    // The message ends the friend's typing.
+                    self.typing.remove(&steam_id);
+                    if !open {
+                        *self.unread.entry(steam_id.clone()).or_default() += 1;
+                    }
                 }
                 // Loaded conversations get the message; others load their
                 // history (which contains it) when opened.
-                if let Some(chat) = self.chats.get_mut(&message.steam_id) {
+                if let Some(chat) = self.chats.get_mut(&steam_id) {
                     add_chat_message(chat, message);
+                    if open {
+                        return self.mark_read(&steam_id);
+                    }
                 }
                 Task::none()
+            }
+            Event::FriendTyping { steam_id } => {
+                self.typing.insert(steam_id.clone(), Instant::now());
+                Task::perform(tokio::time::sleep(TYPING_SHOWN), move |()| {
+                    Message::TypingExpired(steam_id.clone())
+                })
             }
             Event::FriendRemoved { steam_id } => {
                 if let Some(friends) = &mut self.friends {
@@ -1211,6 +1308,16 @@ impl App {
             }
         };
 
+        let typing: Element<'_, Message> = if self
+            .typing
+            .get(steam_id)
+            .is_some_and(|at| at.elapsed() < TYPING_SHOWN)
+        {
+            text(format!("{name} is typing ...")).size(12).into()
+        } else {
+            space().height(12).into()
+        };
+
         let can_send = !self.chat_input.trim().is_empty() && !self.sending_chat;
         let input = row![
             text_input("Write a message", &self.chat_input)
@@ -1226,7 +1333,7 @@ impl App {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        column![header, body, input].spacing(12).into()
+        column![header, body, typing, input].spacing(8).into()
     }
 
     fn settings_view(&self) -> Element<'_, Message> {

@@ -59,13 +59,11 @@ Option 2.
 ## Consequences
 
 - Live test 2026-11-20 (Bongo Cat, test account, official client running
-  with the same account): installing, starting and exiting work, but
-  opening an in-game chest (Steam Inventory) failed with "check your Steam
-  connection". Started from the official client, the same action worked.
-  The cause is not verified yet. A likely candidate is that the official
-  client tells Steam which game is being played only for games it started
-  itself; Reborn does not report "playing" yet. Investigating this comes
-  before Release 0.1.
+  with the same account): installing, starting and exiting work; Steam
+  shows the account as playing the game, also to friends. Opening an
+  in-game chest (Steam Inventory) failed once with "check your Steam
+  connection" and worked on the next start through Reborn, so the first
+  failure looks like a temporary Steam-side error.
 - Games that hand over to a launcher look "exited" when the first process
   ends. Job Objects (Windows) and process groups (Linux) can follow.
 - Install scripts (redistributables such as DirectX or VC++) are not run

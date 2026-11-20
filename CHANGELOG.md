@@ -28,8 +28,10 @@ All notable changes to Reborn are listed here. The format follows
 - `reborn-cli cloud <app_id>` lists the files a game keeps in your Steam
   Cloud, and `--download <folder>` copies them into a folder of your
   choice, checked against Steam's SHA-1. Existing files are never
-  overwritten. First steps towards syncing saves; nothing is uploaded or
-  deleted (ADR 0031, ADR 0032).
+  overwritten. `--compare` shows where each file belongs on this computer
+  and whether your local copy is the same, differs or is missing, plus
+  local saves that are not in the cloud yet. First steps towards syncing
+  saves; nothing is uploaded or deleted (ADR 0031, ADR 0032, ADR 0033).
 
 ### Changed
 

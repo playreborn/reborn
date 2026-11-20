@@ -1,5 +1,6 @@
 //! Operating system integration for Reborn.
 //!
+//! - [`cloud_roots`]: where the Steam Cloud roots of Auto-Cloud games are.
 //! - [`proton`]: finding Proton builds on Linux and building the command
 //!   line that runs a Windows program through one (nothing is spawned).
 //! - [`secrets`]: refresh tokens and Steam Guard data in the OS credential
@@ -16,6 +17,7 @@
 //! `// SAFETY:` comment and must be reviewed by a human.
 #![deny(unsafe_code)]
 
+pub mod cloud_roots;
 pub mod proton;
 pub mod secrets;
 pub mod settings;

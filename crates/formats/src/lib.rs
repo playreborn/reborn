@@ -4,6 +4,7 @@
 //! - [`binary`]: binary KeyValues (PICS package info, `appinfo.vdf` entries), reading.
 //! - [`AppManifest`]: typed read access to `steamapps/appmanifest_<appid>.acf`.
 //! - [`LibraryFolders`]: typed read access to `steamapps/libraryfolders.vdf`.
+//! - [`mod@cloud_config`]: the Steam Cloud settings (`ufs`) of an app info document.
 //!
 //! ```
 //! use reborn_formats::{AppManifest, vdf};
@@ -25,11 +26,13 @@
 
 pub mod app_manifest;
 pub mod binary;
+pub mod cloud_config;
 mod fields;
 pub mod library_folders;
 pub mod vdf;
 
 pub use app_manifest::{AppManifest, InstalledDepot, NewAppManifest};
+pub use cloud_config::{CloudConfig, RootOverride, SaveFileRule, cloud_config};
 pub use library_folders::{LibraryApp, LibraryFolder, LibraryFolders};
 
 /// Error returned by the typed readers ([`AppManifest`], [`LibraryFolders`]).

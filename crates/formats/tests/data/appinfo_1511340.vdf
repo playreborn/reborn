@@ -1,0 +1,216 @@
+"appinfo"
+{
+	"appid"		"1511340"
+	"common"
+	{
+		"name"		"Defender of Kuiper Belt Demo"
+		"type"		"Demo"
+		"parent"		"1505520"
+		"releasestate"		"released"
+		"oslist"		"windows"
+		"osarch"		""
+		"osextended"		""
+		"logo"		"e13378f0a3a4966a0e0ee6c5eea1fe03a04127b2"
+		"logo_small"		"e13378f0a3a4966a0e0ee6c5eea1fe03a04127b2_thumb"
+		"icon"		"b3c516b17cc5aacb186d335ad7c90359f0efa170"
+		"clienttga"		"3d0c6852d6d7be581f5cb8a5595aee63f385128f"
+		"clienticon"		"bd1274e53013076b975c89268b1ad368985e63dc"
+		"clienticns"		"f536a17aaa0d051d4efb0f5b7d3f1d59f8a321d9"
+		"linuxclienticon"		"3448338be5d1cf90d75d9ec718e35777b7b7e95e"
+		"restricted_countries"		"DE"
+		"small_capsule"
+		{
+			"english"		"capsule_231x87.jpg"
+		}
+		"header_image"
+		{
+			"english"		"header.jpg"
+		}
+		"library_assets"
+		{
+			"library_capsule"		"en"
+			"library_hero"		"en"
+			"library_logo"		"en"
+			"logo_position"
+			{
+				"pinned_position"		"BottomCenter"
+				"width_pct"		"51.11421799104761"
+				"height_pct"		"70.22754651428338"
+			}
+		}
+		"library_assets_full"
+		{
+			"library_capsule"
+			{
+				"image"
+				{
+					"english"		"library_600x900.jpg"
+				}
+				"image2x"
+				{
+					"english"		"library_600x900_2x.jpg"
+				}
+			}
+			"library_hero"
+			{
+				"image"
+				{
+					"english"		"library_hero.jpg"
+				}
+				"image2x"
+				{
+					"english"		"library_hero_2x.jpg"
+				}
+			}
+			"library_logo"
+			{
+				"image"
+				{
+					"english"		"logo.png"
+				}
+				"image2x"
+				{
+					"english"		"logo_2x.png"
+				}
+				"logo_position"
+				{
+					"pinned_position"		"BottomCenter"
+					"width_pct"		"51.11421799104761"
+					"height_pct"		"70.22754651428338"
+				}
+			}
+		}
+		"store_asset_mtime"		"1609254960"
+		"associations"
+		{
+			"0"
+			{
+				"type"		"developer"
+				"name"		"Cascus Harmony Games"
+			}
+			"1"
+			{
+				"type"		"publisher"
+				"name"		"Cascus Harmony Games"
+			}
+		}
+		"primary_genre"		"0"
+		"category"
+		{
+			"category_2"		"1"
+			"category_22"		"1"
+			"category_23"		"1"
+			"category_25"		"1"
+		}
+		"supported_languages"
+		{
+			"english"
+			{
+				"supported"		"true"
+			}
+		}
+		"steam_release_date"		"1611122844"
+		"gameid"		"1511340"
+		"exfgls"		"6"
+	}
+	"extended"
+	{
+		"demoofappid"		"1505520"
+		"developer"		"Cascus Harmony Games"
+		"publisher"		"Cascus Harmony Games"
+	}
+	"config"
+	{
+		"installdir"		"Defender of Kuiper Belt Demo"
+		"launch"
+		{
+			"0"
+			{
+				"executable"		"Defender of Kuiper Belt.exe"
+				"type"		"default"
+				"config"
+				{
+					"oslist"		"windows"
+				}
+			}
+		}
+	}
+	"depots"
+	{
+		"1511341"
+		{
+			"config"
+			{
+				"language"		""
+			}
+			"manifests"
+			{
+				"public"
+				{
+					"gid"		"6357341988727540243"
+					"size"		"485132609"
+					"download"		"69964960"
+				}
+			}
+		}
+		"branches"
+		{
+			"public"
+			{
+				"buildid"		"7908009"
+				"timeupdated"		"1639859449"
+				"timebuildupdated"		"1639859384"
+			}
+		}
+	}
+	"ufs"
+	{
+		"quota"		"600000"
+		"maxnumfiles"		"50"
+		"appidredirect"		"1505520"
+		"savefiles"
+		{
+			"0"
+			{
+				"root"		"WinAppDataLocalLow"
+				"path"		"Cascus Harmony Games/Defender of Kuiper Belt/{64BitSteamID}/"
+				"pattern"		"*"
+				"recursive"		"1"
+			}
+			"copied_from_parent"		"1"
+		}
+		"rootoverrides"
+		{
+			"0"
+			{
+				"root"		"WinAppDataLocalLow"
+				"os"		"MacOS"
+				"oscompare"		"="
+				"useinstead"		"MacHome"
+				"pathtransforms"
+				{
+					"0"
+					{
+						"find"		"Cascus Harmony Games/Defender of Kuiper Belt"
+						"replace"		"unity.Cascus Harmony Games.Defender of Kuiper Belt"
+					}
+				}
+			}
+			"1"
+			{
+				"root"		"WinAppDataLocalLow"
+				"os"		"Linux"
+				"oscompare"		"="
+				"useinstead"		"LinuxHome"
+				"pathtransforms"
+				{
+					"0"
+					{
+						"find"		"Cascus Harmony Games/Defender of Kuiper Belt"
+						"replace"		".config/unity3d/Cascus Harmony Games/Defender of Kuiper Belt"
+					}
+				}
+			}
+		}
+	}
+}

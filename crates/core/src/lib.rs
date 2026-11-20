@@ -1,6 +1,7 @@
 //! Reborn domain logic, shared by `reborn-cli`, `rebornd` and the GUI.
 //!
 //! - [`account`]: signing in (password + Steam Guard, stored token), signing out.
+//! - [`cloud`]: comparing an app's Steam Cloud files with the local ones (reading only).
 //! - [`compat`]: the compatibility database in `compat/` (tiers 0-5 per app and platform).
 //! - [`install`]: installing, updating and verifying apps in a library.
 //! - [`launch`]: starting installed games.
@@ -13,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account;
+pub mod cloud;
 pub mod compat;
 mod error;
 pub mod install;

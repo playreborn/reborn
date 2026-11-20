@@ -105,8 +105,13 @@ enum Command {
         /// Download all files into this folder (ADR 0032): verified against
         /// Steam's SHA-1, existing files are never overwritten. Use a folder
         /// of your own, not the game's save folder.
-        #[arg(long, conflicts_with = "record")]
+        #[arg(long, conflicts_with_all = ["record", "compare"])]
         download: Option<PathBuf>,
+        /// Compare the files with the ones on this computer (ADR 0033):
+        /// where each belongs, and whether it is the same, differs or is
+        /// missing. Only reads.
+        #[arg(long, conflicts_with = "record")]
+        compare: bool,
         /// Instead, record Steam's answer as a redacted fixture into this
         /// folder.
         #[arg(long)]
@@ -243,10 +248,12 @@ async fn main() -> Result<()> {
         Command::Cloud {
             app_id,
             download,
+            compare,
             record,
             account,
         } => match download {
             Some(folder) => cloud_download(account, app_id, &folder).await,
+            None if compare => cloud_compare(account, app_id).await,
             None => cloud(account, app_id, record.as_deref()).await,
         },
         Command::Depots {
@@ -516,6 +523,52 @@ async fn cloud(account: Option<String>, app_id: u32, record: Option<&Path>) -> R
             human_size(u64::from(file.size)),
             file.platforms.join(",")
         );
+    }
+    Ok(())
+}
+
+/// Compares an app's cloud files with this computer (ADR 0033).
+async fn cloud_compare(account: Option<String>, app_id: u32) -> Result<()> {
+    use reborn_core::cloud::{CloudState, compare_app_cloud};
+
+    let session = account::sign_in(account).await?;
+    let report = compare_app_cloud(&session, app_id, None).await?;
+    if !report.has_cloud {
+        println!("App {app_id} does not use Steam Cloud.");
+    } else if !report.auto_cloud {
+        println!("App {app_id} saves through the Steam interface (no Auto-Cloud rules).");
+    }
+    for file in &report.files {
+        let local = file
+            .local
+            .as_ref()
+            .map(|path| format!(" ({})", path.display()))
+            .unwrap_or_default();
+        let state = match &file.state {
+            CloudState::Same => "same".to_owned(),
+            CloudState::MissingLocally => "missing locally".to_owned(),
+            CloudState::Differs {
+                local_modified,
+                cloud_modified,
+            } => {
+                let local_time = local_modified
+                    .and_then(|time| u32::try_from(time).ok())
+                    .map(utc_time)
+                    .unwrap_or_else(|| "?".to_owned());
+                let cloud_time = u32::try_from(*cloud_modified)
+                    .map(utc_time)
+                    .unwrap_or_else(|_| cloud_modified.to_string());
+                format!("differs (local {local_time}, cloud {cloud_time})")
+            }
+            CloudState::NotMapped(reason) => format!("not mapped: {reason}"),
+        };
+        println!("{}: {state}{local}", file.name);
+    }
+    if report.files.is_empty() {
+        println!("No files in Steam Cloud.");
+    }
+    for path in &report.local_only {
+        println!("only local: {}", path.display());
     }
     Ok(())
 }

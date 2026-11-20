@@ -57,6 +57,29 @@ response types are in steam-vent-proto-steam
   fixture: the body is the user's file itself, and the listing that
   carries size and SHA-1 has one (`cloud_files.bin`).
 
+### Map a file to a local path
+
+- **What:** Where an Auto-Cloud file belongs on this computer (ADR 0033).
+- **How:** split the name into the root token and the rest; check the
+  rest like an install path; look up the root's folder; join. A root
+  with an override for this system, a Windows root on Linux and names
+  without a token are reported, not guessed.
+- **Roots:** Valve's Steam Cloud documentation (Windows: Documents,
+  `AppData\Local`, `AppData\LocalLow`, `AppData\Roaming`, `Saved Games`;
+  Linux: home, XDG data folder); `LinuxXdgConfigHome` from recorded app
+  info, with the XDG default.
+- **Local files not in the cloud:** files below a rule's root and path
+  (with `{64BitSteamID}` and `{Steam3AccountID}` filled in) that match its
+  `*` pattern, recursive if the rule says so.
+- **Verified:** partly (2026-11-20, first test account, Windows): app
+  5191630 mapped to
+  `AppData\LocalLow\Studio312\Coin Maker Simulator Demo\save_slot_demo_1.json`
+  and reported "same"; the log files and `steam_autocloud.vdf` in that
+  folder were not listed as local only; a hand-made
+  `save_slot_demo_2.json` was listed as local only; app 2143030 reported
+  both files as saved through the Steam interface. "Differs", "missing
+  locally" and Linux are covered by unit tests only.
+
 ## Known, not implemented
 
 ### Download through `Cloud.ClientFileDownload`

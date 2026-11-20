@@ -3797,6 +3797,7 @@ dependencies = [
  "reborn-formats",
  "reborn-platform",
  "serde",
+ "sha1",
  "thiserror 2.0.21",
  "toml",
  "tracing",

@@ -127,4 +127,6 @@ See ADR 0013.
   DepotDownloader only marks flagged files (`ContentDownloader.cs`, around
   the `EDepotFileFlag.Executable` check), so it is not followed here.
 - **Verified:** observation of the official client as above; Reborn's
-  behaviour is covered by a Unix-only test. Live test of the fix pending.
+  behaviour is covered by a Unix-only test. Live (2026-11-20, same VM):
+  after Verify, Reborn's install of app 3419430 starts natively through
+  `launch.sh`, and the in-game Steam Inventory works.

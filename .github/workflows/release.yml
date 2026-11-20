@@ -1,0 +1,95 @@
+name: Release
+
+# Builds the apps for Windows and Linux when a version tag (v0.1.0, ...) is
+# pushed and creates a DRAFT release with the archives. A maintainer reviews
+# the draft and publishes it by hand; nothing is published automatically.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # The oldest supported Ubuntu runner, so the binaries need an older
+          # glibc and run on more distributions.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GUI build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev libvulkan-dev libdbus-1-dev
+      - run: cargo build --release --locked -p reborn -p rebornd -p reborn-cli
+      - name: Package
+        shell: bash
+        run: |
+          name="reborn-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          ext=""
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          for bin in reborn rebornd reborn-cli; do
+            cp "target/release/${bin}${ext}" "$name/"
+          done
+          cp README.md CHANGELOG.md LICENSE-GPL LICENSE-MIT LICENSE-APACHE "$name/"
+          mkdir dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "dist/${name}.zip" "$name" > /dev/null
+          else
+            tar czf "dist/${name}.tar.gz" "$name"
+          fi
+          cd dist && for file in *; do sha256sum "$file" > "${file}.sha256"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  draft:
+    name: draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "[" v "]")) { found = 1; next } }
+            found && !/^\[[^]]+\]: / { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --draft --verify-tag \
+            --title "Reborn $GITHUB_REF_NAME" \
+            --notes-file notes.md

@@ -505,7 +505,7 @@ Grundsatz: **das Riskanteste zuerst.** Jeder Meilenstein endet mit etwas, das ma
 - Linux: Proton-Verwaltung und -Start.
 - Kompatibilitätsdatenbank und Report-Vorlage.
 
-**Fertig, wenn:** Ein Nutzer ohne Kommandozeile Spiele installieren, aktualisieren und starten kann, auf Windows und Linux.
+**Fertig, wenn:** Ein Nutzer ohne Kommandozeile Spiele installieren, aktualisieren und starten kann, auf Windows und Linux. (Erreicht und live geprüft am 2026-11-20; Release 0.1 vorbereitet: `CHANGELOG.md`, Release-Workflow `.github/workflows/release.yml`, der bei einem Tag `v*` einen Entwurf mit Programmen für Windows und Linux anlegt.)
 
 Etappen (Stand 2026-11-19):
 

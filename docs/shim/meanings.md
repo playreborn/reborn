@@ -582,8 +582,10 @@ fix were committed):
   eight runs.
 
 Answer mode for `GetAppID` matched experiment 5 in both games, which
-with Plant Therapy in experiment 4 makes three games. Under ADR 0044 the
-result counts once the maintainer gives the OK.
+with Plant Therapy in experiment 4 makes three games. The maintainer
+gave the OK on 2026-11-21 (ADR 0044): answering `GetAppID` at position 9
+of `SteamUtils010` with the app ID Reborn started the game with is
+confirmed for the shim.
 
 ### `SteamUtils010` position 14: not known
 

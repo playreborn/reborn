@@ -25,6 +25,10 @@ enum Command {
         /// The built proxy DLL.
         #[arg(long)]
         proxy: PathBuf,
+        /// Hand out no stand-in objects: only read, as in step 3a
+        /// (ADR 0040). Use it if the game misbehaves with stand-ins.
+        #[arg(long)]
+        read_only: bool,
     },
     /// Put the saved SteamClientDll64 back (only if it still points to the
     /// proxy). Safe to run any number of times.
@@ -58,8 +62,11 @@ fn run(command: Command) -> Result<()> {
                 println!("The value points to the proxy.");
             }
         }
-        Command::Arm { proxy } => {
-            let target = session.arm(&store, &proxy)?;
+        Command::Arm { proxy, read_only } => {
+            let target = session.arm(&store, &proxy, read_only)?;
+            if read_only {
+                println!("Read only: the proxy hands out no stand-in objects.");
+            }
             println!(
                 "Armed: SteamClientDll64 now points to {}.",
                 target.display()

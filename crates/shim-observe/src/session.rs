@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 pub(crate) const SAVED: &str = "original-steamclient64.txt";
 /// Name of the proxy's copy in Reborn's folder.
 const PROXY: &str = "steamclient64.dll";
+/// Name of the file next to the proxy that turns its stand-in objects off
+/// (ADR 0040, step 3b); the proxy then only reads, as in step 3a.
+pub const READ_ONLY_MARKER: &str = "read-only";
 
 /// The one registry value a session changes.
 pub trait ValueStore {
@@ -110,10 +113,16 @@ impl Session {
     }
 
     /// Saves the current value, copies `proxy` to Reborn's folder and
-    /// points the value at the copy. Refuses without changing anything if
-    /// a session is armed, the value is missing, or it already points into
-    /// Reborn's folder.
-    pub fn arm(&self, store: &dyn ValueStore, proxy: &Path) -> Result<PathBuf, ObserveError> {
+    /// points the value at the copy. With `read_only`, the proxy hands out
+    /// no stand-in objects. Refuses without changing anything if a session
+    /// is armed, the value is missing, or it already points into Reborn's
+    /// folder.
+    pub fn arm(
+        &self,
+        store: &dyn ValueStore,
+        proxy: &Path,
+        read_only: bool,
+    ) -> Result<PathBuf, ObserveError> {
         if self.saved_path().exists() {
             return Err(ObserveError::AlreadyArmed);
         }
@@ -131,6 +140,12 @@ impl Session {
         std::fs::create_dir_all(&self.dir).map_err(io_error("creating Reborn's folder"))?;
         let target = self.proxy_path();
         std::fs::copy(proxy, &target).map_err(io_error("copying the proxy"))?;
+        let marker = self.dir.join(READ_ONLY_MARKER);
+        if read_only {
+            std::fs::write(&marker, b"").map_err(io_error("writing the read-only marker"))?;
+        } else if marker.exists() {
+            std::fs::remove_file(&marker).map_err(io_error("removing the read-only marker"))?;
+        }
         // Saved before the value changes, so `disarm` can always restore.
         let temporary = self.dir.join(format!("{SAVED}.part"));
         std::fs::write(&temporary, &current).map_err(io_error("saving the old value"))?;
@@ -165,6 +180,7 @@ impl Session {
         std::fs::remove_file(self.saved_path()).map_err(io_error("removing the saved value"))?;
         // The copy may still be loaded by a running game; it is harmless.
         let _ = std::fs::remove_file(self.proxy_path());
+        let _ = std::fs::remove_file(self.dir.join(READ_ONLY_MARKER));
         Ok(outcome)
     }
 
@@ -271,7 +287,7 @@ mod tests {
         let temp = TempDir::new("cycle");
         let session = Session::new(temp.0.join("shim-observe"));
         let store = FakeStore::with(OFFICIAL);
-        let target = session.arm(&store, &temp.proxy())?;
+        let target = session.arm(&store, &temp.proxy(), false)?;
         assert_eq!(target, session.proxy_path());
         assert!(target.is_file(), "proxy copied");
         let status = session.status(&store)?;
@@ -294,10 +310,10 @@ mod tests {
         let temp = TempDir::new("twice");
         let session = Session::new(temp.0.join("shim-observe"));
         let store = FakeStore::with(OFFICIAL);
-        session.arm(&store, &temp.proxy())?;
+        session.arm(&store, &temp.proxy(), false)?;
         let before = store.get().ok().flatten();
         assert!(matches!(
-            session.arm(&store, &temp.proxy()),
+            session.arm(&store, &temp.proxy(), false),
             Err(ObserveError::AlreadyArmed)
         ));
         assert_eq!(store.get().ok().flatten(), before);
@@ -310,12 +326,12 @@ mod tests {
         let session = Session::new(temp.0.join("shim-observe"));
         let empty = FakeStore::default();
         assert!(matches!(
-            session.arm(&empty, &temp.proxy()),
+            session.arm(&empty, &temp.proxy(), false),
             Err(ObserveError::NoValue)
         ));
         let store = FakeStore::with(OFFICIAL);
         assert!(matches!(
-            session.arm(&store, &temp.0.join("missing.dll")),
+            session.arm(&store, &temp.0.join("missing.dll"), false),
             Err(ObserveError::NoProxy(_))
         ));
         assert_eq!(store.get().ok().flatten().as_deref(), Some(OFFICIAL));
@@ -329,7 +345,7 @@ mod tests {
         let inside = session.proxy_path().to_string_lossy().to_uppercase();
         let store = FakeStore::with(&inside);
         assert!(matches!(
-            session.arm(&store, &temp.proxy()),
+            session.arm(&store, &temp.proxy(), false),
             Err(ObserveError::PointsToReborn(_))
         ));
     }
@@ -343,7 +359,7 @@ mod tests {
             fail_set: true,
         };
         assert!(matches!(
-            session.arm(&store, &temp.proxy()),
+            session.arm(&store, &temp.proxy(), false),
             Err(ObserveError::Io { .. })
         ));
         assert!(!session.saved_path().exists());
@@ -355,7 +371,7 @@ mod tests {
         let temp = TempDir::new("changed");
         let session = Session::new(temp.0.join("shim-observe"));
         let store = FakeStore::with(OFFICIAL);
-        session.arm(&store, &temp.proxy())?;
+        session.arm(&store, &temp.proxy(), false)?;
         // The official client wrote its value again in the meantime.
         let other = r"D:\Steam\steamclient64.dll";
         store.set(other).ok();
@@ -368,6 +384,24 @@ mod tests {
         );
         assert_eq!(store.get().ok().flatten().as_deref(), Some(other));
         assert_eq!(session.status(&store)?.saved, None);
+        Ok(())
+    }
+
+    #[test]
+    fn read_only_writes_a_marker_that_disarm_removes() -> Result<(), ObserveError> {
+        let temp = TempDir::new("read-only");
+        let dir = temp.0.join("shim-observe");
+        let session = Session::new(&dir);
+        let store = FakeStore::with(OFFICIAL);
+        session.arm(&store, &temp.proxy(), true)?;
+        assert!(dir.join(READ_ONLY_MARKER).exists());
+        session.disarm(&store)?;
+        assert!(!dir.join(READ_ONLY_MARKER).exists());
+        // Arming without it removes a marker left behind.
+        std::fs::write(dir.join(READ_ONLY_MARKER), b"").ok();
+        session.arm(&store, &temp.proxy(), false)?;
+        assert!(!dir.join(READ_ONLY_MARKER).exists());
+        session.disarm(&store)?;
         Ok(())
     }
 

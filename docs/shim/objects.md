@@ -100,3 +100,70 @@ see `README.md` for the format.
   suggest more objects of the same kind) is not observed yet; objects
   returned by these calls are step 3c, which needs its own ADR
   (ADR 0040).
+
+### Windows: calls through objects returned through stand-ins (step 3c)
+
+- **Fact:** With stand-ins also handed out for the results of calls
+  through stand-ins that passed a text and returned the step 3a shape
+  (ADR 0041), the game ran normally to its main menu and exited.
+  - 23 stand-ins were made (room for 32): the two for `CreateInterface`
+    and one for each of the 21 texts passed at position 12 of
+    `SteamClient020` (position 5 with `SteamUser020` got the same
+    stand-in as position 12 with that text). Results were replaced 28
+    times; the same text always got the same stand-in. No result was
+    left as it was for lack of room or table entries.
+  - In every call through these stand-ins `rcx` held the stand-in's
+    address. No other argument register (`rdx`, `r8`, `r9`) of any call,
+    and no register of a call to the exported entry points, held a
+    stand-in's address.
+  - Calls through the new stand-ins, by position (50 means at least 50,
+    since the proxy logs only the first 50 calls of each kind):
+
+    | Object | Positions (calls) |
+    | --- | --- |
+    | `SteamUtils009` | 9 (2), 14 (50) |
+    | `SteamUser020` | 2 (6), 12 (1) |
+    | `SteamFriends017` | 43 (2), 44 (1) |
+    | `SteamInput001` | 2 (50) |
+    | `SteamController007` | 2 (50) |
+    | `STEAMAPPS_INTERFACE_VERSION008` | 7 (1) |
+    | `STEAMINVENTORY_INTERFACE_V003` | 1 (1), 6 (1), 20 (1), 21 (3) |
+    | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 0 (4), 1 (1), 13 (1), 15 (1), 21 (1), 22 (1) |
+    | `STEAMUSERSTATS_INTERFACE_VERSION011` | 0 (1), 4 (2), 6 (50), 10 (3) |
+
+    The other 13 objects (among them `SteamClient017`) got no calls.
+  - Calls that passed texts: `STEAMREMOTESTORAGE_INTERFACE_VERSION014`
+    positions 0, 1, 13 and 15 with the game's save file names in `rdx`
+    (`MainPlayerData.json`, once `BackUp_MainPlayerData.json` at
+    position 0); `STEAMUSERSTATS_INTERFACE_VERSION011` position 4 with
+    `PrestigeLevel` and `SingleRunDamage`, position 6 with
+    `Keep_PotionEffect` in `rdx`; `SteamFriends017` position 43 with
+    `steam_display` in `rdx` and `#Status` or `Main Menu` in `r8`. None
+    of their results had the step 3a shape, so none got a stand-in.
+  - `SteamUser020` position 2: `rdx` held an address on the caller's
+    stack and the result was that same address.
+- **Recorded:** 2026-11-21, Cave Crawlers (2143030), Windows 11 64-bit,
+  `reborn-observe arm` (without `--read-only`) with the proxy from
+  `crates/shim-observe` (step 3c), stage 3. Official client running,
+  first test account.
+- **Recorder:** the maintainer (see `loading.md`).
+- **Evidence** (excerpt; floating-point registers left out, see
+  `entry-points.md`):
+
+  ```text
+  61 ms ThreadId(1) SteamClient020#12 result 1 shape: first field -> steamclient64+0x13493c0, 34 entries point into its executable memory
+  61 ms ThreadId(1) SteamClient020#12 result 1 replaced by stand-in 2 (0x1e116e3fba0) for SteamUtils009
+  61 ms ThreadId(1) SteamUtils009#9 call 1 (rcx held the stand-in, now the real object) rcx=0x1df1c4d02c0 rdx=0x7ffdb50821b8 r8=0x1ddb5a04bc0 r9=0xd
+  62 ms ThreadId(1) SteamClient020#5 result 1 replaced by stand-in 3 (0x1e116e3fc60) for SteamUser020
+  62 ms ThreadId(1) SteamUser020#2 call 1 (rcx held the stand-in, now the real object) rcx=0x1df1c600360 rdx=0xbfc2b0edc8 r8=0x7ffdb50825b8 r9=0xc
+  62 ms ThreadId(1) SteamUser020#2 return 1 rax=0xbfc2b0edc8
+  147 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 1 (rcx held the stand-in, now the real object) rcx=0x1df1c4d0450 rdx=0x1e004237a60 r8=0xbfc2b0f080 r9=0x7ffe3c011890 rdx->"Keep_PotionEffect"
+  148 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 return 1 rax=0x1
+  2521 ms ThreadId(1) STEAMREMOTESTORAGE_INTERFACE_VERSION014#0 call 1 (rcx held the stand-in, now the real object) rcx=0x1df1c4d0430 rdx=0x1e123519790 r8=0x1e1186bf020 r9=0xaf4b rdx->"MainPlayerData.json"
+  2528 ms ThreadId(1) STEAMREMOTESTORAGE_INTERFACE_VERSION014#0 return 1 rax=0x1
+  ```
+
+- **Meaning:** not known. The table shows which positions Cave Crawlers
+  uses, not what they do; the texts (save file names, stat names, rich
+  presence keys) hint at it, but that is not a source. What `SteamUser020`
+  position 2 writes to the address in `rdx` was not read.

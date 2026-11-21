@@ -185,6 +185,6 @@ tells nothing and is noted as such.
 
 So far a game behaves the same when `pid` names a running process other
 than the official client. Under ADR 0048 `pid` gets `rebornd`'s process
-ID in shim mode, once the maintainer gives the OK (ADR 0044). Not
+ID in shim mode; the maintainer gave the OK on 2026-11-21 (ADR 0044). Not
 covered: a `pid` that names no running process, and systems without the
 official client, which this experiment could not test.

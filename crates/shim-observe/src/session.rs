@@ -16,6 +16,9 @@ const PROXY: &str = "steamclient64.dll";
 /// Name of the file next to the proxy that turns its stand-in objects off
 /// (ADR 0040, step 3b); the proxy then only reads, as in step 3a.
 pub const READ_ONLY_MARKER: &str = "read-only";
+/// Name of the file next to the proxy that holds the app ID Reborn gives
+/// the proxy for shadow mode (ADR 0046), as decimal text.
+pub const APP_ID_FILE: &str = "app-id";
 
 /// The one registry value a session changes.
 pub trait ValueStore {
@@ -159,6 +162,23 @@ impl Session {
         Ok(target)
     }
 
+    /// Gives the proxy the app ID of the game about to run, for shadow mode
+    /// (ADR 0046), or removes it with `None`. Only the number is written.
+    pub fn set_app_id(&self, app_id: Option<u32>) -> Result<(), ObserveError> {
+        let path = self.dir.join(APP_ID_FILE);
+        match app_id {
+            Some(id) => {
+                std::fs::create_dir_all(&self.dir).map_err(io_error("creating Reborn's folder"))?;
+                std::fs::write(&path, id.to_string()).map_err(io_error("writing the app ID"))
+            }
+            None => match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(io_error("removing the app ID")(error)),
+            },
+        }
+    }
+
     /// Writes the saved value back if the value still points to the proxy,
     /// then forgets the session. Safe to run any number of times.
     pub fn disarm(&self, store: &dyn ValueStore) -> Result<Disarmed, ObserveError> {
@@ -181,6 +201,7 @@ impl Session {
         // The copy may still be loaded by a running game; it is harmless.
         let _ = std::fs::remove_file(self.proxy_path());
         let _ = std::fs::remove_file(self.dir.join(READ_ONLY_MARKER));
+        let _ = std::fs::remove_file(self.dir.join(APP_ID_FILE));
         Ok(outcome)
     }
 
@@ -302,6 +323,27 @@ mod tests {
         assert_eq!(session.status(&store)?.saved, None);
         // Running it again does nothing.
         assert_eq!(session.disarm(&store)?, Disarmed::NothingArmed);
+        Ok(())
+    }
+
+    #[test]
+    fn the_app_id_is_written_for_the_proxy_and_removed_on_disarm() -> Result<(), ObserveError> {
+        let temp = TempDir::new("app-id");
+        let session = Session::new(temp.0.join("shim-observe"));
+        let store = FakeStore::with(OFFICIAL);
+        session.arm(&store, &temp.proxy(), false)?;
+        let file = temp.0.join("shim-observe").join(APP_ID_FILE);
+        session.set_app_id(Some(2_143_030))?;
+        assert_eq!(
+            std::fs::read_to_string(&file).ok().as_deref(),
+            Some("2143030")
+        );
+        session.set_app_id(None)?;
+        assert!(!file.exists(), "None removes it");
+        session.set_app_id(None)?;
+        session.set_app_id(Some(480))?;
+        session.disarm(&store)?;
+        assert!(!file.exists(), "disarm removes it");
         Ok(())
     }
 

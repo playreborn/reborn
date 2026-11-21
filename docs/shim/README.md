@@ -36,6 +36,8 @@ One file per topic (e.g. `loading.md`, `entry-points.md`). Each fact:
 | --- | --- | --- |
 | `loading.md` | where games load `steamclient` from | 0, Windows and Proton recorded; native Linux not yet |
 | `entry-points.md` | which entry points games ask for | 1, 2 and 4b (callbacks), Windows recorded; Linux not yet |
-| `objects.md` | what `CreateInterface` returns and how it is used | 3a, 3b and 3c recorded (Windows, three games) |
-| `meanings.md` | what recorded calls mean: candidates and experiments (ADR 0042) | 4a, four confirmed (Windows) |
+| `objects.md` | what `CreateInterface` returns and how it is used | 3a, 3b and 3c recorded (Windows, five games) |
+| `meanings.md` | what recorded calls mean: candidates and experiments (ADR 0042) | 4a, five confirmed (Windows) |
+| `coverage.md` | which positions games call, and how far each one is | 14 games (Windows) |
+| `m4-games.md` | draft list of games for M4 and the criteria for it | draft, 21 candidates |
 | `tools/` | scripts for the public tools used in stages 0 and 1, and how to use `reborn-observe` (stage 2) | |

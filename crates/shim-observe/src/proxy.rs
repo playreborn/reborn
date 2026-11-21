@@ -55,6 +55,16 @@
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
 //! started. Calls not on the list are logged as before.
+//!
+//! Shadow mode (ADR 0046): for confirmed meanings listed in [`SHADOWS`],
+//! and only when the call is logged, the proxy compares the official
+//! client's result with Reborn's own answer and logs match or mismatch.
+//! The game always gets the official client's result.
+//!
+//! Answer mode (ADR 0046): for calls in [`ANSWERS`] (shadow mode matched in
+//! three games, maintainer's OK) and an app ID given by `reborn-observe arm
+//! --app`, the stub jumps to Reborn's own function instead of the official
+//! client's; the result still goes through the return stub and is logged.
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
@@ -80,7 +90,7 @@ use windows_sys::Win32::System::Memory::{
 use windows_sys::Win32::System::ProcessStatus::{K32GetModuleInformation, MODULEINFO};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-use crate::session::{READ_ONLY_MARKER, SAVED};
+use crate::session::{APP_ID_FILE, READ_ONLY_MARKER, SAVED};
 
 /// Position of `CreateInterface` in [`ENTRY_POINTS`].
 const CREATE_INTERFACE: usize = 0;
@@ -119,6 +129,65 @@ const READS: &[(&str, usize, Read)] = &[
         Read::OutputBytes("r8"),
     ),
 ];
+
+/// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shadow {
+    /// `GetAppID`: the app ID `reborn-observe arm --app` gave the proxy,
+    /// compared with the low 32 bits of the result.
+    AppId,
+}
+
+/// The calls ADR 0046 compares in shadow mode: interface version text,
+/// position, Reborn's answer. Only confirmed meanings
+/// (`docs/shim/meanings.md`); the game always gets the official client's
+/// result.
+const SHADOWS: &[(&str, usize, Shadow)] = &[
+    // `docs/shim/meanings.md`: confirmed `GetAppID` (experiment 3).
+    ("SteamUtils010", 9, Shadow::AppId),
+];
+
+/// The calls ADR 0046 answers itself (answer mode): interface version
+/// text, position, Reborn's answer. A call is listed only after shadow mode
+/// matched in three games and the maintainer gave the OK; it is then not
+/// forwarded to the official client. Never ownership, licenses, tickets,
+/// achievements, stats, cloud or anything acting on the account.
+const ANSWERS: &[(&str, usize, Shadow)] = &[
+    // `docs/shim/meanings.md`: shadow mode matched in three games; the
+    // maintainer's OK on 2026-11-21 (experiment 4).
+    ("SteamUtils010", 9, Shadow::AppId),
+];
+
+/// The app ID given for shadow and answer mode, read once from the file
+/// next to this DLL.
+static APP_ID: OnceLock<Option<u32>> = OnceLock::new();
+
+/// The app ID given by `reborn-observe arm --app`, if any.
+fn given_app_id() -> Option<u32> {
+    *APP_ID.get_or_init(|| {
+        own_dir()
+            .and_then(|dir| std::fs::read_to_string(dir.join(APP_ID_FILE)).ok())
+            .and_then(|text| text.trim().parse().ok())
+    })
+}
+
+/// Reborn's `GetAppID` in answer mode: called in place of the official
+/// client's function, with the same registers (the object in `rcx`, which it
+/// does not need), and returns through the return stub like any call.
+extern "C" fn answer_app_id(_this: usize) -> u32 {
+    given_app_id().unwrap_or(0)
+}
+
+/// The function that answers this call itself, if [`ANSWERS`] lists it and
+/// Reborn has the answer (ADR 0046).
+fn answer_for(interface: &str, slot: usize) -> Option<usize> {
+    let &(_, _, answer) = ANSWERS
+        .iter()
+        .find(|&&(name, position, _)| name == interface && position == slot)?;
+    match answer {
+        Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
+    }
+}
 
 /// Most table entries counted in step 3a (ADR 0040).
 const MAX_TABLE: usize = 1024;
@@ -223,6 +292,9 @@ struct Pending {
     /// For a listed call that is logged: what to read when it returns
     /// (step 4c).
     after: Option<After>,
+    /// For a call in [`SHADOWS`] that is logged: Reborn's answer to compare
+    /// when it returns (ADR 0046).
+    shadow: Option<Shadow>,
 }
 
 /// A read to do when a listed call returns (step 4c, ADR 0043).
@@ -368,6 +440,7 @@ extern "C" fn observe_call(
                 interface,
                 outputs,
                 after: None,
+                shadow: None,
             });
         });
         targets()[index]
@@ -413,6 +486,17 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 elapsed_ms(),
                 call.call,
                 describe_after(rax, after)
+            ));
+        }
+        // ADR 0046: compare with Reborn's own answer; the game keeps the
+        // official client's result.
+        if let Some(shadow) = call.shadow {
+            let given = given_app_id();
+            log(&format!(
+                "{} ms {thread:?} {name} return {} {}",
+                elapsed_ms(),
+                call.call,
+                describe_shadow(rax, shadow, given)
             ));
         }
         // CreateInterface (step 3b), and calls through stand-ins that passed
@@ -489,6 +573,7 @@ extern "C" fn observe_method(
         let logged = should_log(call);
         // Step 4c: the registers as the call started, before any swap.
         let after = logged.then(|| after_for(&info.name, slot, saved)).flatten();
+        let shadow = logged.then(|| shadow_for(&info.name, slot)).flatten();
         let swapped = swap_stand_ins(saved, false);
         if logged {
             let beyond = if slot >= info.counted {
@@ -515,6 +600,21 @@ extern "C" fn observe_method(
             ));
             std::process::abort();
         };
+        // Answer mode (ADR 0046): Reborn's function instead of the official
+        // client's, never with `--read-only`.
+        let read_only = *READ_ONLY
+            .get_or_init(|| own_dir().is_some_and(|dir| dir.join(READ_ONLY_MARKER).exists()));
+        let answered = (!read_only).then(|| answer_for(&info.name, slot)).flatten();
+        let target = answered.unwrap_or(target);
+        let shadow = if answered.is_some() { None } else { shadow };
+        if answered.is_some() && logged {
+            log(&format!(
+                "{} ms {:?} {} call {call} answered by Reborn, not forwarded",
+                elapsed_ms(),
+                std::thread::current().id(),
+                kind_name(Kind::Method { object, slot }),
+            ));
+        }
         PENDING.with(|pending| {
             pending.borrow_mut().push(Pending {
                 entry_rsp,
@@ -525,6 +625,7 @@ extern "C" fn observe_method(
                 interface,
                 outputs: None,
                 after,
+                shadow,
             });
         });
         target
@@ -753,6 +854,36 @@ fn after_for(interface: &str, slot: usize, saved: &Saved) -> Option<After> {
                 _ => return None,
             };
             Some(After::Bytes { register, address })
+        }
+    }
+}
+
+/// The call's shadow-mode entry, if [`SHADOWS`] lists it (ADR 0046).
+fn shadow_for(interface: &str, slot: usize) -> Option<Shadow> {
+    SHADOWS
+        .iter()
+        .find(|&&(name, position, _)| name == interface && position == slot)
+        .map(|&(_, _, shadow)| shadow)
+}
+
+/// Compares the official client's result `rax` with Reborn's answer
+/// (ADR 0046). Only the values shadow mode compares are shown; none of them
+/// is account data.
+fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
+    match shadow {
+        Shadow::AppId => {
+            let Some(reborn) = app_id else {
+                return "shadow: no app ID given".to_owned();
+            };
+            // The documented result is a 32-bit number; the upper half of
+            // rax is not part of it.
+            let client = rax as u32;
+            let verdict = if client == reborn {
+                "match"
+            } else {
+                "mismatch"
+            };
+            format!("shadow {verdict}: client {client}, Reborn {reborn}")
         }
     }
 }
@@ -1180,6 +1311,7 @@ mod tests {
             interface: None,
             outputs: None,
             after: None,
+            shadow: None,
         }
     }
 
@@ -1224,6 +1356,46 @@ mod tests {
                 "every entry names a known register"
             );
         }
+    }
+
+    #[test]
+    fn answer_mode_lists_only_get_app_id() {
+        // Without an app ID file next to the test binary there is no answer,
+        // so the call would be forwarded.
+        assert_eq!(answer_for("SteamUtils010", 14), None);
+        assert_eq!(answer_for("SteamUtils009", 9), None);
+        assert_eq!(answer_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12), None);
+        assert!(ANSWERS.iter().all(|&(name, position, _)| {
+            SHADOWS.iter().any(|&(n, p, _)| n == name && p == position)
+        }));
+    }
+
+    #[test]
+    fn shadow_mode_compares_only_listed_calls() {
+        assert_eq!(shadow_for("SteamUtils010", 9), Some(Shadow::AppId));
+        assert_eq!(
+            shadow_for("SteamUtils009", 9),
+            None,
+            "only confirmed versions"
+        );
+        assert_eq!(shadow_for("SteamUtils010", 14), None);
+        assert_eq!(
+            describe_shadow(0x20_b336, Shadow::AppId, Some(2_143_030)),
+            "shadow match: client 2143030, Reborn 2143030"
+        );
+        assert_eq!(
+            describe_shadow(0xffff_ffff_0020_b336, Shadow::AppId, Some(2_143_030)),
+            "shadow match: client 2143030, Reborn 2143030",
+            "upper half of rax is not part of the result"
+        );
+        assert_eq!(
+            describe_shadow(480, Shadow::AppId, Some(2_143_030)),
+            "shadow mismatch: client 480, Reborn 2143030"
+        );
+        assert_eq!(
+            describe_shadow(480, Shadow::AppId, None),
+            "shadow: no app ID given"
+        );
     }
 
     #[test]

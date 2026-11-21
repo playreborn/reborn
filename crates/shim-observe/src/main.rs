@@ -29,6 +29,10 @@ enum Command {
         /// (ADR 0040). Use it if the game misbehaves with stand-ins.
         #[arg(long)]
         read_only: bool,
+        /// The app ID of the game about to run, for shadow mode (ADR 0046):
+        /// the proxy compares the official client's answers with Reborn's.
+        #[arg(long)]
+        app: Option<u32>,
     },
     /// Put the saved SteamClientDll64 back (only if it still points to the
     /// proxy). Safe to run any number of times.
@@ -62,8 +66,16 @@ fn run(command: Command) -> Result<()> {
                 println!("The value points to the proxy.");
             }
         }
-        Command::Arm { proxy, read_only } => {
+        Command::Arm {
+            proxy,
+            read_only,
+            app,
+        } => {
             let target = session.arm(&store, &proxy, read_only)?;
+            session.set_app_id(app)?;
+            if let Some(app) = app {
+                println!("Shadow mode: app ID {app}.");
+            }
             if read_only {
                 println!("Read only: the proxy hands out no stand-in objects.");
             }

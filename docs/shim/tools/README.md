@@ -142,3 +142,14 @@ position 6 (bytes at `r8`). Checked without a game (2026-11-21): unit
 tests (only listed version texts and positions get a read, with the
 address from the right register; text and only the first 16 bytes are
 logged, "not readable" for unmapped addresses).
+
+Shadow mode (ADR 0046): `reborn-observe arm --proxy <dll> --app <app id>`
+writes the app ID into a file `app-id` next to the proxy (removed on
+disarm). For the confirmed meanings listed in `SHADOWS` in
+`crates/shim-observe/src/proxy.rs` the proxy then adds, for logged
+calls, a line `return n shadow match: client …, Reborn …` (or
+`mismatch`, or `no app ID given`). The game always gets the official
+client's result. First entry: `SteamUtils010` position 9 (`GetAppID`).
+Checked without a game (2026-11-21): unit tests (only listed versions
+and positions, the upper half of `rax` ignored, mismatch and missing app
+ID reported; the app ID file written and removed by the session).

@@ -44,3 +44,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0036](0036-servers-are-already-shuffled.md) | Steam servers are already chosen at random | Accepted |
 | [0037](0037-preferring-port-443.md) | Preferring Steam servers on port 443 | Accepted |
 | [0038](0038-shim-observation-tool.md) | The shim observation tool | Accepted |
+| [0039](0039-loading-the-observation-proxy.md) | Loading the observation proxy | Accepted |

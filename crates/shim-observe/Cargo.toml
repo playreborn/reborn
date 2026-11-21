@@ -8,6 +8,12 @@ authors.workspace = true
 repository.workspace = true
 license = "GPL-3.0-or-later"
 publish = false
+build = "build.rs"
+
+# rlib for reborn-observe and the tests, cdylib for the proxy DLL that a
+# session loads instead of steamclient64.dll (ADR 0039).
+[lib]
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "reborn-observe"

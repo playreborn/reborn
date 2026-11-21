@@ -65,7 +65,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Windows only: the current user's SID for the named pipe's access list (ADR 0014).
 # Same version interprocess already uses.
 # Win32_System_Registry: reborn-observe reads and writes one registry value (ADR 0039).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Threading"] }
+# Win32_System_LibraryLoader: the observation proxy loads the real steamclient64.dll.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading"] }
 # Windows only: UTF-16 strings for the pipe's security descriptor (ADR 0014).
 # Same version interprocess already uses.
 widestring = "1"

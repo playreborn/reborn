@@ -51,3 +51,18 @@ reborn-observe disarm
 Start the official client first, arm, run the game once, disarm before
 closing the official client. `disarm` only writes the old value back if
 the proxy's path is still there, and can be run any number of times.
+
+The proxy is the DLL of the same crate: `cargo build -p
+reborn-shim-observe` writes `target\debug\reborn_shim_observe.dll`. It
+exports the five entry points from `docs/shim/entry-points.md`, forwards
+every call unchanged to the real `steamclient64.dll` (the saved path) and
+writes `observe-<process id>.log` into Reborn's `shim-observe` folder:
+which entry point was called, when and on which thread (the first 50
+calls of each, then every 10 000th). It does not look at arguments or
+results yet.
+
+Checked without a game (2026-11-21): a unit test calls the five stubs
+with integer, floating-point and stack arguments and compares what
+arrives; and the built DLL, loaded from Python with a stand-in "real" DLL,
+exported all five names, forwarded calls with the right results and
+wrote the log.

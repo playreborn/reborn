@@ -10,7 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Name of the file that holds the value from before the session.
-const SAVED: &str = "original-steamclient64.txt";
+pub(crate) const SAVED: &str = "original-steamclient64.txt";
 /// Name of the proxy's copy in Reborn's folder.
 const PROXY: &str = "steamclient64.dll";
 

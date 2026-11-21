@@ -80,9 +80,61 @@ not allow Reborn to change silently. How the observation proxy gets
 loaded on Windows (for example: the user sets the value by hand for one
 session and restores it) needs a decision before stage 2.
 
-### Linux
+### Linux, Windows games under Proton: same registry path inside the prefix
+
+- **Fact:** Before the game starts, Proton copies
+  `~/.local/share/Steam/legacycompat/steamclient.dll` and
+  `.../legacycompat/steamclient64.dll` into the game's Wine prefix as
+  `C:\Program Files (x86)\Steam\steamclient.dll` and `...\steamclient64.dll`.
+  The prefix's registry (`pfx/user.reg`) holds, under
+  `HKCU\Software\Valve\Steam\ActiveProcess`, the values `PID`,
+  `SteamClientDll`, `SteamClientDll64` and `SteamPath`, with
+  `SteamClientDll64` = `C:\Program Files (x86)\Steam\steamclient64.dll`,
+  the same key and value the game read on Windows. In the game process,
+  Wine loads the game's `steam_api64.dll` (native), then
+  `C:\windows\system32\lsteamclient.dll` (Proton's built-in module), then
+  `C:\Program Files (x86)\Steam\steamclient64.dll` (native, the copied
+  file). Earlier, another process loads and unloads `lsteamclient.dll`;
+  next to it Proton logs that it sets up the Steam registry.
+- **Recorded:** 2026-11-21, Cave Crawlers (2143030, a Windows-only game),
+  Linux VM with the official client and Proton (versions not noted),
+  stage 0. The copy: `strace -f -e trace=openat,execve` as launch option
+  (the game itself did not start under `strace`). The loads:
+  `PROTON_LOG=1 WINEDEBUG=+loaddll` as launch option. The registry: the
+  prefix's `user.reg` after the run. First test account.
+- **Recorder:** the maintainer (see above).
+- **Evidence** (user name replaced by `<user>`):
+
+  ```text
+  openat(AT_FDCWD, "/home/<user>/.local/share/Steam/legacycompat/steamclient64.dll", O_RDONLY|O_CLOEXEC) = 11
+  openat(AT_FDCWD, "/home/<user>/.local/share/Steam/steamapps/compatdata/2143030/pfx/drive_c/Program Files (x86)/Steam/steamclient64.dll", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0666) = ...
+
+  [Software\\Valve\\Steam\\ActiveProcess]
+  "PID"=dword:00000020
+  "SteamClientDll"="C:\\Program Files (x86)\\Steam\\steamclient.dll"
+  "SteamClientDll64"="C:\\Program Files (x86)\\Steam\\steamclient64.dll"
+  "SteamPath"="C:\\Program Files (x86)\\Steam"
+
+  0164:trace:loaddll:build_module Loaded L"S:\\steamapps\\common\\Cave Crawlers\\Cave Crawlers_Data\\Plugins\\x86_64\\steam_api64.dll" at ...: native
+  0164:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\lsteamclient.dll" at ...: builtin
+  0164:trace:loaddll:build_module Loaded L"C:\\Program Files (x86)\\Steam\\steamclient64.dll" at ...: native
+  ```
+
+- **Left out on purpose:** Proton's log also printed `fixme` lines from
+  its `steamclient` channel. They come from Proton's `lsteamclient`, which
+  is built from Steamworks SDK headers (ADR 0012), and name things from
+  there, so they are not used or copied.
+- **Meaning:** not known why `lsteamclient.dll` loads before
+  `steamclient64.dll`. Whether the game reads `ActiveProcess` under
+  Proton too was not recorded (no registry trace).
+- **Consequence (not decided):** for Windows games under Proton, the
+  `steamclient64.dll` a game loads is chosen by a registry value inside
+  the game's prefix. When Reborn runs a game through Proton itself, that
+  prefix is Reborn's own (ADR 0016, ADR 0017), not the official client's.
+
+### Linux, native games
 
 - **Fact (from ADR 0012):** `steam_api` tries a local `steamclient.so`,
   then `~/.steam/sdk64/steamclient.so`.
-- **Recorded:** not yet in this format; to be recorded with
-  `strace -f -e trace=file` on the Linux VM.
+- **Recorded:** not yet in this format. The first test account owns no
+  native Linux game yet.

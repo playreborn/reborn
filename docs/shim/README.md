@@ -34,6 +34,6 @@ One file per topic (e.g. `loading.md`, `entry-points.md`). Each fact:
 
 | File | What | Stage |
 | --- | --- | --- |
-| `loading.md` | where games load `steamclient` from | 0, Windows recorded; Linux not yet |
+| `loading.md` | where games load `steamclient` from | 0, Windows and Proton recorded; native Linux not yet |
 | `entry-points.md` | which entry points games ask for | 1, Windows recorded; Linux not yet |
 | `tools/` | scripts for the public tools used in stages 0 and 1 | |

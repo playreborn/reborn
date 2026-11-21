@@ -46,12 +46,20 @@ use windows_sys::Win32::System::LibraryLoader::{
     LoadLibraryExW,
 };
 use windows_sys::Win32::System::Memory::{
-    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
     PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY,
     VirtualQuery,
 };
+use windows_sys::Win32::System::ProcessStatus::{K32GetModuleInformation, MODULEINFO};
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 use crate::session::SAVED;
+
+/// Position of `CreateInterface` in [`ENTRY_POINTS`].
+const CREATE_INTERFACE: usize = 0;
+
+/// Most table entries counted in step 3a (ADR 0040).
+const MAX_TABLE: usize = 1024;
 
 /// The entry points, in the order of the assembly stubs below.
 pub const ENTRY_POINTS: [&str; 5] = [
@@ -72,6 +80,8 @@ const MAX_TEXT: usize = 64;
 
 /// Addresses of the real functions, in [`ENTRY_POINTS`] order.
 static TARGETS: OnceLock<[usize; 5]> = OnceLock::new();
+/// Start and end of the real `steamclient64.dll` in memory.
+static MODULE: OnceLock<(usize, usize)> = OnceLock::new();
 /// The log file, `None` if it cannot be opened (or in tests).
 static LOG: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 static CALLS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
@@ -235,6 +245,20 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize) -> usize {
                 ENTRY_POINTS[call.index],
                 call.call
             ));
+            // Step 3a of ADR 0040: what does CreateInterface's result look
+            // like? Read only; the game gets the result unchanged.
+            if call.index == CREATE_INTERFACE
+                && let Some(&module) = MODULE.get()
+            {
+                log(&format!(
+                    "{} ms {:?} {} result {} {}",
+                    elapsed_ms(),
+                    std::thread::current().id(),
+                    ENTRY_POINTS[call.index],
+                    call.call,
+                    describe_shape(rax, module)
+                ));
+            }
         }
         call.return_address
     });
@@ -325,8 +349,9 @@ fn ascii_at(address: u64) -> Option<String> {
     None
 }
 
-/// The end of the committed, readable memory region containing `address`.
-fn readable_end(address: usize) -> Option<usize> {
+/// Windows' information about the memory at `address`, if it is
+/// committed and not a guard page.
+fn region(address: usize) -> Option<MEMORY_BASIC_INFORMATION> {
     // SAFETY: MEMORY_BASIC_INFORMATION is plain data; all zeros is valid.
     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
     let size = size_of::<MEMORY_BASIC_INFORMATION>();
@@ -336,6 +361,12 @@ fn readable_end(address: usize) -> Option<usize> {
     if written == 0 || info.State != MEM_COMMIT || info.Protect & PAGE_GUARD != 0 {
         return None;
     }
+    Some(info)
+}
+
+/// The end of the committed, readable memory region containing `address`.
+fn readable_end(address: usize) -> Option<usize> {
+    let info = region(address)?;
     let readable = PAGE_READONLY
         | PAGE_READWRITE
         | PAGE_WRITECOPY
@@ -346,6 +377,84 @@ fn readable_end(address: usize) -> Option<usize> {
         return None;
     }
     (info.BaseAddress as usize).checked_add(info.RegionSize)
+}
+
+/// Whether Windows marks the memory at `address` as executable. Only the
+/// protection is asked for; the memory itself is not read.
+fn is_executable(address: usize) -> bool {
+    let executable =
+        PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    region(address).is_some_and(|info| info.Protect & executable != 0)
+}
+
+/// Eight bytes at `address`, if they lie in readable memory.
+fn read_u64(address: usize) -> Option<u64> {
+    let end = readable_end(address)?;
+    if address.checked_add(8)? > end {
+        return None;
+    }
+    // SAFETY: the eight bytes lie inside a committed, readable region that
+    // `readable_end` just checked; no alignment is assumed.
+    Some(unsafe { std::ptr::read_unaligned(address as *const u64) })
+}
+
+/// Step 3a of ADR 0040: whether the first field of `object` holds an
+/// address inside the module `[base, end)`, and if so, how many
+/// consecutive eight-byte values from there are addresses inside the
+/// module that Windows marks as executable. Only pointer values in data
+/// are read, never code bytes.
+fn describe_shape(object: u64, (base, end): (usize, usize)) -> String {
+    let Ok(object) = usize::try_from(object) else {
+        return "shape: not an address".to_owned();
+    };
+    if object < 0x1_0000 {
+        return "shape: not an address".to_owned();
+    }
+    let Some(first) = read_u64(object).and_then(|value| usize::try_from(value).ok()) else {
+        return "shape: object not readable".to_owned();
+    };
+    if !(base..end).contains(&first) {
+        return "shape: first field does not point into steamclient64".to_owned();
+    }
+    let mut entries = 0;
+    while entries < MAX_TABLE {
+        let Some(entry) = first
+            .checked_add(entries * 8)
+            .and_then(read_u64)
+            .and_then(|value| usize::try_from(value).ok())
+        else {
+            break;
+        };
+        if !(base..end).contains(&entry) || !is_executable(entry) {
+            break;
+        }
+        entries += 1;
+    }
+    format!(
+        "shape: first field -> steamclient64+0x{:x}, {entries} entries point into its executable memory{}",
+        first - base,
+        if entries == MAX_TABLE {
+            " (limit reached)"
+        } else {
+            ""
+        }
+    )
+}
+
+/// Start and end of a loaded module (Microsoft's GetModuleInformation).
+fn module_range(module: HMODULE) -> Option<(usize, usize)> {
+    // SAFETY: MODULEINFO is plain data; all zeros is valid.
+    let mut info: MODULEINFO = unsafe { std::mem::zeroed() };
+    let size = u32::try_from(size_of::<MODULEINFO>()).ok()?;
+    // SAFETY: `module` is a module loaded in this process; `info` is
+    // writable for `size` bytes; GetCurrentProcess returns a pseudo handle
+    // that needs no closing.
+    let found = unsafe { K32GetModuleInformation(GetCurrentProcess(), module, &mut info, size) };
+    if found == 0 {
+        return None;
+    }
+    let base = info.lpBaseOfDll as usize;
+    Some((base, base.checked_add(info.SizeOfImage as usize)?))
 }
 
 fn log(line: &str) {
@@ -401,6 +510,12 @@ fn load_real() -> Result<[usize; 5], String> {
             "LoadLibraryExW failed: {}",
             std::io::Error::last_os_error()
         ));
+    }
+    match module_range(module) {
+        Some(range) => {
+            let _ = MODULE.set(range);
+        }
+        None => log("cannot find the real DLL's memory range; shapes are not logged"),
     }
     let mut targets = [0usize; 5];
     for (slot, name) in targets.iter_mut().zip(ENTRY_POINTS) {
@@ -614,5 +729,57 @@ mod tests {
         assert!(!should_log(51));
         assert!(should_log(10_000));
         assert!(!should_log(10_001));
+    }
+
+    extern "C" fn slot_a() {}
+    extern "C" fn slot_b() {}
+    extern "C" fn slot_c() {}
+
+    /// The test program's own module stands in for steamclient64.dll.
+    fn own_module() -> (usize, usize) {
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        // SAFETY: a null name asks for the program's own module handle.
+        let module = unsafe { GetModuleHandleW(std::ptr::null()) };
+        module_range(module).unwrap_or((0, 0))
+    }
+
+    #[test]
+    fn counts_a_table_of_function_addresses() {
+        let module = own_module();
+        assert!(module.1 > module.0, "module range found");
+        // An "object" whose first field points to a table of three function
+        // addresses in the module, then something that is not one. The
+        // table itself has to lie inside the module too, so it is a static.
+        static TABLE: OnceLock<[usize; 4]> = OnceLock::new();
+        let table = TABLE.get_or_init(|| {
+            [
+                slot_a as *const () as usize,
+                slot_b as *const () as usize,
+                slot_c as *const () as usize,
+                0,
+            ]
+        });
+        let object = [table.as_ptr() as usize];
+        let shape = describe_shape(object.as_ptr() as u64, module);
+        assert!(
+            shape.contains("3 entries point into its executable memory"),
+            "{shape}"
+        );
+    }
+
+    #[test]
+    fn reports_other_shapes_without_reading_further() {
+        let module = own_module();
+        // First field points outside the module (to the heap).
+        let elsewhere = Box::new(5u64);
+        let object = [&*elsewhere as *const u64 as usize];
+        assert!(
+            describe_shape(object.as_ptr() as u64, module)
+                .contains("does not point into steamclient64")
+        );
+        assert!(describe_shape(0x10, module).contains("not an address"));
+        assert!(describe_shape(0x7fff_ffff_0000, module).contains("not readable"));
+        assert!(!is_executable(&elsewhere as *const _ as usize));
+        assert!(is_executable(slot_a as *const () as usize));
     }
 }

@@ -75,3 +75,12 @@ what arrives and what comes back, and read text only from readable
 memory; the built DLL, loaded from Python with stand-in "real" DLLs (one
 with a dependency in its own folder), forwarded calls, logged the
 arguments and the right results.
+
+Step 3a of ADR 0040 (read only): when `CreateInterface` returns, the log
+also gets a `shape:` line for its result. It says whether the first
+eight bytes at the result hold an address inside `steamclient64.dll`
+(its range from `GetModuleInformation`), and if so, where that points
+(as an offset from the module start) and how many consecutive
+eight-byte values there are addresses inside the module that Windows
+marks as executable (at most 1024). Only pointer values in data are
+read, never code bytes; what the game gets back is unchanged.

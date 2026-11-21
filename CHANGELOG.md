@@ -53,7 +53,9 @@ All notable changes to Reborn are listed here. The format follows
   turns them off). After a callback poll that returns 1 it logs the
   first 16 bytes the client wrote for the game. For a short, reviewed
   list of calls it also logs the returned text or the first 16 bytes
-  written to an output address (ADR 0043).
+  written to an output address (ADR 0043). In shadow mode it compares the
+  official client's answers to confirmed calls with Reborn's own and logs
+  whether they match (ADR 0046).
 
 - The rules for the planned `steamclient` replacement are set: it is built
   without Valve's Steamworks SDK, only from observing games you own

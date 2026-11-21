@@ -183,6 +183,13 @@ out):
   source.
 - **Experiment 2** ruled out the share of players; the other candidates
   remain (see its result below).
+- **Further run** (2026-11-21, an AI agent on the maintainer's computer,
+  on the maintainer's instruction, ADR 0044; the game ran to its menu
+  only): 55 logged calls at position 6, all with `Keep_PotionEffect`;
+  the 16 bytes after each were `009b0ad4 a0020000 e4f959f8 fc7f0000`.
+  The first byte was 0 again, bytes 2 to 8 differed from experiment 2.
+  That fits a call that writes only the first byte, but it was not a
+  planned experiment, so it changes no status.
 
 ### Position 4: candidates that set a value by name
 
@@ -346,3 +353,245 @@ registers and the `rcx` note left out):
 11871 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 2 rax=0x1e8aea80ee2
 169724 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 50000 rcx=0x1e6a5ec0450 rdx=0x1e8e3019dd0 r8=0x7393cef100 r9=0x7ffe4c781890 rdx->"Keep_PotionEffect"
 ```
+
+## `SteamUtils009` and `SteamUtils010`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUtils>, read
+  2026-11-21. Its constants name the version text `SteamUtils009`, the
+  one Cave Crawlers asked for. Bongo Cat, Coin Maker Simulator, Baldi's
+  Basics and Linsips asked for `SteamUtils010`, which the page does not
+  name; for them the entry is a candidate only (ADR 0042, versions).
+- **Recording:** all five recorded games call position 9 about twice at
+  start and position 14 about 50 to 90 times (`coverage.md`).
+
+### Position 9: confirmed `GetAppID` for `SteamUtils010` (experiment 3); candidate for `SteamUtils009`
+
+- **Recorded:** the result was, in every recorded game, that game's own
+  app ID: Cave Crawlers `0x20b336` (2143030, `SteamUtils009`), Bongo Cat
+  `0x342d26` (3419430), Coin Maker Simulator `0x4f37ce` (5191630),
+  Baldi's Basics `0x1a22be` (1712830), Linsips `0x41a23a` (4301370). The
+  argument registers held leftovers that changed between games (`rdx`
+  0 or an address, `r9` small numbers).
+- **Fit:** the page documents a function that takes no arguments and
+  returns the app ID of the current process. Of the other documented
+  functions without arguments that return a 32-bit number (lengths,
+  counts, seconds, server time), none would equal the app ID in five
+  games.
+
+### Experiment 3 (planned 2026-11-21 12:48, before reading the runs)
+
+The agent's batch of stage 3 runs (ADR 0044) was running in the
+background with these games (correction: its first game started at
+12:47:52, not at about 12:35 as first written): Paper Lily - Chapter 1 (2220360), Please, Touch The
+Artwork 2 (2600140), Cube Escape: Paradox (909080), Katawa Shoujo
+(3068300), Higurashi When They Cry Hou - Ch.1 (310360), SCP –
+Containment Breach (2178380), Travellin Cats in Paris (2313250), An
+Arcade Full of Cats (2368470). Their logs had not been read when this
+plan was written.
+
+**Prediction from the page:** in every one of these games that loads the
+proxy and asks for `SteamUtils009` or `SteamUtils010`, the first result
+of position 9 is that game's app ID. A game that does not load the proxy
+or does not call position 9 counts neither way. A single game where the
+result differs is a mismatch.
+
+**Result** (read after the plan was committed at 12:48:44; agent runs,
+ADR 0044). Three of the eight games loaded the proxy and called
+position 9 of `SteamUtils010`; in all three the first result was the
+game's app ID: Paper Lily `0x21e148` (2220360), Please, Touch The
+Artwork 2 `0x27accc` (2600140), An Arcade Full of Cats `0x2423d6`
+(2368470). **Matches.** The other five count neither way: four are
+32-bit games (Katawa Shoujo and SCP loaded `steamclient.dll`, which the
+64-bit proxy does not replace; Travellin Cats in Paris and Cube Escape
+ship only a 32-bit `steam_api.dll`), and Higurashi waited for a
+language choice before loading Steam.
+
+The maintainer gave the OK on 2026-11-21 (ADR 0044): position 9 is
+confirmed as `GetAppID` for `SteamUtils010`. For `SteamUtils009` it
+stays a candidate: no `SteamUtils009` game was part of experiment 3.
+
+Evidence (excerpt; floating-point registers and the `rcx` note left
+out; one game per pair of lines, in the order above):
+
+```text
+63 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x2705a7802e0 rdx=0x7ffdaf9041d0 r8=0x2707b621500 r9=0xd
+63 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x21e148
+61 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x1d7c26702e0 rdx=0x7ffdaf9041d0 r8=0x1d535b872c0 r9=0xd
+61 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x27accc
+61 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x14245f202e0 rdx=0x0 r8=0x14251867ec0 r9=0xc
+61 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2423d6
+```
+
+**Further run** (not part of experiment 3, which did not list it):
+Gravitas (1067310) asked for `SteamUtils009`, like Cave Crawlers, and
+position 9 returned `0x10492e` (1067310), its app ID. It changes no
+status.
+
+```text
+64 ms ThreadId(1) SteamUtils009#9 call 1 rcx=0x265b1df02e0 rdx=0x7ffdaef341d0 r8=0x265ad201680 r9=0xd
+64 ms ThreadId(1) SteamUtils009#9 return 1 rax=0x10492e
+```
+
+## Positions most games share: further candidates
+
+Read 2026-11-21 from the pages linked below; recordings from the 14
+games in `coverage.md`. None of these is confirmed; each needs an
+experiment, and the open question is written down with it.
+
+### `SteamController007` and `SteamController008` position 2: candidate `RunFrame`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamController>;
+  its constants name `SteamController007` (Cave Crawlers, Outcore). Ten
+  games asked for `SteamController008`, which the page does not name.
+- **Recorded:** called about as often as the game draws frames (50 to 66
+  logged calls within the first seconds, then every 10 000th), always
+  with `rdx` = 0; the result register held 0 or the same leftover
+  address in every call of a game, which fits a function without a
+  result.
+- **Fit:** the page documents exactly one function without arguments
+  and without a result: it brings the interface up to date with the
+  latest controller input, optional for lower latency.
+- **Open:** a function without arguments or result leaves little to
+  predict. An experiment would need a visible effect, for example
+  controller input arriving only when it runs; not planned yet.
+
+### `SteamInput006` position 3: candidate `RunFrame`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamInput>; its
+  constants name `SteamInput007`. Ten games asked for `SteamInput006`
+  (and two for `SteamInput001`), which the page does not name.
+- **Recorded:** called about as often as frames are drawn, `rdx` 0 or 1
+  (the first call of Baldi's Basics had 1), result register 0 or a
+  leftover address.
+- **Fit:** the page documents a function to call every frame that takes
+  one reserved true/false argument and returns nothing.
+- **Open:** as for `SteamController`.
+
+### `SteamUser020` to `SteamUser023` position 2: candidate `GetSteamID`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUser>; its
+  constants name `SteamUser019`, which no recorded game asked for. All
+  14 games called position 2 of `SteamUser020`, `021`, `022` or `023`,
+  once at start.
+- **Recorded:** `rdx` held an address on the game's stack and the result
+  was that same address.
+- **Fit:** the page documents two functions without arguments that
+  return something other than a number or true/false: the account's
+  Steam ID, and a user handle. Microsoft's x64 calling convention
+  returns a value that does not fit into a register through an address
+  the caller passes and gives that address back as the result, which is
+  what was recorded.
+- **Open:** confirming it means reading what the client wrote to that
+  address, which would be the account's Steam ID. ADR 0043 does not
+  allow a read entry for a call that could hand back an account
+  identifier; that needs its own ADR first.
+
+### Shadow mode for `GetAppID` (ADR 0046)
+
+Three agent runs on 2026-11-21 with `reborn-observe arm --app <id>`:
+Linsips, Paper Lily - Chapter 1 and Chronigma. Every logged call at
+position 9 of `SteamUtils010` gave `shadow match`: the official client's
+result and Reborn's answer (the app ID Reborn started the game with)
+were the same. The games ran normally and closed on a close request.
+Under ADR 0046 this is the three-game condition for answer mode; answer
+mode also needs the maintainer's OK.
+
+```text
+79 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 4301370, Reborn 4301370
+67 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 2220360, Reborn 2220360
+60 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 4051150, Reborn 4051150
+```
+
+### Experiment 4: answer mode for `GetAppID` (planned 2026-11-21, before the runs)
+
+The maintainer gave the OK for answer mode (ADR 0046). In these runs the
+proxy does not forward position 9 of `SteamUtils010` to the official
+client; the game gets Reborn's answer, the app ID given to
+`reborn-observe arm --app`. Every other call goes to the official client
+as before.
+
+Games: Baldi's Basics Classic Remastered (1712830), Plant Therapy
+(2505120) and An Arcade Full of Cats (2368470), each already recorded in
+a normal stage 3 run.
+
+**Prediction:** in each game, (1) the log shows position 9 answered by
+Reborn with the game's app ID, (2) the game loads the proxy, reaches the
+same first screen and closes on a close request as in its stage 3 run,
+and (3) the set of interface versions and positions it calls in the
+first run seconds is the same as in its stage 3 run. A game that
+behaves differently is a mismatch.
+
+**Result of experiment 4** (agent runs, 14:28 to 14:33, after the plan
+was committed at 14:27:34):
+
+- (1) **Matches** in all three: position 9 was answered by Reborn and
+  returned the game's app ID (`0x1a22be`, `0x2639a0`, `0x2423d6`).
+- (2) **Matches** in all three: each game loaded the proxy, reached its
+  first screen and closed on a close request.
+- (3) **Matches** for Plant Therapy only. Baldi's Basics also called
+  position 6 of `STEAMUSERSTATS_INTERFACE_VERSION012` (at 443 ms, with
+  the text `ACH_NULL`), and An Arcade Full of Cats also called positions
+  23 and 28 of it (at about 30 seconds); neither had these calls in its
+  stage 3 run. **Does not match.**
+
+Whether answering `GetAppID` caused the extra calls or whether they vary
+from run to run anyway (they come later, and stats arrive from the
+server asynchronously) cannot be told from one normal run per game; the
+prediction did not allow for run-to-run differences. Answer mode for
+`GetAppID` is therefore **not confirmed** as harmless; it stays in the
+proxy's list only for planned experiments.
+
+```text
+62 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+62 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x1a22be
+64 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+64 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2639a0
+62 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+62 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2423d6
+```
+
+### Experiment 5 (planned 2026-11-21, before the runs): how much normal runs vary
+
+Baldi's Basics and An Arcade Full of Cats, two normal runs each (no
+`--app`, so no answer and no shadow), then two answer-mode runs each,
+all with the same waiting time (30 seconds after the `[S_API]` line).
+
+**Prediction:** if answering `GetAppID` does not change what the game
+does, then every interface version and position called in an
+answer-mode run is also called in at least one of the three runs of
+that game without answer mode (its two new normal runs and its stage 3
+run; the experiment 4 runs are not counted), and the other way round for the
+positions called within the first 2 seconds. A position seen only in
+answer-mode runs, or a position within the first 2 seconds missing from
+them, is a mismatch.
+
+**Result of experiment 5** (agent runs, after the plan and its wording
+fix were committed):
+
+- All eight runs loaded the proxy, reached the first screen and closed
+  normally. In the four answer-mode runs position 9 was answered by
+  Reborn (twice per run).
+- Baldi's Basics: no position appeared only in an answer-mode run, and
+  none of the positions called in the first 2 seconds of the normal runs
+  was missing from them. **Matches.** The two new normal runs called
+  positions 0 and 6 of `STEAMUSERSTATS_INTERFACE_VERSION012`, which the
+  stage 3 run had not: the calls that made experiment 4 mismatch also
+  vary between normal runs.
+- An Arcade Full of Cats: the same. **Matches.** The extra positions 23
+  and 28 of experiment 4 (at about 30 seconds) appeared in none of the
+  eight runs.
+
+Answer mode for `GetAppID` matched experiment 5 in both games, which
+with Plant Therapy in experiment 4 makes three games. The maintainer
+gave the OK on 2026-11-21 (ADR 0044): answering `GetAppID` at position 9
+of `SteamUtils010` with the app ID Reborn started the game with is
+confirmed for the shim.
+
+### `SteamUtils010` position 14: not known
+
+- **Recorded:** called about as often as frames are drawn; the first
+  call of each game had an address in `r8`, later ones `r8` = 1; the
+  result was `0xffffffff` every time in all games.
+- No candidate: none of the functions on the `ISteamUtils` page that
+  take no or simple arguments obviously gives the same 32-bit value
+  every frame in every game.

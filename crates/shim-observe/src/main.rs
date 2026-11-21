@@ -29,6 +29,15 @@ enum Command {
         /// (ADR 0040). Use it if the game misbehaves with stand-ins.
         #[arg(long)]
         read_only: bool,
+        /// The app ID of the game about to run, for shadow mode (ADR 0046):
+        /// the proxy compares the official client's answers with Reborn's.
+        #[arg(long)]
+        app: Option<u32>,
+        /// Experiment 6 of ADR 0048 only: write this process ID into
+        /// `ActiveProcess\pid` for the session (saved, and restored on
+        /// disarm if still unchanged).
+        #[arg(long)]
+        pid: Option<u32>,
     },
     /// Put the saved SteamClientDll64 back (only if it still points to the
     /// proxy). Safe to run any number of times.
@@ -42,7 +51,7 @@ fn main() -> Result<()> {
 
 #[cfg(windows)]
 fn run(command: Command) -> Result<()> {
-    use reborn_shim_observe::registry::RegistryStore;
+    use reborn_shim_observe::registry::{PidStore, RegistryStore};
     use reborn_shim_observe::session::{Disarmed, Session};
 
     let session = Session::new(reborn_platform::settings::data_dir()?.join("shim-observe"));
@@ -62,8 +71,21 @@ fn run(command: Command) -> Result<()> {
                 println!("The value points to the proxy.");
             }
         }
-        Command::Arm { proxy, read_only } => {
+        Command::Arm {
+            proxy,
+            read_only,
+            app,
+            pid,
+        } => {
             let target = session.arm(&store, &proxy, read_only)?;
+            session.set_app_id(app)?;
+            if let Some(pid) = pid {
+                session.replace_pid(&PidStore::steam_pid(), pid)?;
+                println!("Experiment 6: pid is now {pid}.");
+            }
+            if let Some(app) = app {
+                println!("Shadow mode: app ID {app}.");
+            }
             if read_only {
                 println!("Read only: the proxy hands out no stand-in objects.");
             }
@@ -73,15 +95,20 @@ fn run(command: Command) -> Result<()> {
             );
             println!("Run `reborn-observe disarm` when the game has exited.");
         }
-        Command::Disarm => match session.disarm(&store)? {
-            Disarmed::NothingArmed => println!("Nothing was armed."),
-            Disarmed::Restored(value) => println!("Restored SteamClientDll64 to {value}."),
-            Disarmed::LeftAlone { current, saved } => println!(
-                "SteamClientDll64 no longer pointed to the proxy ({}); left it alone. \
+        Command::Disarm => {
+            if let Some(original) = session.restore_pid(&PidStore::steam_pid())? {
+                println!("Restored pid to {original}.");
+            }
+            match session.disarm(&store)? {
+                Disarmed::NothingArmed => println!("Nothing was armed."),
+                Disarmed::Restored(value) => println!("Restored SteamClientDll64 to {value}."),
+                Disarmed::LeftAlone { current, saved } => println!(
+                    "SteamClientDll64 no longer pointed to the proxy ({}); left it alone. \
                  The value before the session was {saved}.",
-                current.as_deref().unwrap_or("not set")
-            ),
-        },
+                    current.as_deref().unwrap_or("not set")
+                ),
+            }
+        }
     }
     Ok(())
 }

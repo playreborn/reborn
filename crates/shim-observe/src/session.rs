@@ -16,6 +16,12 @@ const PROXY: &str = "steamclient64.dll";
 /// Name of the file next to the proxy that turns its stand-in objects off
 /// (ADR 0040, step 3b); the proxy then only reads, as in step 3a.
 pub const READ_ONLY_MARKER: &str = "read-only";
+/// Name of the file next to the proxy that holds the app ID Reborn gives
+/// the proxy for shadow mode (ADR 0046), as decimal text.
+pub const APP_ID_FILE: &str = "app-id";
+/// Name of the file that holds the `pid` value from before experiment 6
+/// (ADR 0048) and the one written instead, one per line.
+const SAVED_PID: &str = "original-pid.txt";
 
 /// The one registry value a session changes.
 pub trait ValueStore {
@@ -159,6 +165,65 @@ impl Session {
         Ok(target)
     }
 
+    /// Gives the proxy the app ID of the game about to run, for shadow mode
+    /// (ADR 0046), or removes it with `None`. Only the number is written.
+    pub fn set_app_id(&self, app_id: Option<u32>) -> Result<(), ObserveError> {
+        let path = self.dir.join(APP_ID_FILE);
+        match app_id {
+            Some(id) => {
+                std::fs::create_dir_all(&self.dir).map_err(io_error("creating Reborn's folder"))?;
+                std::fs::write(&path, id.to_string()).map_err(io_error("writing the app ID"))
+            }
+            None => match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(io_error("removing the app ID")(error)),
+            },
+        }
+    }
+
+    /// Experiment 6 (ADR 0048): saves the current `pid` value and writes
+    /// `pid` instead. Refuses if a replaced `pid` was not restored yet.
+    pub fn replace_pid(&self, store: &dyn ValueStore, pid: u32) -> Result<(), ObserveError> {
+        let path = self.dir.join(SAVED_PID);
+        if path.exists() {
+            return Err(ObserveError::AlreadyArmed);
+        }
+        let current = store.get().map_err(io_error("reading pid"))?;
+        std::fs::create_dir_all(&self.dir).map_err(io_error("creating Reborn's folder"))?;
+        let saved = format!("{}\n{pid}\n", current.as_deref().unwrap_or(""));
+        std::fs::write(&path, saved).map_err(io_error("saving the old pid"))?;
+        if let Err(error) = store.set(&pid.to_string()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(io_error("writing pid")(error));
+        }
+        Ok(())
+    }
+
+    /// Writes the saved `pid` back if `pid` still holds the value
+    /// [`Self::replace_pid`] wrote (if the official client changed it since,
+    /// it is left alone), then forgets it. Returns what was restored.
+    pub fn restore_pid(&self, store: &dyn ValueStore) -> Result<Option<String>, ObserveError> {
+        let path = self.dir.join(SAVED_PID);
+        let saved = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error("reading the saved pid")(error)),
+        };
+        let mut lines = saved.lines();
+        let original = lines.next().unwrap_or("").to_owned();
+        let ours = lines.next().unwrap_or("").to_owned();
+        let current = store.get().map_err(io_error("reading pid"))?;
+        let restored = if current.as_deref() == Some(ours.as_str()) && !original.is_empty() {
+            store.set(&original).map_err(io_error("writing pid"))?;
+            Some(original)
+        } else {
+            None
+        };
+        std::fs::remove_file(&path).map_err(io_error("removing the saved pid"))?;
+        Ok(restored)
+    }
+
     /// Writes the saved value back if the value still points to the proxy,
     /// then forgets the session. Safe to run any number of times.
     pub fn disarm(&self, store: &dyn ValueStore) -> Result<Disarmed, ObserveError> {
@@ -181,6 +246,7 @@ impl Session {
         // The copy may still be loaded by a running game; it is harmless.
         let _ = std::fs::remove_file(self.proxy_path());
         let _ = std::fs::remove_file(self.dir.join(READ_ONLY_MARKER));
+        let _ = std::fs::remove_file(self.dir.join(APP_ID_FILE));
         Ok(outcome)
     }
 
@@ -302,6 +368,47 @@ mod tests {
         assert_eq!(session.status(&store)?.saved, None);
         // Running it again does nothing.
         assert_eq!(session.disarm(&store)?, Disarmed::NothingArmed);
+        Ok(())
+    }
+
+    #[test]
+    fn the_app_id_is_written_for_the_proxy_and_removed_on_disarm() -> Result<(), ObserveError> {
+        let temp = TempDir::new("app-id");
+        let session = Session::new(temp.0.join("shim-observe"));
+        let store = FakeStore::with(OFFICIAL);
+        session.arm(&store, &temp.proxy(), false)?;
+        let file = temp.0.join("shim-observe").join(APP_ID_FILE);
+        session.set_app_id(Some(2_143_030))?;
+        assert_eq!(
+            std::fs::read_to_string(&file).ok().as_deref(),
+            Some("2143030")
+        );
+        session.set_app_id(None)?;
+        assert!(!file.exists(), "None removes it");
+        session.set_app_id(None)?;
+        session.set_app_id(Some(480))?;
+        session.disarm(&store)?;
+        assert!(!file.exists(), "disarm removes it");
+        Ok(())
+    }
+
+    #[test]
+    fn a_replaced_pid_comes_back_only_if_still_ours() -> Result<(), ObserveError> {
+        let temp = TempDir::new("pid");
+        let session = Session::new(temp.0.join("shim-observe"));
+        let pid = FakeStore::with("1234");
+        session.replace_pid(&pid, 999)?;
+        assert_eq!(pid.get().ok().flatten().as_deref(), Some("999"));
+        assert!(session.replace_pid(&pid, 5).is_err(), "not twice");
+        assert_eq!(session.restore_pid(&pid)?.as_deref(), Some("1234"));
+        assert_eq!(pid.get().ok().flatten().as_deref(), Some("1234"));
+        assert_eq!(session.restore_pid(&pid)?, None, "nothing left to restore");
+
+        // Changed by someone else in between: left alone.
+        session.replace_pid(&pid, 999)?;
+        pid.set("777").ok();
+        assert_eq!(session.restore_pid(&pid)?, None);
+        assert_eq!(pid.get().ok().flatten().as_deref(), Some("777"));
         Ok(())
     }
 

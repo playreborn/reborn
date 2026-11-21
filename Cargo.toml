@@ -20,6 +20,7 @@ reborn-core = { path = "crates/core", version = "0.2.0" }
 reborn-formats = { path = "crates/formats", version = "0.2.0" }
 reborn-ipc = { path = "crates/ipc", version = "0.2.0" }
 reborn-platform = { path = "crates/platform", version = "0.2.0" }
+reborn-shim-protocol = { path = "crates/shim-protocol", version = "0.2.0" }
 
 # External crates. Add new ones here first and justify them in the PR.
 anyhow = "1"

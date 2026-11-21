@@ -1,0 +1,256 @@
+//! Messages between the shim (Reborn's `steamclient` replacement inside a
+//! game process) and `rebornd`, as decided in ADR 0047.
+//!
+//! One JSON object per line. The shim sends [`ShimMessage`]s, the daemon
+//! answers with [`DaemonMessage`]s; a request and its response share an
+//! `id`. The first exchange is [`Request::Hello`].
+//!
+//! This crate holds only message types and framing (MIT OR Apache-2.0), so
+//! the shim never depends on GPL crates (AGENTS.md section 3).
+#![forbid(unsafe_code)]
+
+use serde::{Deserialize, Serialize};
+
+/// The protocol version in [`Request::Hello`]. A daemon refuses a shim
+/// with another major version.
+pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 1 };
+
+/// A protocol version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Version {
+    /// Changes when old peers can no longer understand new messages.
+    pub major: u32,
+    /// Changes when messages are only added.
+    pub minor: u32,
+}
+
+/// A line the shim sends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShimMessage {
+    /// Matches the response to the request.
+    pub id: u64,
+    /// What the shim asks for.
+    pub request: Request,
+}
+
+/// What the shim asks the daemon.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Request {
+    /// The first message: protocol version and the game's process ID, so
+    /// the daemon can find the app it launched for that process.
+    Hello {
+        /// The shim's protocol version.
+        version: Version,
+        /// The game's process ID.
+        pid: u32,
+    },
+}
+
+/// A line the daemon sends: a response to a request (events follow in
+/// later versions).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DaemonMessage {
+    /// The answer to the request with the same `id`.
+    Response {
+        /// The request's `id`.
+        id: u64,
+        /// The answer.
+        response: Response,
+    },
+}
+
+/// The daemon's answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Response {
+    /// The session for this process: values the shim may cache and answer
+    /// locally (ADR 0047). Only confirmed meanings get a field here.
+    Session(Session),
+    /// No session: why, for the shim's log.
+    Refused {
+        /// Why the daemon refused.
+        reason: RefusalReason,
+    },
+}
+
+/// Values the shim keeps for the whole run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Session {
+    /// The daemon's protocol version.
+    pub version: Version,
+    /// The app the daemon launched this process for; the answer to
+    /// `GetAppID` (`docs/shim/meanings.md`).
+    pub app_id: u32,
+}
+
+/// Why the daemon gave no session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalReason {
+    /// The shim's major version differs from the daemon's.
+    IncompatibleVersion,
+    /// The daemon did not launch this process.
+    UnknownProcess,
+}
+
+/// Reading a line failed.
+#[derive(Debug, thiserror::Error)]
+pub enum FrameError {
+    /// The line is not one valid message.
+    #[error("not a valid message: {0}")]
+    Invalid(#[from] serde_json::Error),
+    /// The text holds more than one line.
+    #[error("a message must be exactly one line")]
+    MultipleLines,
+}
+
+/// Where `rebornd` listens for shims (ADR 0047): on Windows the name of a
+/// named pipe in the local namespace (`reborn-shim-<user>`, user name with
+/// everything but ASCII letters and digits replaced by `_`), elsewhere the
+/// path of a socket file (`$XDG_RUNTIME_DIR/reborn-shim.sock`, or the temp
+/// directory with the user name in the file name). Same scheme as the
+/// frontend socket of ADR 0008.
+pub fn socket_name() -> String {
+    if cfg!(windows) {
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_owned());
+        let user: String = user
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        format!("reborn-shim-{user}")
+    } else {
+        match std::env::var_os("XDG_RUNTIME_DIR") {
+            Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir)
+                .join("reborn-shim.sock")
+                .to_string_lossy()
+                .into_owned(),
+            _ => {
+                let user = std::env::var("USER").unwrap_or_else(|_| "default".to_owned());
+                std::env::temp_dir()
+                    .join(format!("reborn-shim-{user}.sock"))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
+    }
+}
+
+/// One message as a line, ending in `\n`.
+pub fn encode<T: Serialize>(message: &T) -> Result<String, FrameError> {
+    let mut line = serde_json::to_string(message)?;
+    line.push('\n');
+    Ok(line)
+}
+
+/// One message from a line (with or without its line ending).
+pub fn decode<'a, T: Deserialize<'a>>(line: &'a str) -> Result<T, FrameError> {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    if line.contains('\n') {
+        return Err(FrameError::MultipleLines);
+    }
+    Ok(serde_json::from_str(line)?)
+}
+
+/// The daemon's decision on a `Hello`, given the app it launched for that
+/// process, if any.
+pub fn answer_hello(version: Version, launched_app: Option<u32>) -> Response {
+    if version.major != PROTOCOL_VERSION.major {
+        return Response::Refused {
+            reason: RefusalReason::IncompatibleVersion,
+        };
+    }
+    match launched_app {
+        Some(app_id) => Response::Session(Session {
+            version: PROTOCOL_VERSION,
+            app_id,
+        }),
+        None => Response::Refused {
+            reason: RefusalReason::UnknownProcess,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hello_round_trips_as_one_line() -> Result<(), FrameError> {
+        let message = ShimMessage {
+            id: 1,
+            request: Request::Hello {
+                version: PROTOCOL_VERSION,
+                pid: 4242,
+            },
+        };
+        let line = encode(&message)?;
+        assert_eq!(
+            line,
+            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":1},\"pid\":4242}}\n"
+        );
+        assert_eq!(decode::<ShimMessage>(&line)?, message);
+        Ok(())
+    }
+
+    #[test]
+    fn session_and_refusal_round_trip() -> Result<(), FrameError> {
+        for response in [
+            answer_hello(PROTOCOL_VERSION, Some(2_143_030)),
+            answer_hello(PROTOCOL_VERSION, None),
+            answer_hello(Version { major: 1, minor: 0 }, Some(480)),
+        ] {
+            let message = DaemonMessage::Response { id: 7, response };
+            assert_eq!(decode::<DaemonMessage>(&encode(&message)?)?, message);
+        }
+        let line = encode(&DaemonMessage::Response {
+            id: 7,
+            response: answer_hello(PROTOCOL_VERSION, Some(2_143_030)),
+        })?;
+        assert_eq!(
+            line,
+            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":1},\"app_id\":2143030}}\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hello_is_refused_for_other_versions_and_unknown_processes() {
+        assert_eq!(
+            answer_hello(Version { major: 1, minor: 0 }, Some(480)),
+            Response::Refused {
+                reason: RefusalReason::IncompatibleVersion
+            }
+        );
+        assert_eq!(
+            answer_hello(Version { major: 0, minor: 9 }, None),
+            Response::Refused {
+                reason: RefusalReason::UnknownProcess
+            }
+        );
+        assert!(matches!(
+            answer_hello(Version { major: 0, minor: 9 }, Some(480)),
+            Response::Session(Session { app_id: 480, .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_broken_lines() {
+        assert!(matches!(
+            decode::<ShimMessage>("{\"id\":1}\n{\"id\":2}"),
+            Err(FrameError::MultipleLines)
+        ));
+        assert!(matches!(
+            decode::<ShimMessage>("not json"),
+            Err(FrameError::Invalid(_))
+        ));
+        assert!(
+            decode::<ShimMessage>(
+                "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":1},\"pid\":1}}\r\n"
+            )
+            .is_ok()
+        );
+    }
+}

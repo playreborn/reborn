@@ -138,3 +138,53 @@ session and restores it) needs a decision before stage 2.
   then `~/.steam/sdk64/steamclient.so`.
 - **Recorded:** not yet in this format. The first test account owns no
   native Linux game yet.
+
+## What `ActiveProcess\pid` is for (experiment 6, ADR 0048)
+
+### Plan (2026-11-21, before the runs)
+
+`docs/shim/loading.md` records that games read
+`HKCU\Software\Valve\Steam\ActiveProcess\pid` before they load
+`steamclient64.dll`, and that it held the official client's process ID.
+What they check it for is not known. ADR 0048 needs to know what `pid`
+should hold in shim mode.
+
+Setup: official client running and signed in; `rebornd` running (its
+process ID is the replacement value). For each of Linsips (4301370),
+Baldi's Basics Classic Remastered (1712830) and Plant Therapy (2505120):
+one normal proxy run, then one run with `reborn-observe arm --pid
+<rebornd's process ID>`; the old value is restored on disarm.
+`reborn-observe status`-like checks of `pid` before and after each run
+show whether the official client rewrote it meanwhile.
+
+**Prediction (if `pid` is only read, or only checked for a running
+process):** in the replaced-`pid` runs each game loads the proxy, reaches
+its first screen, closes on a close request, and calls nothing that its
+normal runs (this normal run and the earlier ones in `coverage.md`) did
+not, and `SteamUtils010` position 9 returns its app ID. A game that does
+not load the proxy, stops, or calls positions no normal run called is a
+mismatch; then `pid` must keep pointing at something else, and a new ADR
+decides.
+
+If the official client rewrites `pid` during the run, the experiment
+tells nothing and is noted as such.
+
+### Result (agent runs, ADR 0044, after the plan was committed at 17:09:36)
+
+- `pid` held the official client's process ID before every run. In the
+  three replaced-`pid` runs `reborn-observe` wrote `rebornd`'s process ID,
+  and at disarm `pid` still held it, so the official client did not
+  rewrite it during a run; disarm put the old value back each time.
+- All six runs loaded the proxy, reached the first screen and closed on a
+  close request.
+- In the replaced-`pid` runs no game called any position that none of
+  its normal runs called, none missed a position its normal runs called
+  in the first 2 seconds, and position 9 of `SteamUtils010` returned the
+  game's app ID (4301370, 1712830, 2505120). **Matches** in all three
+  games.
+
+So far a game behaves the same when `pid` names a running process other
+than the official client. Under ADR 0048 `pid` gets `rebornd`'s process
+ID in shim mode; the maintainer gave the OK on 2026-11-21 (ADR 0044). Not
+covered: a `pid` that names no running process, and systems without the
+official client, which this experiment could not test.

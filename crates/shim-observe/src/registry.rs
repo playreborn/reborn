@@ -1,5 +1,6 @@
-//! The one registry value an observation session changes (ADR 0039):
-//! `HKCU\Software\Valve\Steam\ActiveProcess\SteamClientDll64`.
+//! The registry values an observation session changes:
+//! `HKCU\Software\Valve\Steam\ActiveProcess\SteamClientDll64` (ADR 0039),
+//! and for experiment 6 of ADR 0048 also `pid` in the same key.
 //!
 //! Uses `RegGetValueW` and `RegSetKeyValueW` as Microsoft documents them.
 //! Nothing else in the registry is read or written.
@@ -9,7 +10,8 @@ use std::io;
 
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegGetValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+    RegSetKeyValueW,
 };
 
 use crate::session::ValueStore;
@@ -33,6 +35,76 @@ impl RegistryStore {
         Self {
             key: KEY.to_owned(),
             value: VALUE,
+        }
+    }
+}
+
+/// `HKCU\Software\Valve\Steam\ActiveProcess\pid`, a `REG_DWORD`, read and
+/// written as decimal text through [`ValueStore`] (experiment 6, ADR 0048).
+#[derive(Debug, Clone)]
+pub struct PidStore {
+    key: String,
+}
+
+impl PidStore {
+    /// `HKCU\Software\Valve\Steam\ActiveProcess\pid`.
+    pub fn steam_pid() -> Self {
+        Self {
+            key: KEY.to_owned(),
+        }
+    }
+}
+
+impl ValueStore for PidStore {
+    fn get(&self) -> io::Result<Option<String>> {
+        let key = wide(&self.key);
+        let value = wide("pid");
+        let mut data: u32 = 0;
+        let mut size = 4u32;
+        // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that
+        // live for the call; `data` is writable for the 4 bytes `size` says,
+        // and RRF_RT_REG_DWORD makes RegGetValueW accept only a REG_DWORD.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_DWORD,
+                std::ptr::null_mut(),
+                (&raw mut data).cast(),
+                &mut size,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => Ok(Some(data.to_string())),
+            ERROR_FILE_NOT_FOUND => Ok(None),
+            _ => Err(io::Error::from_raw_os_error(status as i32)),
+        }
+    }
+
+    fn set(&self, text: &str) -> io::Result<()> {
+        let data: u32 = text
+            .trim()
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "not a process ID"))?;
+        let key = wide(&self.key);
+        let value = wide("pid");
+        // SAFETY: `key` and `value` are NUL-terminated UTF-16 strings that
+        // live for the call; `data` is 4 readable bytes, as REG_DWORD needs.
+        let status = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                REG_DWORD,
+                (&raw const data).cast(),
+                4,
+            )
+        };
+        if status == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(status as i32))
         }
     }
 }
@@ -159,6 +231,24 @@ mod tests {
         let wide_key = wide(&key);
         // SAFETY: `wide_key` is a NUL-terminated UTF-16 string that lives for
         // the call; the key has no subkeys, as RegDeleteKeyW requires.
+        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, wide_key.as_ptr()) };
+        result
+    }
+
+    /// The same for the process ID value, in a throwaway key.
+    #[test]
+    fn writes_and_reads_a_process_id() -> io::Result<()> {
+        let key = format!(r"Software\RebornObservePidTest{}", std::process::id());
+        let store = PidStore { key: key.clone() };
+        let result = (|| {
+            assert_eq!(store.get()?, None, "the key does not exist yet");
+            store.set("4242")?;
+            assert_eq!(store.get()?.as_deref(), Some("4242"));
+            assert!(store.set("not a number").is_err());
+            Ok(())
+        })();
+        let wide_key = wide(&key);
+        // SAFETY: as above.
         unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, wide_key.as_ptr()) };
         result
     }

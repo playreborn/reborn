@@ -1,0 +1,18 @@
+[package]
+name = "reborn-shim-protocol"
+description = "Messages between Reborn's steamclient replacement (the shim) and the rebornd daemon (ADR 0047). Part of Reborn."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

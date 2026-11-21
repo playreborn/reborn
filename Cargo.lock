@@ -3816,6 +3816,7 @@ version = "0.2.0"
 dependencies = [
  "interprocess",
  "reborn-platform",
+ "reborn-shim-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3852,6 +3853,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reborn-shim-protocol"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "reborn-testkit"
 version = "0.2.0"
 
@@ -3866,6 +3876,7 @@ dependencies = [
  "reborn-core",
  "reborn-ipc",
  "reborn-platform",
+ "reborn-shim-protocol",
  "serde_json",
  "tokio",
  "tracing",

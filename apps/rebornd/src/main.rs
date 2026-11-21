@@ -9,6 +9,7 @@
 
 mod daemon;
 mod server;
+mod shim_server;
 
 use std::sync::Arc;
 
@@ -33,10 +34,14 @@ async fn main() -> Result<()> {
         Err(error) => return Err(error).context("cannot open the local socket"),
     };
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "rebornd listening");
+    // A second socket for shims inside game processes (ADR 0047).
+    let shim_listener = reborn_ipc::socket::listen_shim(&socket_access()?)
+        .context("cannot open the local socket for shims")?;
 
     let daemon = Arc::new(Daemon::new());
     tokio::spawn(daemon::run_jobs(Arc::clone(&daemon)));
     tokio::spawn(daemon::keep_connected(Arc::clone(&daemon)));
+    tokio::spawn(shim_server::accept_loop(shim_listener, Arc::clone(&daemon)));
 
     tokio::select! {
         () = server::accept_loop(listener, Arc::clone(&daemon)) => {}

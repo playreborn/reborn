@@ -49,6 +49,7 @@ testkit: dev-dependency only
 - `crates/core`: domain logic (accounts, library, queue, launch). GPL-3.0-or-later.
 - `crates/platform`: OS integration (paths, keyring, processes, Proton). GPL-3.0-or-later.
 - `crates/ipc`: frontend ↔ daemon API types. GPL-3.0-or-later.
+- `crates/shim-protocol`: messages between the shim and `rebornd` (ADR 0047). MIT OR Apache-2.0.
 - `crates/testkit`: fixtures, replay, mocks. Not published.
 - `apps/rebornd`: the daemon. `apps/reborn-cli`: the CLI. The Iced GUI arrives in M2.
 

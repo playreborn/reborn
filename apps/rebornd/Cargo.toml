@@ -16,6 +16,7 @@ reborn-cm.workspace = true
 reborn-core.workspace = true
 reborn-ipc.workspace = true
 reborn-platform.workspace = true
+reborn-shim-protocol.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

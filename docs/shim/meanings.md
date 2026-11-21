@@ -183,6 +183,13 @@ out):
   source.
 - **Experiment 2** ruled out the share of players; the other candidates
   remain (see its result below).
+- **Further run** (2026-11-21, an AI agent on the maintainer's computer,
+  on the maintainer's instruction, ADR 0044; the game ran to its menu
+  only): 55 logged calls at position 6, all with `Keep_PotionEffect`;
+  the 16 bytes after each were `009b0ad4 a0020000 e4f959f8 fc7f0000`.
+  The first byte was 0 again, bytes 2 to 8 differed from experiment 2.
+  That fits a call that writes only the first byte, but it was not a
+  planned experiment, so it changes no status.
 
 ### Position 4: candidates that set a value by name
 

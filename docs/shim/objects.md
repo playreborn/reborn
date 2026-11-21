@@ -167,3 +167,78 @@ see `README.md` for the format.
   uses, not what they do; the texts (save file names, stat names, rich
   presence keys) hint at it, but that is not a source. What `SteamUser020`
   position 2 writes to the address in `rdx` was not read.
+
+### Windows: two more games, newer `SteamClient` versions (stage 3)
+
+- **Fact:** With the same proxy as step 4b (stand-ins on), Bongo Cat and
+  Coin Maker Simulator ran normally, Coin Maker Simulator also into a
+  game and back to the menu.
+  - `CreateInterface` was called three times in each: `SteamClient017`,
+    then twice `SteamClient021` (Bongo Cat) or `SteamClient023` (Coin
+    Maker Simulator). Both calls with the same text gave the same object
+    (the same stand-in). Counted table entries: 37 for `SteamClient017`
+    as in Cave Crawlers, 40 for `SteamClient021`, 38 for
+    `SteamClient023`.
+  - Unlike `SteamClient020`, where every text went to position 12, these
+    two were asked for most objects at a position of their own, with the
+    text in `r9` (in `r8` at position 9):
+
+    | Text | `SteamClient021` | `SteamClient023` |
+    | --- | --- | --- |
+    | `SteamUser023` | 5 | 5 |
+    | `SteamFriends018` | 8 | 8 |
+    | `SteamUtils010` | 9, 12 | 9, 12 |
+    | `SteamMatchMaking009` | 10 | 10 |
+    | `SteamMatchMakingServers002` | 11 | 11 |
+    | `STEAMUSERSTATS_INTERFACE_VERSION013` | 13 | 13 |
+    | `STEAMAPPS_INTERFACE_VERSION008` / `009` | 15 (008) | 15 (009) |
+    | `SteamNetworking006` | 16 | 16 |
+    | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 17 | 17 |
+    | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 18 | 18 |
+    | `SteamMatchGameSearch001` | 19 | not asked |
+    | `STEAMHTTP_INTERFACE_VERSION003` | 24 | 23 |
+    | `STEAMUGC_INTERFACE_VERSION021` | 26 | 25 |
+    | `STEAMMUSIC_INTERFACE_VERSION001` | 27 | 26 |
+    | `STEAMMUSICREMOTE_INTERFACE_VERSION001` | 28 | not asked |
+    | `STEAMHTMLSURFACE_INTERFACE_VERSION_005` | 29 | 27 |
+    | `STEAMINVENTORY_INTERFACE_V003` | 33 | 31 |
+    | `STEAMVIDEO_INTERFACE_V007` | 34 | 32 |
+    | `STEAMPARENTALSETTINGS_INTERFACE_VERSION001` | 35 | 33 |
+    | `SteamInput006` | 12, 36 | 12, 34 |
+    | `SteamParties002` | 37 | 35 |
+    | `STEAMREMOTEPLAY_INTERFACE_VERSION003` / `004` | 38 (003) | 36 (004) |
+    | `SteamNetworkingSockets012`, `SteamNetworkingUtils004`, `SteamNetworkingMessages002`, `SteamController008`, `STEAMTIMELINE_INTERFACE_V004` | 12 | 12 |
+
+    So the same text can sit at different positions in different
+    `SteamClient` versions (`STEAMHTTP_INTERFACE_VERSION003`: 24 and
+    23). Asking twice for the same text, at either position, gave the
+    same object.
+  - At these positions `rdx` and `r8` were 1 in Coin Maker Simulator
+    (at position 9 only `rdx`). In Bongo Cat their lowest four bytes were
+    1 and the upper four bytes varied.
+  - Every result of these calls (32 in Bongo Cat, 30 in Coin Maker
+    Simulator) had the step 3a shape and got a stand-in: 29 stand-ins in Bongo Cat and 27 in Coin Maker Simulator
+    (room for 32). In every call through a stand-in `rcx` held the
+    stand-in's address; no other register ever held one.
+  - Coin Maker Simulator called position 22 of
+    `STEAMUSERSTATS_INTERFACE_VERSION013` three times with a stat name in
+    `rdx`; the result was not readable memory, so it got no stand-in.
+- **Recorded:** 2026-11-21, Bongo Cat (3419430) and Coin Maker Simulator
+  Demo (5191630), Windows 11 64-bit, `reborn-observe arm` (without
+  `--read-only`) with the proxy from `crates/shim-observe` (step 4b),
+  stage 3. Official client running, first test account.
+- **Recorder:** the maintainer (see `loading.md`).
+- **Evidence** (excerpt, Coin Maker Simulator; floating-point registers
+  left out):
+
+  ```text
+  19 ms ThreadId(1) CreateInterface result 2 shape: first field -> steamclient64+0x133ae18, 38 entries point into its executable memory
+  59 ms ThreadId(1) SteamClient023#5 call 1 (rcx held the stand-in, now the real object) rcx=0x7ffceac30808 rdx=0x1 r8=0x1 r9=0x7ffdb8dec3e0 r9->"SteamUser023"
+  68 ms ThreadId(1) SteamClient023#9 call 1 (rcx held the stand-in, now the real object) rcx=0x7ffceac30808 rdx=0x1 r8=0x1d4c6182500 r9=0x0 r8->"SteamUtils010"
+  80 ms ThreadId(1) SteamClient023#23 call 1 (rcx held the stand-in, now the real object) rcx=0x7ffceac30808 rdx=0x1 r8=0x1 r9=0x1d4c61821c0 r9->"STEAMHTTP_INTERFACE_VERSION003"
+  81 ms ThreadId(1) SteamClient023#23 result 1 replaced by stand-in 12 (0x1d31a06dcc0) for STEAMHTTP_INTERFACE_VERSION003
+  ```
+
+- **Meaning:** not known. The 32 stand-ins are nearly used up by newer
+  games; a game asking for more objects gets the real ones for the rest
+  (the log says so).

@@ -145,3 +145,71 @@ read.
 - **Meaning:** not known. Which arguments the entry points really take,
   their types and what the returned addresses are is not yet observed;
   calls on the returned objects are stage 3 (its own ADR, ADR 0038).
+
+### Windows: what `Steam_BGetCallback` hands the game (step 4b)
+
+- **Fact:** With the proxy logging the first 16 bytes at `rdx` and `r8`
+  after each `Steam_BGetCallback` call whose result's lowest byte was 1
+  (ADR 0042), three games ran normally, Coin Maker Simulator also into a
+  game and back to the menu.
+  - Such calls: 14 in Cave Crawlers, 24 in Bongo Cat, 19 in Coin Maker
+    Simulator; `Steam_FreeLastCallback` was called exactly as often in
+    each game.
+  - At `rdx`, in every one of them: first a four-byte value 1 (the same
+    as the lowest four bytes of `rcx` of the call), then a four-byte
+    number, then eight bytes that look like an address in the game's
+    process. Bytes are little endian; the numbers seen, with how often:
+
+    | Number | Cave Crawlers | Bongo Cat | Coin Maker Simulator |
+    | --- | --- | --- | --- |
+    | 304 | 1 | | |
+    | 336 | 2 | | |
+    | 703 | | 6 | 11 |
+    | 1101 | 1 | 1 | |
+    | 1102 | 3 | 4 | |
+    | 1222 | | 2 | 2 |
+    | 1281 | | 4 | 4 |
+    | 4700 | 2 | 3 | |
+    | 4701 | 1 | 1 | |
+    | 4702 | 1 | 1 | |
+    | 1040011 | 2 | 1 | 1 |
+    | 1040044 | 1 | 1 | 1 |
+
+  - After each call with the number 703, the next entry point the game
+    called was `Steam_GetAPICallResult`, then `Steam_FreeLastCallback`;
+    after every other one it was `Steam_FreeLastCallback` directly.
+  - At `r8`, the 16 bytes showed no pattern shared by the three games.
+    Whether the client wrote them is not known.
+- **Recorded:** 2026-11-21, Cave Crawlers (2143030), Bongo Cat (3419430)
+  and Coin Maker Simulator Demo (5191630), Windows 11 64-bit,
+  `reborn-observe arm` (without `--read-only`) with the proxy from
+  `crates/shim-observe` (step 4b of ADR 0042). Official client running,
+  first test account.
+- **Recorder:** the maintainer (see above).
+- **Evidence** (excerpt, Coin Maker Simulator; floating-point registers
+  left out):
+
+  ```text
+  719 ms ThreadId(1) Steam_BGetCallback return 3 wrote rdx->[01000000 01050000 4001739c d4010000] r8->[00000000 00000000 01000000 00000000]
+  720 ms ThreadId(1) Steam_BGetCallback return 5 wrote rdx->[01000000 bf020000 c004639c d4010000] r8->[00000000 00000000 01000000 00000000]
+  720 ms ThreadId(1) Steam_GetAPICallResult call 1 rcx=0x1 rdx=0xb72601e4ae2e78d3 r8=0x1d4c60ca1b0 r9=0x318
+  720 ms ThreadId(1) Steam_GetAPICallResult return 1 rax=0x0
+  720 ms ThreadId(1) Steam_FreeLastCallback call 5 rcx=0x1 rdx=0x0 r8=0x1d232ff4800 r9=0x16
+  ```
+
+- **Meaning:** not known. What the number and the eight bytes after it
+  are, and what lies beyond the first 16 bytes, is not observed; reading
+  further needs a new ADR (ADR 0042).
+
+### Windows: `Steam_GetAPICallResult` (stage 2 and 4b)
+
+- **Fact:** Bongo Cat called it 6 times and Coin Maker Simulator 11 times
+  (Cave Crawlers never), each time right after a `Steam_BGetCallback`
+  whose bytes at `rdx` held the number 703. `rcx` was 1 in Coin Maker
+  Simulator; in Bongo Cat its lowest four bytes were 1 and the upper four
+  varied. `rdx` held a value that does not look like an address, `r8` an
+  address, and `r9` a small number (8, 16, 24, 32 or 792; 16 most
+  often). The result was 0 or 1 (Bongo Cat 3 and 3, Coin Maker
+  Simulator 3 and 8).
+- **Recorded, recorder:** as above.
+- **Meaning:** not known.

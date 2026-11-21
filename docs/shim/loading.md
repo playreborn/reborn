@@ -138,3 +138,33 @@ session and restores it) needs a decision before stage 2.
   then `~/.steam/sdk64/steamclient.so`.
 - **Recorded:** not yet in this format. The first test account owns no
   native Linux game yet.
+
+## What `ActiveProcess\pid` is for (experiment 6, ADR 0048)
+
+### Plan (2026-11-21, before the runs)
+
+`docs/shim/loading.md` records that games read
+`HKCU\Software\Valve\Steam\ActiveProcess\pid` before they load
+`steamclient64.dll`, and that it held the official client's process ID.
+What they check it for is not known. ADR 0048 needs to know what `pid`
+should hold in shim mode.
+
+Setup: official client running and signed in; `rebornd` running (its
+process ID is the replacement value). For each of Linsips (4301370),
+Baldi's Basics Classic Remastered (1712830) and Plant Therapy (2505120):
+one normal proxy run, then one run with `reborn-observe arm --pid
+<rebornd's process ID>`; the old value is restored on disarm.
+`reborn-observe status`-like checks of `pid` before and after each run
+show whether the official client rewrote it meanwhile.
+
+**Prediction (if `pid` is only read, or only checked for a running
+process):** in the replaced-`pid` runs each game loads the proxy, reaches
+its first screen, closes on a close request, and calls nothing that its
+normal runs (this normal run and the earlier ones in `coverage.md`) did
+not, and `SteamUtils010` position 9 returns its app ID. A game that does
+not load the proxy, stops, or calls positions no normal run called is a
+mismatch; then `pid` must keep pointing at something else, and a new ADR
+decides.
+
+If the official client rewrites `pid` during the run, the experiment
+tells nothing and is noted as such.

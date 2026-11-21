@@ -502,6 +502,25 @@ mode also needs the maintainer's OK.
 60 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 4051150, Reborn 4051150
 ```
 
+### Experiment 4: answer mode for `GetAppID` (planned 2026-11-21, before the runs)
+
+The maintainer gave the OK for answer mode (ADR 0046). In these runs the
+proxy does not forward position 9 of `SteamUtils010` to the official
+client; the game gets Reborn's answer, the app ID given to
+`reborn-observe arm --app`. Every other call goes to the official client
+as before.
+
+Games: Baldi's Basics Classic Remastered (1712830), Plant Therapy
+(2505120) and An Arcade Full of Cats (2368470), each already recorded in
+a normal stage 3 run.
+
+**Prediction:** in each game, (1) the log shows position 9 answered by
+Reborn with the game's app ID, (2) the game loads the proxy, reaches the
+same first screen and closes on a close request as in its stage 3 run,
+and (3) the set of interface versions and positions it calls in the
+first run seconds is the same as in its stage 3 run. A game that
+behaves differently is a mismatch.
+
 ### `SteamUtils010` position 14: not known
 
 - **Recorded:** called about as often as frames are drawn; the first

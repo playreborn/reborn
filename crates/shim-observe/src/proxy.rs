@@ -1,21 +1,37 @@
-//! The observation proxy (ADR 0038 stage 2, ADR 0039), part 2: it forwards
-//! the five entry points a game asks `steamclient64.dll` for
-//! (`docs/shim/entry-points.md`) to the real DLL and logs that they were
-//! called. Arguments and results are not looked at yet.
+//! The observation proxy (ADR 0038 stage 2, ADR 0039): it forwards the five
+//! entry points a game asks `steamclient64.dll` for
+//! (`docs/shim/entry-points.md`) to the real DLL and logs each call's raw
+//! argument registers and its raw result.
 //!
 //! Nothing is known about the entry points' arguments, so each one is a
 //! small assembly stub (Microsoft x64 calling convention, as documented by
-//! Microsoft): it saves the four integer and four floating-point argument
-//! registers, asks `observe_call` for the real function's address, puts
-//! the registers back, restores the stack pointer and jumps there. The
-//! real function then sees exactly the call the game made and returns to
-//! the game directly.
+//! Microsoft):
+//!
+//! 1. It saves the four integer and four floating-point argument registers
+//!    and hands a copy, the game's return address and the stack position
+//!    to `observe_call`, which logs the call, remembers the return address
+//!    in a per-thread stack and returns the real function's address.
+//! 2. It replaces the return address on the stack with the return stub,
+//!    puts the registers back, restores the stack pointer and jumps to the
+//!    real function, which so sees the game's exact arguments.
+//! 3. When the real function returns, it lands in the return stub, which
+//!    hands `rax` and `xmm0` (the result registers) to `observe_return`,
+//!    gets the game's return address back and jumps there with the result
+//!    untouched.
+//!
+//! Logged per call: the raw register values; for an integer register that
+//! points to readable memory holding 2 to 64 printable ASCII characters
+//! and a NUL, that text. Memory is checked with `VirtualQuery` before it is
+//! read. Nothing else is read, so binary data such as tickets never ends up
+//! in the log.
 //!
 //! The real DLL is loaded on the first call, not while this DLL is being
 //! loaded (Windows forbids loading libraries from `DllMain`). Its path is
 //! the value `reborn-observe arm` saved next to this DLL.
 #![allow(unsafe_code)]
 
+use std::cell::RefCell;
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -28,6 +44,11 @@ use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
     GetModuleFileNameW, GetModuleHandleExW, GetProcAddress, LOAD_WITH_ALTERED_SEARCH_PATH,
     LoadLibraryExW,
+};
+use windows_sys::Win32::System::Memory::{
+    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY,
+    VirtualQuery,
 };
 
 use crate::session::SAVED;
@@ -46,12 +67,41 @@ pub const ENTRY_POINTS: [&str; 5] = [
 const LOG_FIRST: u64 = 50;
 const LOG_EVERY: u64 = 10_000;
 
+/// Longest text logged for a register that points to ASCII.
+const MAX_TEXT: usize = 64;
+
 /// Addresses of the real functions, in [`ENTRY_POINTS`] order.
 static TARGETS: OnceLock<[usize; 5]> = OnceLock::new();
 /// The log file, `None` if it cannot be opened (or in tests).
 static LOG: OnceLock<Option<Mutex<File>>> = OnceLock::new();
 static CALLS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
 static START: OnceLock<Instant> = OnceLock::new();
+
+/// The argument registers as a stub saved them (offsets 0x20 to 0x80 of
+/// its stack frame).
+#[repr(C)]
+struct Saved {
+    xmm: [[u64; 2]; 4],
+    rcx: u64,
+    rdx: u64,
+    r8: u64,
+    r9: u64,
+}
+
+/// A call that has not returned yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Pending {
+    /// Stack pointer at the stub's entry (where the return address is).
+    entry_rsp: usize,
+    return_address: usize,
+    index: usize,
+    call: u64,
+    logged: bool,
+}
+
+thread_local! {
+    static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+}
 
 macro_rules! stub {
     ($name:literal, $index:literal) => {
@@ -61,8 +111,9 @@ macro_rules! stub {
             ".p2align 4",
             concat!(".seh_proc ", $name),
             concat!($name, ":"),
-            // Entry: rsp is 8 mod 16. 0x88 more makes it 16-aligned for
-            // the call, with 32 bytes of shadow space at the bottom.
+            // Entry: rsp is 8 mod 16 and points to the return address.
+            // 0x88 more makes it 16-aligned for the call, with 32 bytes of
+            // shadow space at the bottom.
             "sub rsp, 0x88",
             ".seh_stackalloc 0x88",
             ".seh_endprologue",
@@ -75,7 +126,13 @@ macro_rules! stub {
             "movdqu [rsp + 0x40], xmm2",
             "movdqu [rsp + 0x50], xmm3",
             concat!("mov ecx, ", $index),
+            "lea rdx, [rsp + 0x20]",
+            "mov r8, [rsp + 0x88]",
+            "lea r9, [rsp + 0x88]",
             "call {observe}",
+            // The real function returns into the return stub.
+            "lea r10, [rip + reborn_observe_return_stub]",
+            "mov [rsp + 0x88], r10",
             "movdqu xmm0, [rsp + 0x20]",
             "movdqu xmm1, [rsp + 0x30]",
             "movdqu xmm2, [rsp + 0x40]",
@@ -99,34 +156,200 @@ stub!("Steam_BGetCallback", "2");
 stub!("Steam_FreeLastCallback", "3");
 stub!("Steam_GetAPICallResult", "4");
 
-/// Called by the stubs: logs the call and returns the real function's
-/// address. Never unwinds into the stubs; a panic ends the process.
-extern "C" fn observe_call(index: u32) -> usize {
-    match std::panic::catch_unwind(|| {
+core::arch::global_asm!(
+    ".text",
+    ".globl reborn_observe_return_stub",
+    ".p2align 4",
+    ".seh_proc reborn_observe_return_stub",
+    "reborn_observe_return_stub:",
+    // Entry: the real function's `ret` popped the stub's address, so rsp
+    // is 16-aligned and 8 above the stub entry's rsp. 0x40 keeps it
+    // aligned, with shadow space and room for rax and xmm0.
+    "sub rsp, 0x40",
+    ".seh_stackalloc 0x40",
+    ".seh_endprologue",
+    "mov [rsp + 0x20], rax",
+    "movdqu [rsp + 0x30], xmm0",
+    "mov rcx, rax",
+    "movq rdx, xmm0",
+    "lea r8, [rsp + 0x40]",
+    "call {observe}",
+    // rax now holds the game's return address; r11 is free to use.
+    "mov r11, rax",
+    "mov rax, [rsp + 0x20]",
+    "movdqu xmm0, [rsp + 0x30]",
+    "add rsp, 0x40",
+    "jmp r11",
+    ".seh_endproc",
+    observe = sym observe_return,
+);
+
+/// Called by the stubs: logs the call, remembers where it returns to and
+/// gives the real function's address. Never unwinds into the stubs; a
+/// panic ends the process.
+extern "C" fn observe_call(
+    index: u32,
+    saved: *const Saved,
+    return_address: usize,
+    entry_rsp: usize,
+) -> usize {
+    let result = std::panic::catch_unwind(|| {
         let index = index as usize;
-        record(index);
+        let call = CALLS[index].fetch_add(1, Ordering::Relaxed) + 1;
+        let logged = should_log(call);
+        if logged {
+            // SAFETY: the stub passes a pointer to its saved registers,
+            // which stay in place until this function returns.
+            let saved = unsafe { &*saved };
+            log(&describe_call(index, call, saved));
+        }
+        PENDING.with(|pending| {
+            pending.borrow_mut().push(Pending {
+                entry_rsp,
+                return_address,
+                index,
+                call,
+                logged,
+            });
+        });
         targets()[index]
-    }) {
-        Ok(address) => address,
-        Err(_) => std::process::abort(),
+    });
+    result.unwrap_or_else(|_| std::process::abort())
+}
+
+/// Called by the return stub: logs the result and gives the game's
+/// return address. `after_rsp` is the stack pointer after the real
+/// function returned.
+extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize) -> usize {
+    let result = std::panic::catch_unwind(|| {
+        let found = PENDING.with(|pending| take_pending(&mut pending.borrow_mut(), after_rsp - 8));
+        let Some(call) = found else {
+            log("return without a matching call; stopping");
+            std::process::abort();
+        };
+        if call.logged {
+            log(&format!(
+                "{} ms {:?} {} return {} rax=0x{rax:x} xmm0=0x{xmm0:x}",
+                elapsed_ms(),
+                std::thread::current().id(),
+                ENTRY_POINTS[call.index],
+                call.call
+            ));
+        }
+        call.return_address
+    });
+    result.unwrap_or_else(|_| std::process::abort())
+}
+
+/// Finds the call that returns now: the one whose stub entry had stack
+/// pointer `entry_rsp`. Entries for deeper frames left behind (a call that
+/// never returned normally) are dropped first.
+fn take_pending(pending: &mut Vec<Pending>, entry_rsp: usize) -> Option<Pending> {
+    while pending
+        .last()
+        .is_some_and(|call| call.entry_rsp < entry_rsp)
+    {
+        pending.pop();
+    }
+    if pending
+        .last()
+        .is_some_and(|call| call.entry_rsp == entry_rsp)
+    {
+        pending.pop()
+    } else {
+        None
     }
 }
 
-fn record(index: usize) {
-    let count = CALLS[index].fetch_add(1, Ordering::Relaxed) + 1;
-    if count > LOG_FIRST && !count.is_multiple_of(LOG_EVERY) {
-        return;
-    }
-    let elapsed = START.get_or_init(Instant::now).elapsed().as_millis();
-    log(&format!(
-        "{elapsed} ms {:?} {} call {count}",
+fn should_log(call: u64) -> bool {
+    call <= LOG_FIRST || call.is_multiple_of(LOG_EVERY)
+}
+
+fn elapsed_ms() -> u128 {
+    START.get_or_init(Instant::now).elapsed().as_millis()
+}
+
+fn describe_call(index: usize, call: u64, saved: &Saved) -> String {
+    let mut line = format!(
+        "{} ms {:?} {} call {call} rcx=0x{:x} rdx=0x{:x} r8=0x{:x} r9=0x{:x}",
+        elapsed_ms(),
         std::thread::current().id(),
-        ENTRY_POINTS[index]
-    ));
+        ENTRY_POINTS[index],
+        saved.rcx,
+        saved.rdx,
+        saved.r8,
+        saved.r9
+    );
+    for (number, xmm) in saved.xmm.iter().enumerate() {
+        let _ = write!(line, " xmm{number}=0x{:x}", xmm[0]);
+    }
+    for (name, value) in [
+        ("rcx", saved.rcx),
+        ("rdx", saved.rdx),
+        ("r8", saved.r8),
+        ("r9", saved.r9),
+    ] {
+        if let Some(text) = ascii_at(value) {
+            let _ = write!(line, " {name}->\"{text}\"");
+        }
+    }
+    line
+}
+
+/// The printable ASCII text at `address`, if the memory there is readable
+/// and holds 2 to [`MAX_TEXT`] printable characters followed by a NUL,
+/// all within one memory region.
+fn ascii_at(address: u64) -> Option<String> {
+    // The lowest 64 KiB are never mapped on Windows; this also skips small
+    // numbers that are not pointers.
+    if address < 0x1_0000 {
+        return None;
+    }
+    let start = usize::try_from(address).ok()?;
+    let end = readable_end(start)?;
+    let mut text = String::new();
+    for offset in 0..=MAX_TEXT {
+        let at = start.checked_add(offset)?;
+        if at >= end {
+            return None;
+        }
+        // SAFETY: `at` lies inside a committed, readable region that
+        // `readable_end` just checked.
+        let byte = unsafe { std::ptr::read_volatile(at as *const u8) };
+        match byte {
+            0 if text.len() >= 2 => return Some(text),
+            0x20..=0x7e => text.push(char::from(byte)),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The end of the committed, readable memory region containing `address`.
+fn readable_end(address: usize) -> Option<usize> {
+    // SAFETY: MEMORY_BASIC_INFORMATION is plain data; all zeros is valid.
+    let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    let size = size_of::<MEMORY_BASIC_INFORMATION>();
+    // SAFETY: VirtualQuery only inspects the address space; `info` is
+    // writable for `size` bytes.
+    let written = unsafe { VirtualQuery(address as *const _, &mut info, size) };
+    if written == 0 || info.State != MEM_COMMIT || info.Protect & PAGE_GUARD != 0 {
+        return None;
+    }
+    let readable = PAGE_READONLY
+        | PAGE_READWRITE
+        | PAGE_WRITECOPY
+        | PAGE_EXECUTE_READ
+        | PAGE_EXECUTE_READWRITE
+        | PAGE_EXECUTE_WRITECOPY;
+    if info.Protect & readable == 0 {
+        return None;
+    }
+    (info.BaseAddress as usize).checked_add(info.RegionSize)
 }
 
 fn log(line: &str) {
-    if let Some(Some(file)) = LOG.get_or_init(open_log).as_ref().map(Some) {
+    if let Some(file) = LOG.get_or_init(open_log) {
         let mut file = file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = writeln!(file, "{line}");
     }
@@ -227,7 +450,8 @@ mod tests {
 
     // The stubs, called with made-up signatures. The functions behind them
     // are the test functions below, so whatever arrives there arrived
-    // through the stubs.
+    // through the stubs, and whatever comes back went through the return
+    // stub.
     unsafe extern "C" {
         #[link_name = "CreateInterface"]
         fn stub_integers(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64) -> u64;
@@ -236,7 +460,7 @@ mod tests {
         #[link_name = "Steam_BGetCallback"]
         fn stub_mixed(a: u32, b: f64, c: *const u8, d: f32, e: u8, f: f64) -> u64;
         #[link_name = "Steam_FreeLastCallback"]
-        fn stub_none();
+        fn stub_nested() -> u64;
         #[link_name = "Steam_GetAPICallResult"]
         fn stub_many(
             a: u64,
@@ -271,10 +495,11 @@ mod tests {
             + (f * 100_000.0) as u64
     }
 
-    static NONE_CALLED: AtomicU64 = AtomicU64::new(0);
-
-    extern "C" fn none() {
-        NONE_CALLED.fetch_add(1, Ordering::Relaxed);
+    /// Calls another stub from inside a forwarded call, as a real
+    /// function calling back into the game would.
+    extern "C" fn nested() -> u64 {
+        // SAFETY: as in the test below.
+        unsafe { stub_integers(1, 1, 1, 1, 1, 1, 1) + 1 }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -304,27 +529,90 @@ mod tests {
             integers as *const () as usize,
             floats as *const () as usize,
             mixed as *const () as usize,
-            none as *const () as usize,
+            nested as *const () as usize,
             many as *const () as usize,
         ]);
         let byte = 7u8;
         // SAFETY: each stub jumps to the matching test function above,
         // which has exactly the declared signature.
         unsafe {
-            assert_eq!(stub_integers(1, 2, 3, 4, 5, 6, 7), 7_654_321);
-            assert_eq!(
-                stub_floats(1.0, 2.0, 3.0, 4.0, 5.0),
-                1.0 + 4.0 + 12.0 + 32.0 + 80.0
-            );
-            assert_eq!(
-                stub_mixed(1, 2.0, &byte, 3.0, 4, 5.0),
-                1 + 20 + 700 + 3_000 + 40_000 + 500_000
-            );
-            stub_none();
-            assert_eq!(stub_many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), 385);
+            for _ in 0..3 {
+                assert_eq!(stub_integers(1, 2, 3, 4, 5, 6, 7), 7_654_321);
+                assert_eq!(
+                    stub_floats(1.0, 2.0, 3.0, 4.0, 5.0),
+                    1.0 + 4.0 + 12.0 + 32.0 + 80.0
+                );
+                assert_eq!(
+                    stub_mixed(1, 2.0, &byte, 3.0, 4, 5.0),
+                    1 + 20 + 700 + 3_000 + 40_000 + 500_000
+                );
+                assert_eq!(stub_nested(), 1_111_111 + 1);
+                assert_eq!(stub_many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), 385);
+            }
         }
-        assert_eq!(NONE_CALLED.load(Ordering::Relaxed), 1);
-        assert_eq!(CALLS[0].load(Ordering::Relaxed), 1);
-        assert_eq!(CALLS[4].load(Ordering::Relaxed), 1);
+        PENDING.with(|pending| assert!(pending.borrow().is_empty(), "every call returned"));
+        assert_eq!(CALLS[3].load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn reads_only_readable_ascii() {
+        let text = c"SteamClient021";
+        assert_eq!(
+            ascii_at(text.as_ptr() as u64).as_deref(),
+            Some("SteamClient021")
+        );
+        assert_eq!(ascii_at(c"x".as_ptr() as u64), None, "too short");
+        assert_eq!(ascii_at(c"ab\x01cd".as_ptr() as u64), None, "not printable");
+        let long = [b'a'; 100];
+        assert_eq!(ascii_at(long.as_ptr() as u64), None, "too long");
+        assert_eq!(ascii_at(0), None);
+        assert_eq!(ascii_at(0x10), None);
+        assert_eq!(ascii_at(0x7fff_ffff_0000), None, "not mapped");
+        assert_eq!(ascii_at(u64::MAX), None);
+    }
+
+    fn pending(entry_rsp: usize, return_address: usize) -> Pending {
+        Pending {
+            entry_rsp,
+            return_address,
+            index: 0,
+            call: 1,
+            logged: false,
+        }
+    }
+
+    #[test]
+    fn returns_match_their_calls() {
+        // Nested: the inner call (lower stack) returns first.
+        let mut stack = vec![pending(0x9000, 1), pending(0x8000, 2)];
+        assert_eq!(
+            take_pending(&mut stack, 0x8000).map(|p| p.return_address),
+            Some(2)
+        );
+        assert_eq!(
+            take_pending(&mut stack, 0x9000).map(|p| p.return_address),
+            Some(1)
+        );
+        assert!(stack.is_empty());
+        // A deeper call that never returned is dropped.
+        let mut stack = vec![pending(0x9000, 1), pending(0x7000, 3)];
+        assert_eq!(
+            take_pending(&mut stack, 0x9000).map(|p| p.return_address),
+            Some(1)
+        );
+        assert!(stack.is_empty());
+        // No match leaves the outer calls in place.
+        let mut stack = vec![pending(0x9000, 1)];
+        assert_eq!(take_pending(&mut stack, 0x8000), None);
+        assert_eq!(stack.len(), 1);
+    }
+
+    #[test]
+    fn logs_the_first_calls_then_every_ten_thousandth() {
+        assert!(should_log(1));
+        assert!(should_log(50));
+        assert!(!should_log(51));
+        assert!(should_log(10_000));
+        assert!(!should_log(10_001));
     }
 }

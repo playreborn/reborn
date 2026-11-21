@@ -95,3 +95,53 @@ read.
 - **Meaning:** not known. The names suggest polling for callbacks and
   releasing them, but names are not a source; arguments and results are
   for part 3.
+
+### Windows: arguments and results (stage 2, part 3)
+
+- **Fact:** With the proxy logging the raw argument registers and
+  results, the game again ran normally to its main menu and exited.
+  - `CreateInterface` call 1: `rcx` pointed to the text
+    `SteamClient017`, `rdx` = 0, `r8` = 0, `r9` = 1; the result (`rax`) was
+    a non-zero address.
+  - `CreateInterface` call 2: `rcx` pointed to the text
+    `SteamClient020`, `rdx` = 0, `r8` = 4, `r9` = 4; the result was a
+    non-zero address.
+  - `Steam_BGetCallback`: `rcx` was 1 in every logged call; `rdx` and `r8`
+    held addresses near each other on the stack. In the 50 logged calls
+    the result's lowest byte was 0 (48 times) or 1 (once); once `rax` was
+    `0xffffff00` (lowest byte 0, upper bits not zero).
+  - `Steam_FreeLastCallback`: `rcx` was 1 in every call; `rax` was 0 every
+    time. Its first call came right after the only logged
+    `Steam_BGetCallback` whose lowest result byte was 1.
+  - No integer register of `Steam_BGetCallback` or
+    `Steam_FreeLastCallback` pointed to printable text.
+  - `Steam_ReleaseThreadLocalMemory` and `Steam_GetAPICallResult` were not
+    called.
+- **Recorded:** 2026-11-21, Cave Crawlers (2143030), Windows 11 64-bit,
+  `reborn-observe arm` with the proxy from `crates/shim-observe` (part 3:
+  raw argument and result registers, text from readable memory), stage 2.
+  Official client running, first test account.
+- **Recorder:** the maintainer (see above).
+- **Evidence** (excerpt; floating-point registers left out, see below):
+
+  ```text
+  0 ms ThreadId(1) CreateInterface call 1 rcx=0x7ffdb8de2da0 rdx=0x0 r8=0x0 r9=0x1 rcx->"SteamClient017"
+  17 ms ThreadId(1) CreateInterface return 1 rax=0x7ffceac307d8
+  17 ms ThreadId(1) CreateInterface call 2 rcx=0x7ffdb8de2dd0 rdx=0x0 r8=0x4 r9=0x4 rcx->"SteamClient020"
+  17 ms ThreadId(1) CreateInterface return 2 rax=0x7ffceac307f0
+  73 ms ThreadId(1) Steam_BGetCallback call 1 rcx=0x1 rdx=0xff176eeef0 r8=0xff176eee90 r9=0x374
+  74 ms ThreadId(1) Steam_BGetCallback return 1 rax=0x1
+  74 ms ThreadId(1) Steam_FreeLastCallback call 1 rcx=0x1 rdx=0xf r8=0x245c5226300 r9=0x36c
+  74 ms ThreadId(1) Steam_FreeLastCallback return 1 rax=0x0
+  74 ms ThreadId(1) Steam_BGetCallback call 2 rcx=0x1 rdx=0xff176eeef0 r8=0xff176eee90 r9=0x70
+  74 ms ThreadId(1) Steam_BGetCallback return 2 rax=0xffffff00
+  ```
+
+- **Left out on purpose:** the floating-point registers. They are not
+  arguments in these calls but hold leftovers, and in some calls one held
+  the account's SteamID (and another a piece of the game's text). Raw
+  register logs can carry account data; they stay on the recorder's
+  computer and are redacted before anything comes here.
+- **Meaning:** not known. Which arguments the entry points really take,
+  their types and what the returned addresses are is not yet observed;
+  calls on the returned objects are stage 3 (its own ADR, ADR 0038).

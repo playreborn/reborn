@@ -57,12 +57,21 @@ reborn-shim-observe` writes `target\debug\reborn_shim_observe.dll`. It
 exports the five entry points from `docs/shim/entry-points.md`, forwards
 every call unchanged to the real `steamclient64.dll` (the saved path) and
 writes `observe-<process id>.log` into Reborn's `shim-observe` folder:
-which entry point was called, when and on which thread (the first 50
-calls of each, then every 10 000th). It does not look at arguments or
-results yet.
+which entry point was called, when and on which thread, the raw values
+of the argument registers (`rcx`, `rdx`, `r8`, `r9`, the low 64 bits of
+`xmm0` to `xmm3`), and on return the raw result registers (`rax`, low 64
+bits of `xmm0`); the first 50 calls of each, then every 10 000th. Where an
+integer register points to readable memory with 2 to 64 printable ASCII
+characters and a NUL, that text is logged too (`rcx->"..."`); memory is
+checked with `VirtualQuery` first, and nothing else is read.
 
-Checked without a game (2026-11-21): a unit test calls the five stubs
-with integer, floating-point and stack arguments and compares what
-arrives; and the built DLL, loaded from Python with a stand-in "real" DLL,
-exported all five names, forwarded calls with the right results and
-wrote the log.
+To see results, the stub replaces the game's return address with a
+return stub and keeps the real one in a per-thread stack; arguments and
+the stack the real function sees are unchanged.
+
+Checked without a game (2026-11-21): unit tests call the five stubs with
+integer, floating-point and stack arguments and a nested call, compare
+what arrives and what comes back, and read text only from readable
+memory; the built DLL, loaded from Python with stand-in "real" DLLs (one
+with a dependency in its own folder), forwarded calls, logged the
+arguments and the right results.

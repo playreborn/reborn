@@ -105,3 +105,14 @@ came through, another `rcx` was left alone); the built DLL, loaded from
 Python with a stand-in "real" DLL whose `CreateInterface` returns an
 object with a method table, did the same, and with `--read-only`'s marker
 returned the real object unchanged.
+
+Step 3c (ADR 0041): a call through a stand-in that passed a text in
+`rdx`, `r8` or `r9` and returns an object of the step 3a shape gets a
+stand-in for its result too, named after the text (`SteamUser020#n` in
+the log); room for 32 stand-ins. Any argument register of any call that
+holds a stand-in's address gets the real object first, and the log line
+says so. Checked without a game (2026-11-21): a unit test with a parent
+object that hands out a child object when asked with a text (the child
+came back as a stand-in whose calls reached the real child; without a
+text it came back unchanged; a stand-in passed as the second argument
+reached the real code as the real object).

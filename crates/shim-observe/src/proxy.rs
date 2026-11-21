@@ -39,6 +39,11 @@
 //! position of the real object's table. The real table is only read.
 //! Nothing of Valve's is changed. A file `read-only` next to this DLL
 //! (`reborn-observe arm --read-only`) turns stand-ins off.
+//!
+//! Step 3c (ADR 0041): a call through a stand-in that passed a text and
+//! returns an object of the step 3a shape gets a stand-in for that result
+//! too, named after the text. Any argument register that holds a
+//! stand-in's address gets the real object before the real code runs.
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
@@ -74,7 +79,7 @@ const MAX_TABLE: usize = 1024;
 
 /// Stand-in objects at most, and stub positions per stand-in (step 3b).
 /// Keep in sync with `build.rs`.
-const STAND_INS: usize = 4;
+const STAND_INS: usize = 32;
 const SLOTS: usize = 128;
 
 /// A table with more counted entries than this gets no stand-in: the
@@ -263,20 +268,22 @@ include!(concat!(env!("OUT_DIR"), "/method_stubs.rs"));
 /// panic ends the process.
 extern "C" fn observe_call(
     index: u32,
-    saved: *const Saved,
+    saved: *mut Saved,
     return_address: usize,
     entry_rsp: usize,
 ) -> usize {
     let result = std::panic::catch_unwind(|| {
         let index = index as usize;
         // SAFETY: the stub passes a pointer to its saved registers, which
-        // stay in place until this function returns.
-        let saved = unsafe { &*saved };
+        // stay in place until this function returns; it restores the
+        // registers from there afterwards.
+        let saved = unsafe { &mut *saved };
+        let swapped = swap_stand_ins(saved, true);
         let call = CALLS[index].fetch_add(1, Ordering::Relaxed) + 1;
         let logged = should_log(call);
         if logged {
             log(&format!(
-                "{} ms {:?} {} call {call} {}",
+                "{} ms {:?} {} call {call}{swapped} {}",
                 elapsed_ms(),
                 std::thread::current().id(),
                 ENTRY_POINTS[index],
@@ -322,9 +329,13 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 call.call
             ));
         }
-        if call.kind == Kind::Export(CREATE_INTERFACE)
-            && let Some(&module) = MODULE.get()
-        {
+        // CreateInterface (step 3b), and calls through stand-ins that passed
+        // a text (step 3c, ADR 0041).
+        let wants_stand_in = match call.kind {
+            Kind::Export(index) => index == CREATE_INTERFACE,
+            Kind::Method { .. } => call.interface.is_some(),
+        };
+        if wants_stand_in && let Some(&module) = MODULE.get() {
             // Step 3a of ADR 0040: what does the result look like?
             let shape = shape_of(rax, module);
             if call.logged {
@@ -335,7 +346,7 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                     describe_shape(&shape, module)
                 ));
             }
-            // Step 3b: hand out a stand-in instead.
+            // Hand out a stand-in instead.
             let interface = call.interface.as_deref().unwrap_or("?");
             if let Some((stand_in, object)) = stand_in_for(rax, &shape, interface) {
                 // SAFETY: the return stub passes the stack slot where it
@@ -382,6 +393,13 @@ extern "C" fn observe_method(
         } else {
             "rcx did not hold the stand-in, left as it was"
         };
+        // Texts are looked for before swapping, in the registers the
+        // object is not in (step 3c).
+        let interface = [saved.rdx, saved.r8, saved.r9]
+            .into_iter()
+            .find_map(ascii_at)
+            .map(String::into_boxed_str);
+        let swapped = swap_stand_ins(saved, false);
         let call = METHOD_CALLS[number].fetch_add(1, Ordering::Relaxed) + 1;
         let logged = should_log(call);
         if logged {
@@ -391,7 +409,7 @@ extern "C" fn observe_method(
                 ""
             };
             log(&format!(
-                "{} ms {:?} {} call {call} ({this}{beyond}) {}",
+                "{} ms {:?} {} call {call} ({this}{beyond}){swapped} {}",
                 elapsed_ms(),
                 std::thread::current().id(),
                 kind_name(Kind::Method { object, slot }),
@@ -416,7 +434,7 @@ extern "C" fn observe_method(
                 kind: Kind::Method { object, slot },
                 call,
                 logged,
-                interface: None,
+                interface,
             });
         });
         target
@@ -437,6 +455,38 @@ fn kind_name(kind: Kind) -> String {
             format!("{name}#{slot}")
         }
     }
+}
+
+/// Puts the real object into every argument register that holds a
+/// stand-in's address (`rcx` only with `include_rcx`; for calls through a
+/// stand-in, `observe_method` handles `rcx` itself). Returns a note for
+/// the log line, empty if nothing was swapped (step 3c, ADR 0041).
+fn swap_stand_ins(saved: &mut Saved, include_rcx: bool) -> String {
+    let mut note = String::new();
+    let registers: [(&str, &mut u64); 4] = [
+        ("rcx", &mut saved.rcx),
+        ("rdx", &mut saved.rdx),
+        ("r8", &mut saved.r8),
+        ("r9", &mut saved.r9),
+    ];
+    for (name, value) in registers {
+        if name == "rcx" && !include_rcx {
+            continue;
+        }
+        if let Some(info) = OBJECTS
+            .iter()
+            .filter_map(OnceLock::get)
+            .find(|info| info.stand_in as u64 == *value)
+        {
+            *value = info.real as u64;
+            let _ = write!(
+                note,
+                " ({name} held the stand-in for {}, now the real object)",
+                info.name
+            );
+        }
+    }
+    note
 }
 
 /// The stand-in for `real`, created on first use: only if stand-ins are on,
@@ -1091,5 +1141,87 @@ mod tests {
             entries: MAX_STAND_IN_ENTRIES + 1,
         };
         assert_eq!(stand_in_for(real_address as u64 + 8, &too_big, "x"), None);
+    }
+
+    // A made-up parent object whose methods hand out a child object (when
+    // asked with a text) and echo their second argument, for step 3c.
+    static CHILD: OnceLock<usize> = OnceLock::new();
+
+    extern "C" fn parent_get_child(
+        _this: *const usize,
+        _flag: u64,
+        _one: u64,
+        _name: *const u8,
+    ) -> *const usize {
+        *CHILD.get().unwrap_or(&0) as *const usize
+    }
+    extern "C" fn parent_get_child_without_text(_this: *const usize) -> *const usize {
+        *CHILD.get().unwrap_or(&0) as *const usize
+    }
+    extern "C" fn parent_echo(_this: *const usize, other: *const usize) -> u64 {
+        other as u64
+    }
+
+    #[test]
+    fn objects_returned_through_stand_ins_get_stand_ins() {
+        let _ = LOG.set(None);
+        let _ = READ_ONLY.set(false);
+        let module = own_module();
+        let _ = MODULE.set(module);
+        static PARENT_TABLE: OnceLock<[usize; 4]> = OnceLock::new();
+        static CHILD_TABLE: OnceLock<[usize; 2]> = OnceLock::new();
+        let parent_table = PARENT_TABLE.get_or_init(|| {
+            [
+                parent_get_child as *const () as usize,
+                parent_echo as *const () as usize,
+                parent_get_child_without_text as *const () as usize,
+                0,
+            ]
+        });
+        let child_table = CHILD_TABLE.get_or_init(|| [method_this as *const () as usize, 0]);
+        let parent = Box::leak(Box::new([parent_table.as_ptr() as usize])).as_ptr() as usize;
+        let child = Box::leak(Box::new([child_table.as_ptr() as usize])).as_ptr() as usize;
+        let _ = CHILD.set(child);
+        let shape = shape_of(parent as u64, module);
+        let (parent_stand_in, _) =
+            stand_in_for(parent as u64, &shape, "FakeParent001").expect("a stand-in");
+        // SAFETY: stand-in tables hold stubs that forward to the methods
+        // above, which have these signatures.
+        unsafe {
+            let stubs = *(parent_stand_in as *const usize) as *const usize;
+            let get_child: extern "C" fn(*const usize, u64, u64, *const u8) -> *const usize =
+                std::mem::transmute(*stubs);
+            let echo: extern "C" fn(*const usize, *const usize) -> u64 =
+                std::mem::transmute(*stubs.add(1));
+            let get_child_without_text: extern "C" fn(*const usize) -> *const usize =
+                std::mem::transmute(*stubs.add(2));
+
+            // Asked with a text: the child comes back as a stand-in.
+            let name = c"FakeChild001";
+            let got = get_child(parent_stand_in as *const usize, 1, 1, name.as_ptr().cast());
+            assert_ne!(got as usize, child, "a stand-in for the child");
+            let child_stubs = *got as *const usize;
+            let child_method: extern "C" fn(*const usize, u64) -> u64 =
+                std::mem::transmute(*child_stubs);
+            assert_eq!(
+                child_method(got, 3),
+                child as u64 + 3,
+                "reaches the real child"
+            );
+            // Asked again: the same stand-in.
+            assert_eq!(
+                get_child(parent_stand_in as *const usize, 1, 1, name.as_ptr().cast()),
+                got
+            );
+            // Without a text, the result stays as it is.
+            assert_eq!(
+                get_child_without_text(parent_stand_in as *const usize) as usize,
+                child
+            );
+            // A stand-in passed as another argument reaches the real code as
+            // the real object.
+            assert_eq!(echo(parent_stand_in as *const usize, got), child as u64);
+        }
+        PENDING.with(|pending| assert!(pending.borrow().is_empty(), "every call returned"));
     }
 }

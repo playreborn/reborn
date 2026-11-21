@@ -20,7 +20,7 @@ const ENTRY_POINTS: [&str; 5] = [
 
 /// Stand-in objects at most, and table positions per object. Keep in sync
 /// with `STAND_INS` and `SLOTS` in `src/proxy.rs`.
-const STAND_INS: usize = 4;
+const STAND_INS: usize = 32;
 const SLOTS: usize = 128;
 
 fn main() {

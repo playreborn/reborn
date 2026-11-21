@@ -48,8 +48,9 @@ All notable changes to Reborn are listed here. The format follows
   one registry value of the official client at a proxy and restoring it
   afterwards (ADR 0038, ADR 0039). The proxy forwards the five entry
   points to the real DLL and logs each call's raw arguments and result,
-  and observes calls on the objects `CreateInterface` returns through
-  stand-in objects (`--read-only` turns them off).
+  and observes calls on the objects `CreateInterface` returns, and on
+  the objects those return, through stand-in objects (`--read-only`
+  turns them off).
 
 - The rules for the planned `steamclient` replacement are set: it is built
   without Valve's Steamworks SDK, only from observing games you own

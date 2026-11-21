@@ -521,6 +521,50 @@ and (3) the set of interface versions and positions it calls in the
 first run seconds is the same as in its stage 3 run. A game that
 behaves differently is a mismatch.
 
+**Result of experiment 4** (agent runs, 14:28 to 14:33, after the plan
+was committed at 14:27:34):
+
+- (1) **Matches** in all three: position 9 was answered by Reborn and
+  returned the game's app ID (`0x1a22be`, `0x2639a0`, `0x2423d6`).
+- (2) **Matches** in all three: each game loaded the proxy, reached its
+  first screen and closed on a close request.
+- (3) **Matches** for Plant Therapy only. Baldi's Basics also called
+  position 6 of `STEAMUSERSTATS_INTERFACE_VERSION012` (at 443 ms, with
+  the text `ACH_NULL`), and An Arcade Full of Cats also called positions
+  23 and 28 of it (at about 30 seconds); neither had these calls in its
+  stage 3 run. **Does not match.**
+
+Whether answering `GetAppID` caused the extra calls or whether they vary
+from run to run anyway (they come later, and stats arrive from the
+server asynchronously) cannot be told from one normal run per game; the
+prediction did not allow for run-to-run differences. Answer mode for
+`GetAppID` is therefore **not confirmed** as harmless; it stays in the
+proxy's list only for planned experiments.
+
+```text
+62 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+62 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x1a22be
+64 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+64 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2639a0
+62 ms ThreadId(1) SteamUtils010#9 call 1 answered by Reborn, not forwarded
+62 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2423d6
+```
+
+### Experiment 5 (planned 2026-11-21, before the runs): how much normal runs vary
+
+Baldi's Basics and An Arcade Full of Cats, two normal runs each (no
+`--app`, so no answer and no shadow), then two answer-mode runs each,
+all with the same waiting time (30 seconds after the `[S_API]` line).
+
+**Prediction:** if answering `GetAppID` does not change what the game
+does, then every interface version and position called in an
+answer-mode run is also called in at least one of the four runs of that
+game without answer mode (its two new normal runs, its stage 3 run, or
+its experiment 4 run is not counted), and the other way round for the
+positions called within the first 2 seconds. A position seen only in
+answer-mode runs, or a position within the first 2 seconds missing from
+them, is a mismatch.
+
 ### `SteamUtils010` position 14: not known
 
 - **Recorded:** called about as often as frames are drawn; the first

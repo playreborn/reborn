@@ -60,6 +60,11 @@
 //! and only when the call is logged, the proxy compares the official
 //! client's result with Reborn's own answer and logs match or mismatch.
 //! The game always gets the official client's result.
+//!
+//! Answer mode (ADR 0046): for calls in [`ANSWERS`] (shadow mode matched in
+//! three games, maintainer's OK) and an app ID given by `reborn-observe arm
+//! --app`, the stub jumps to Reborn's own function instead of the official
+//! client's; the result still goes through the return stub and is logged.
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
@@ -142,9 +147,47 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     ("SteamUtils010", 9, Shadow::AppId),
 ];
 
-/// The app ID given for shadow mode, read once from the file next to this
-/// DLL.
+/// The calls ADR 0046 answers itself (answer mode): interface version
+/// text, position, Reborn's answer. A call is listed only after shadow mode
+/// matched in three games and the maintainer gave the OK; it is then not
+/// forwarded to the official client. Never ownership, licenses, tickets,
+/// achievements, stats, cloud or anything acting on the account.
+const ANSWERS: &[(&str, usize, Shadow)] = &[
+    // `docs/shim/meanings.md`: shadow mode matched in three games; the
+    // maintainer's OK on 2026-11-21 (experiment 4).
+    ("SteamUtils010", 9, Shadow::AppId),
+];
+
+/// The app ID given for shadow and answer mode, read once from the file
+/// next to this DLL.
 static APP_ID: OnceLock<Option<u32>> = OnceLock::new();
+
+/// The app ID given by `reborn-observe arm --app`, if any.
+fn given_app_id() -> Option<u32> {
+    *APP_ID.get_or_init(|| {
+        own_dir()
+            .and_then(|dir| std::fs::read_to_string(dir.join(APP_ID_FILE)).ok())
+            .and_then(|text| text.trim().parse().ok())
+    })
+}
+
+/// Reborn's `GetAppID` in answer mode: called in place of the official
+/// client's function, with the same registers (the object in `rcx`, which it
+/// does not need), and returns through the return stub like any call.
+extern "C" fn answer_app_id(_this: usize) -> u32 {
+    given_app_id().unwrap_or(0)
+}
+
+/// The function that answers this call itself, if [`ANSWERS`] lists it and
+/// Reborn has the answer (ADR 0046).
+fn answer_for(interface: &str, slot: usize) -> Option<usize> {
+    let &(_, _, answer) = ANSWERS
+        .iter()
+        .find(|&&(name, position, _)| name == interface && position == slot)?;
+    match answer {
+        Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
+    }
+}
 
 /// Most table entries counted in step 3a (ADR 0040).
 const MAX_TABLE: usize = 1024;
@@ -448,11 +491,7 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
         // ADR 0046: compare with Reborn's own answer; the game keeps the
         // official client's result.
         if let Some(shadow) = call.shadow {
-            let given = *APP_ID.get_or_init(|| {
-                own_dir()
-                    .and_then(|dir| std::fs::read_to_string(dir.join(APP_ID_FILE)).ok())
-                    .and_then(|text| text.trim().parse().ok())
-            });
+            let given = given_app_id();
             log(&format!(
                 "{} ms {thread:?} {name} return {} {}",
                 elapsed_ms(),
@@ -561,6 +600,21 @@ extern "C" fn observe_method(
             ));
             std::process::abort();
         };
+        // Answer mode (ADR 0046): Reborn's function instead of the official
+        // client's, never with `--read-only`.
+        let read_only = *READ_ONLY
+            .get_or_init(|| own_dir().is_some_and(|dir| dir.join(READ_ONLY_MARKER).exists()));
+        let answered = (!read_only).then(|| answer_for(&info.name, slot)).flatten();
+        let target = answered.unwrap_or(target);
+        let shadow = if answered.is_some() { None } else { shadow };
+        if answered.is_some() && logged {
+            log(&format!(
+                "{} ms {:?} {} call {call} answered by Reborn, not forwarded",
+                elapsed_ms(),
+                std::thread::current().id(),
+                kind_name(Kind::Method { object, slot }),
+            ));
+        }
         PENDING.with(|pending| {
             pending.borrow_mut().push(Pending {
                 entry_rsp,
@@ -1302,6 +1356,18 @@ mod tests {
                 "every entry names a known register"
             );
         }
+    }
+
+    #[test]
+    fn answer_mode_lists_only_get_app_id() {
+        // Without an app ID file next to the test binary there is no answer,
+        // so the call would be forwarded.
+        assert_eq!(answer_for("SteamUtils010", 14), None);
+        assert_eq!(answer_for("SteamUtils009", 9), None);
+        assert_eq!(answer_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12), None);
+        assert!(ANSWERS.iter().all(|&(name, position, _)| {
+            SHADOWS.iter().any(|&(n, p, _)| n == name && p == position)
+        }));
     }
 
     #[test]

@@ -44,9 +44,9 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 1712830 | Baldi's Basics Classic Remastered | added | yes | yes | 600 MB | recorded (stage 3, agent) |
 | 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | first start asks for administrator rights (Windows dialog for the official client's install step); left for the maintainer |
 | 897330 | Coloring Pixels | added | yes | yes | 500 MB | shows its own settings window with a Play button before loading Steam; a run needs a person |
-| 588430 | Fallout Shelter | free | yes | yes | 2 GB | EULA |
-| 319630 | Life is Strange - Episode 1 | free | yes | yes | 5 GB | EULA |
-| 2420510 | HoloCure - Save the Fans! | free | yes | yes | 250 MB | EULA |
+| 588430 | Fallout Shelter | added | yes | yes | 2 GB | EULA accepted by the maintainer; recorded (stage 3, agent) |
+| 319630 | Life is Strange - Episode 1 | added | yes | yes | 5 GB | EULA accepted by the maintainer; 32-bit, so for M5 |
+| 2420510 | HoloCure - Save the Fans! | added | yes | yes | 250 MB | EULA accepted by the maintainer; recorded (stage 3, agent) |
 | 2220360 | Paper Lily - Chapter 1 | added | yes | yes | 350 MB | recorded (stage 3, agent) |
 | 2600140 | Please, Touch The Artwork 2 | added | yes | yes | 3 GB | recorded (stage 3, agent) |
 | 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
@@ -64,7 +64,7 @@ owned; online PvP, no single-player listed). Added and installed, but
 (2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
 (909080).
 
-With these, 21 candidates are listed: 14 recorded by now, four that need a person for a run, and three that need the maintainer to accept an EULA. The maintainer picks the final 20. Free games are a practical start for agent
+With these, 21 candidates are listed: 16 recorded by now, four that need a person for a run, and Life is Strange, which is 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

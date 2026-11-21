@@ -43,3 +43,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0035](0035-restoring-saves-on-launch.md) | Restoring missing saves when a game starts | Accepted |
 | [0036](0036-servers-are-already-shuffled.md) | Steam servers are already chosen at random | Accepted |
 | [0037](0037-preferring-port-443.md) | Preferring Steam servers on port 443 | Accepted |
+| [0038](0038-shim-observation-tool.md) | The shim observation tool | Accepted |

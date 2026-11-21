@@ -130,3 +130,219 @@ out):
 176310 ms ThreadId(1) STEAMREMOTESTORAGE_INTERFACE_VERSION014#0 call 7 rdx=0x1e8e3019fb0 r8=0x1e8db5b2020 r9=0xaf4d rdx->"MainPlayerData.json"
 176317 ms ThreadId(1) STEAMREMOTESTORAGE_INTERFACE_VERSION014#0 return 7 rax=0x1
 ```
+
+## `STEAMUSERSTATS_INTERFACE_VERSION011`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUserStats>,
+  read 2026-11-21; it opened without signing in or accepting an
+  agreement. Its constants name the version text
+  `STEAMUSERSTATS_INTERFACE_VERSION011`, the same one Cave Crawlers
+  asked for. Bongo Cat and Coin Maker Simulator asked for
+  `STEAMUSERSTATS_INTERFACE_VERSION013`, which the page does not name;
+  their calls are not covered here.
+- **Recording:** Cave Crawlers (2143030), Windows, 2026-11-21, the
+  experiment 1 run with the step 4b proxy. The game called positions 0
+  (once), 4 (3 times), 6 (50 000 times or more), 10 (5 times) and 12
+  (50 times or more; the proxy logs the first 50 calls of each kind,
+  then every 10 000th). The step 3c run, which ended at the main menu,
+  has no calls at position 12.
+
+### Position 12: confirmed `GetAchievementDisplayAttribute` (experiment 2)
+
+- **Recorded:** 50 logged calls between about 12 and 19 seconds after
+  start. Each passed a name in `rdx` (34 different names, for example
+  `PlayWith10Players` and `Hit_Into_Spikes`) and the text `name` in
+  `r8`. Each result was a different address, mostly 0x20 above the one
+  before; none had the step 3a shape.
+- **Fit:** the page documents one function that takes an achievement
+  name and a second text and returns text: a display attribute of the
+  achievement, picked by the second text, and `name` is one of the keys
+  it lists (the achievement's name in the player's language). The other
+  documented functions that take an achievement name return true or
+  false, a number or an image handle. Different addresses close
+  together fit short texts better.
+
+### Position 6: candidates that read a value by name
+
+- **Recorded:** about 300 calls a second, from 120 ms to the end of the
+  run. Every logged call passed `Keep_PotionEffect` in `rdx`, the same
+  address on the game's stack in `r8` and the same value in `r9`
+  (`0x7ffe4c781890`); the result was 1 every time.
+  `Keep_PotionEffect` is also one of the names the game passed to
+  position 12.
+- **Fit:** the page documents several functions that take a name and
+  the address of a place for the answer, and report success as true or
+  false: the unlock state of an achievement, the player's own value of
+  a stat (one for whole numbers, one for floating-point numbers), the
+  share of all players who unlocked an achievement, and the total of a
+  global stat. One more also takes a second address for the unlock
+  time; whether `r9` is an argument is not known, so it is not ruled
+  out. Which of them it is cannot be told from the recording: what the
+  client wrote to the address in `r8` was not read. That the same name
+  went to position 12 hints at an achievement, but a hint is not a
+  source.
+- **Experiment 2** ruled out the share of players; the other candidates
+  remain (see its result below).
+
+### Position 4: candidates that set a value by name
+
+- **Recorded:** three calls: `PrestigeLevel` at about 1 second,
+  `SingleRunDamage` at about 2 and 122 seconds. `r8` was 0 every time,
+  `r9` the same value each time (`0x7ffe4c781810`); the result was 1.
+- **Fit:** the page documents three functions that take a name and one
+  or two numbers and report success as true or false: setting a stat to
+  a value (one for whole numbers, one for floating-point numbers), and
+  updating an average-rate stat (with floating-point numbers). The
+  whole-number one fits `r8` = 0 directly; the other two carry their
+  numbers in floating-point registers, which are not evaluated here,
+  so they are not ruled out. A fourth one, showing progress towards an
+  achievement, takes two counts; `r9` does not look like a count, so it
+  fits less well. The page says such a set only changes the client's
+  copy until another call sends it to the server.
+- These are writes the game asked for; the proxy only passes them on
+  (red line 4).
+
+### Positions 0 and 10: not known
+
+- **Recorded:** position 0 once at 87 ms and position 10 first at about
+  1 second, both with `rdx` = 15, an address in `r8` and `r9` = 807
+  (`0x327`); the result was 1. This is the same pattern as positions 21
+  and 22 of `STEAMREMOTESTORAGE_INTERFACE_VERSION014` (`rdx` = 15, an
+  address, a number). The other four calls at position 10 (two at about
+  2 seconds, two at about 122 seconds) had the same address in `rdx` and `r8` and another
+  address in `r9`; the result was 1.
+- No candidate: without knowing what 15 is, no documented function fits
+  better than another.
+
+### What confirming these needs
+
+The proxy logs texts only for arguments (ADR 0038) and the bytes behind
+an address only after `Steam_BGetCallback` (ADR 0042). None of the
+candidates above can be confirmed with that:
+
+- **Position 12:** the text at the returned address. A prediction would
+  be that it matches the achievement's name as the official client
+  shows it in Cave Crawlers' achievement list.
+- **Position 6:** the first bytes at the address in `r8` after the call
+  returns. A prediction for the unlock state would be one byte, 0 or 1,
+  matching whether the test account has unlocked `Keep_PotionEffect`
+  in the official client; a stat would fill four bytes.
+- **Position 4:** no experiment yet; it needs a way to see the stat's
+  value that does not change it.
+
+Reading either needs a new ADR before any experiment is planned here
+(ADR 0043).
+
+### Experiment 2 (planned and run 2026-11-21)
+
+Cave Crawlers with the step 4c proxy (ADR 0043), which logs the result
+text of position 12 and the first 16 bytes at `r8` after position 6.
+Nothing on the account is changed; the game is only played as usual.
+
+1. Before starting: open Cave Crawlers' achievements in the official
+   client and keep the list at hand (names in the client's language,
+   and which ones are unlocked).
+2. Start the game, play until the game shows its achievements or for
+   about a minute, then quit normally. (In experiment 1, position 12
+   was first called at about 12 seconds.)
+3. After quitting: from the log, take the `result->"..."` lines of
+   position 12 and the `after r8->[...]` lines of position 6.
+
+Predictions from the page:
+
+- **Position 12 (`GetAchievementDisplayAttribute`):** every logged call
+  with the key `name` returns text, and each text is the name of one of
+  the achievements in the official client's list from step 1, in the
+  client's language. Different achievement names in `rdx` give different
+  texts.
+- **Position 6:** the candidates write different amounts to the address
+  in `r8`:
+  - unlock state of an achievement: the first byte is 0 or 1, and it is
+    1 exactly if the achievement whose display name position 12 returns
+    for `Keep_PotionEffect` is unlocked in the list from step 1;
+  - the player's own stat value: four bytes, a whole number or a
+    floating-point number;
+  - the share of players who unlocked an achievement: four bytes, a
+    floating-point number between 0 and 100;
+  - a global stat total: eight bytes.
+  The proxy cannot see which bytes the call wrote and which were there
+  before. If the achievement is locked and the first byte is 0, that
+  does not tell the unlock state apart from a stat of 0, and the
+  candidates stay as they are.
+
+The account's achievement state is noted here only as a match or a
+mismatch with the prediction (ADR 0043).
+
+**Result** (run by the maintainer, 2026-11-21, `observe-<pid>.log` of
+the step 4c proxy; the game ran normally for about three minutes).
+Playing was not possible over the remote connection, so the game stayed
+in its menus; position 12 was first called at about 88 seconds.
+
+- **Position 12:** 50 logged calls with 34 different achievement names,
+  all with the key `name`. 48 returned text the proxy could read, 33
+  different texts for the 33 names (for example `PlayWith10Players` →
+  "The Whole Squad", `Hit_Into_Spikes` → "THIS IS SPARTA!",
+  `Keep_PotionEffect` → "Potion Addict", `SloshKill_Normal` → "Tier 1
+  Crawler"). The recorder found these four in the official client's
+  achievement list for Cave Crawlers. The two calls with `EmptyTorch`
+  showed `result: no text`: the proxy logs only 2 to 64 printable ASCII
+  characters, so a longer name or one with other characters looks like
+  this; what it returned is not known. **Matches**, with that one name
+  not checked.
+- **Position 6:** 55 logged calls (the 50 000th at about 169 seconds),
+  all with `Keep_PotionEffect` and the same `r8`; every time the 16
+  bytes after the call were `00a5ddca f4010000 e4f96bfa fc7f0000`. The
+  first byte is 0, which the recorder compared with the state of
+  "Potion Addict" in the official client: **matches** the unlock
+  state. Read as four bytes, the start is a negative floating-point
+  number, outside 0 to 100: **does not match** the share of players,
+  which is ruled out. The next three bytes are not 0, so a stat of 0
+  written as four bytes does not fit either; a stat with another value,
+  and a global total in eight bytes, are not ruled out by the
+  predictions. (The first eight bytes read as an address in the range
+  this run's heap addresses had, which hints at a leftover value with
+  only the first byte written, but a hint is not a source.)
+
+Position 12 is confirmed as `GetAchievementDisplayAttribute` for
+`STEAMUSERSTATS_INTERFACE_VERSION011`. Position 6 stays a candidate:
+unlock state of an achievement, the player's own stat value, or a
+global stat total. A later run after "Potion Addict" has been unlocked
+by playing normally would tell the unlock state apart (first byte 1).
+
+Evidence (excerpt; floating-point registers and the `rcx` note left
+out):
+
+```text
+124 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 1 rcx=0x1f48a130450 rdx=0x1f68e52b7b0 r8=0x2aa7aef070 r9=0x7ffe058c1890 rdx->"Keep_PotionEffect"
+124 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 return 1 rax=0x1
+124 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 return 1 after r8->[00a5ddca f4010000 e4f96bfa fc7f0000]
+87673 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 call 1 rcx=0x1f48a130450 rdx=0x1f68ef88c20 r8=0x1f68efe3df0 r9=0x7ffe058c1990 rdx->"PlayWith10Players" r8->"name"
+87673 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 1 rax=0x1f6901b0ec2
+87673 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 1 result->"The Whole Squad"
+87674 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 call 5 rcx=0x1f48a130450 rdx=0x1f68ef88ae0 r8=0x1f68efe3f40 r9=0x7ffe058c1990 rdx->"EmptyTorch" r8->"name"
+87675 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 5 rax=0x1f6901b0f42
+87675 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 5 result: no text
+87682 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 call 32 rcx=0x1f48a130450 rdx=0x1f68ef88d60 r8=0x1f68efe3df0 r9=0x7ffe058c1990 rdx->"Keep_PotionEffect" r8->"name"
+87682 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 32 rax=0x1f6901c02a2
+87682 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 32 result->"Potion Addict"
+169079 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 return 50000 after r8->[00a5ddca f4010000 e4f96bfa fc7f0000]
+```
+
+Evidence (excerpt, `observe-<pid>.log` of experiment 1; floating-point
+registers and the `rcx` note left out):
+
+```text
+87 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#0 call 1 rcx=0x1e6a5ec0450 rdx=0xf r8=0x1e51f3eb580 r9=0x327
+88 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#0 return 1 rax=0x1
+120 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 1 rcx=0x1e6a5ec0450 rdx=0x1e8acc6a890 r8=0x7393cef100 r9=0x7ffe4c781890 rdx->"Keep_PotionEffect"
+120 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 return 1 rax=0x1
+1100 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#4 call 1 rcx=0x1e6a5ec0450 rdx=0x1e8ac98e320 r8=0x0 r9=0x7ffe4c781810 rdx->"PrestigeLevel"
+1100 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#4 return 1 rax=0x1
+1101 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#10 call 1 rcx=0x1e6a5ec0450 rdx=0xf r8=0x1e51f3e9f00 r9=0x327
+1101 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#10 return 1 rax=0x1
+11870 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 call 1 rcx=0x1e6a5ec0450 rdx=0x1e8ad3bc8d0 r8=0x1e8ac98ed40 r9=0x7ffe4c781990 rdx->"PlayWith10Players" r8->"name"
+11870 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 1 rax=0x1e8aea80ec2
+11870 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 call 2 rcx=0x1e6a5ec0450 rdx=0x1e8ad3bc4d0 r8=0x1e8ac98ee90 r9=0x7ffe4c781990 rdx->"Hit_Into_Spikes" r8->"name"
+11871 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 2 rax=0x1e8aea80ee2
+169724 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 50000 rcx=0x1e6a5ec0450 rdx=0x1e8e3019dd0 r8=0x7393cef100 r9=0x7ffe4c781890 rdx->"Keep_PotionEffect"
+```

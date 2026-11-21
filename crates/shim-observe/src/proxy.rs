@@ -50,18 +50,18 @@
 //! held when the call started are logged as hex, each only if
 //! `VirtualQuery` shows them readable. Nothing beyond them is read.
 //!
-//! Step 4c (ADR 0043): for calls through stand-ins listed in [`READS`],
+//! Step 4c (ADR 0043): for calls through stand-ins listed in `READS`,
 //! and only when the call is logged, the proxy also logs after the return
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
 //! started. Calls not on the list are logged as before.
 //!
-//! Shadow mode (ADR 0046): for confirmed meanings listed in [`SHADOWS`],
+//! Shadow mode (ADR 0046): for confirmed meanings listed in `SHADOWS`,
 //! and only when the call is logged, the proxy compares the official
 //! client's result with Reborn's own answer and logs match or mismatch.
 //! The game always gets the official client's result.
 //!
-//! Answer mode (ADR 0046): for calls in [`ANSWERS`] (shadow mode matched in
+//! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
 //! --app`, the stub jumps to Reborn's own function instead of the official
 //! client's; the result still goes through the return stub and is logged.

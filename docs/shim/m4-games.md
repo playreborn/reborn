@@ -40,7 +40,7 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 4301370 | Linsips | yes | yes | yes | 4 MB | recorded (stage 3, agent) |
 | 3419430 | Bongo Cat | yes | yes | not listed | 100 MB | recorded (stage 3) |
 | 5191630 | Coin Maker Simulator Demo | yes | not listed | yes | 3 GB | recorded (stage 3) |
-| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | loads Steam only after a language screen; a run needs a person |
+| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | reached its main menu with the proxy armed but loaded no Steam library at all (agent run, 2026-11-22); whether it uses Steam later needs playing |
 | 1712830 | Baldi's Basics Classic Remastered | added | yes | yes | 600 MB | recorded (stage 3, agent) |
 | 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | first start asks for administrator rights (Windows dialog for the official client's install step); left for the maintainer |
 | 897330 | Coloring Pixels | added | yes | yes | 500 MB | shows its own settings window with a Play button before loading Steam; a run needs a person |
@@ -50,7 +50,7 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 2220360 | Paper Lily - Chapter 1 | added | yes | yes | 350 MB | recorded (stage 3, agent) |
 | 2600140 | Please, Touch The Artwork 2 | added | yes | yes | 3 GB | recorded (stage 3, agent) |
 | 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
-| 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | asks for a language before loading Steam; a run needs a person |
+| 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | 32-bit (`steam_api.dll`), so for M5 |
 | 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | recorded (stage 3, agent); a launcher process starts the game process, and the game printed no `[S_API]` line |
 | 1275670 | Outcore: Desktop Adventure | added | yes | yes | 2 GB | recorded (stage 3, agent) |
 | 2505120 | Plant Therapy | added | yes | yes | 900 MB | recorded (stage 3, agent) |
@@ -64,7 +64,7 @@ owned; online PvP, no single-player listed). Added and installed, but
 (2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
 (909080).
 
-With these, 21 candidates are listed: 16 recorded by now, four that need a person for a run, and Life is Strange, which is 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
+With these, 21 candidates are listed: 16 recorded by now; How Fish Is Made uses no Steam calls up to its menu; Coloring Pixels and Dark Deception still need a run; Life is Strange and Higurashi are 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

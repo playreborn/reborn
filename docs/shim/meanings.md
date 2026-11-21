@@ -431,3 +431,66 @@ status.
 64 ms ThreadId(1) SteamUtils009#9 call 1 rcx=0x265b1df02e0 rdx=0x7ffdaef341d0 r8=0x265ad201680 r9=0xd
 64 ms ThreadId(1) SteamUtils009#9 return 1 rax=0x10492e
 ```
+
+## Positions most games share: further candidates
+
+Read 2026-11-21 from the pages linked below; recordings from the 14
+games in `coverage.md`. None of these is confirmed; each needs an
+experiment, and the open question is written down with it.
+
+### `SteamController007` and `SteamController008` position 2: candidate `RunFrame`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamController>;
+  its constants name `SteamController007` (Cave Crawlers, Outcore). Ten
+  games asked for `SteamController008`, which the page does not name.
+- **Recorded:** called about as often as the game draws frames (50 to 66
+  logged calls within the first seconds, then every 10 000th), always
+  with `rdx` = 0; the result register held 0 or the same leftover
+  address in every call of a game, which fits a function without a
+  result.
+- **Fit:** the page documents exactly one function without arguments
+  and without a result: it brings the interface up to date with the
+  latest controller input, optional for lower latency.
+- **Open:** a function without arguments or result leaves little to
+  predict. An experiment would need a visible effect, for example
+  controller input arriving only when it runs; not planned yet.
+
+### `SteamInput006` position 3: candidate `RunFrame`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamInput>; its
+  constants name `SteamInput007`. Ten games asked for `SteamInput006`
+  (and two for `SteamInput001`), which the page does not name.
+- **Recorded:** called about as often as frames are drawn, `rdx` 0 or 1
+  (the first call of Baldi's Basics had 1), result register 0 or a
+  leftover address.
+- **Fit:** the page documents a function to call every frame that takes
+  one reserved true/false argument and returns nothing.
+- **Open:** as for `SteamController`.
+
+### `SteamUser020` to `SteamUser023` position 2: candidate `GetSteamID`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUser>; its
+  constants name `SteamUser019`, which no recorded game asked for. All
+  14 games called position 2 of `SteamUser020`, `021`, `022` or `023`,
+  once at start.
+- **Recorded:** `rdx` held an address on the game's stack and the result
+  was that same address.
+- **Fit:** the page documents two functions without arguments that
+  return something other than a number or true/false: the account's
+  Steam ID, and a user handle. Microsoft's x64 calling convention
+  returns a value that does not fit into a register through an address
+  the caller passes and gives that address back as the result, which is
+  what was recorded.
+- **Open:** confirming it means reading what the client wrote to that
+  address, which would be the account's Steam ID. ADR 0043 does not
+  allow a read entry for a call that could hand back an account
+  identifier; that needs its own ADR first.
+
+### `SteamUtils010` position 14: not known
+
+- **Recorded:** called about as often as frames are drawn; the first
+  call of each game had an address in `r8`, later ones `r8` = 1; the
+  result was `0xffffffff` every time in all games.
+- No candidate: none of the functions on the `ISteamUtils` page that
+  take no or simple arguments obviously gives the same 32-bit value
+  every frame in every game.

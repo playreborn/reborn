@@ -22,8 +22,8 @@
 //! Logged per call: the raw register values; for an integer register that
 //! points to readable memory holding 2 to 64 printable ASCII characters
 //! and a NUL, that text. Memory is checked with `VirtualQuery` before it is
-//! read. Nothing else is read, so binary data such as tickets never ends up
-//! in the log.
+//! read. Nothing else is read (apart from step 4b below), so binary data
+//! such as tickets never ends up in the log.
 //!
 //! The real DLL is loaded on the first call, not while this DLL is being
 //! loaded (Windows forbids loading libraries from `DllMain`). Its path is
@@ -44,6 +44,11 @@
 //! returns an object of the step 3a shape gets a stand-in for that result
 //! too, named after the text. Any argument register that holds a
 //! stand-in's address gets the real object before the real code runs.
+//!
+//! Step 4b (ADR 0042): after a `Steam_BGetCallback` call whose result's
+//! lowest byte is 1, the first 16 bytes at the addresses `rdx` and `r8`
+//! held when the call started are logged as hex, each only if
+//! `VirtualQuery` shows them readable. Nothing beyond them is read.
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
@@ -73,6 +78,12 @@ use crate::session::{READ_ONLY_MARKER, SAVED};
 
 /// Position of `CreateInterface` in [`ENTRY_POINTS`].
 const CREATE_INTERFACE: usize = 0;
+/// Position of `Steam_BGetCallback` in [`ENTRY_POINTS`].
+const B_GET_CALLBACK: usize = 2;
+
+/// Bytes logged at each of `rdx` and `r8` after `Steam_BGetCallback`
+/// (step 4b, ADR 0042).
+const CALLBACK_BYTES: usize = 16;
 
 /// Most table entries counted in step 3a (ADR 0040).
 const MAX_TABLE: usize = 1024;
@@ -171,6 +182,9 @@ struct Pending {
     logged: bool,
     /// For `CreateInterface`: the text it was asked with.
     interface: Option<Box<str>>,
+    /// For `Steam_BGetCallback`: `rdx` and `r8` when the call started
+    /// (step 4b).
+    outputs: Option<[u64; 2]>,
 }
 
 thread_local! {
@@ -294,6 +308,7 @@ extern "C" fn observe_call(
             .then(|| ascii_at(saved.rcx))
             .flatten()
             .map(String::into_boxed_str);
+        let outputs = (index == B_GET_CALLBACK).then_some([saved.rdx, saved.r8]);
         PENDING.with(|pending| {
             pending.borrow_mut().push(Pending {
                 entry_rsp,
@@ -302,6 +317,7 @@ extern "C" fn observe_call(
                 call,
                 logged,
                 interface,
+                outputs,
             });
         });
         targets()[index]
@@ -325,6 +341,17 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
         if call.logged {
             log(&format!(
                 "{} ms {thread:?} {name} return {} rax=0x{rax:x} xmm0=0x{xmm0:x}",
+                elapsed_ms(),
+                call.call
+            ));
+        }
+        // Step 4b: what the client wrote for the game, logged for every
+        // such call (they are rare), not only the first ones.
+        if let Some(outputs) = call.outputs
+            && let Some(note) = describe_callback(rax, outputs)
+        {
+            log(&format!(
+                "{} ms {thread:?} {name} return {} {note}",
                 elapsed_ms(),
                 call.call
             ));
@@ -435,6 +462,7 @@ extern "C" fn observe_method(
                 call,
                 logged,
                 interface,
+                outputs: None,
             });
         });
         target
@@ -613,6 +641,50 @@ fn ascii_at(address: u64) -> Option<String> {
         }
     }
     None
+}
+
+/// Step 4b of ADR 0042: if the lowest byte of `rax` is 1, the first
+/// [`CALLBACK_BYTES`] at the addresses `rdx` and `r8` held, as hex in
+/// groups of four bytes (memory order). `None` for any other result.
+fn describe_callback(rax: u64, [rdx, r8]: [u64; 2]) -> Option<String> {
+    if rax & 0xff != 1 {
+        return None;
+    }
+    let mut note = String::from("wrote");
+    for (name, address) in [("rdx", rdx), ("r8", r8)] {
+        let _ = write!(note, " {name}->");
+        match bytes_at(address) {
+            Some(bytes) => {
+                note.push('[');
+                for (index, byte) in bytes.iter().enumerate() {
+                    if index > 0 && index % 4 == 0 {
+                        note.push(' ');
+                    }
+                    let _ = write!(note, "{byte:02x}");
+                }
+                note.push(']');
+            }
+            None => note.push_str("not readable"),
+        }
+    }
+    Some(note)
+}
+
+/// The first [`CALLBACK_BYTES`] at `address`, if they all lie in one
+/// committed, readable memory region.
+fn bytes_at(address: u64) -> Option<[u8; CALLBACK_BYTES]> {
+    // As in `ascii_at`: the lowest 64 KiB are never mapped.
+    if address < 0x1_0000 {
+        return None;
+    }
+    let start = usize::try_from(address).ok()?;
+    let end = readable_end(start)?;
+    if start.checked_add(CALLBACK_BYTES)? > end {
+        return None;
+    }
+    // SAFETY: the bytes lie inside a committed, readable region that
+    // `readable_end` just checked; no alignment is assumed.
+    Some(unsafe { std::ptr::read_unaligned(start as *const [u8; CALLBACK_BYTES]) })
 }
 
 /// Windows' information about the memory at `address`, if it is
@@ -976,6 +1048,27 @@ mod tests {
         assert_eq!(ascii_at(u64::MAX), None);
     }
 
+    #[test]
+    fn logs_callback_bytes_only_after_a_result_of_one() {
+        let first: [u8; 20] = core::array::from_fn(|index| index as u8);
+        let second = [0xab_u8; 16];
+        let outputs = [first.as_ptr() as u64, second.as_ptr() as u64];
+        assert_eq!(describe_callback(0, outputs), None);
+        assert_eq!(describe_callback(0x100, outputs), None, "lowest byte 0");
+        assert_eq!(
+            describe_callback(0xffff_ff01, outputs).as_deref(),
+            Some(
+                "wrote rdx->[00010203 04050607 08090a0b 0c0d0e0f] \
+                 r8->[abababab abababab abababab abababab]"
+            ),
+            "only the first 16 bytes"
+        );
+        assert_eq!(
+            describe_callback(1, [0x10, 0x7fff_ffff_0000]).as_deref(),
+            Some("wrote rdx->not readable r8->not readable")
+        );
+    }
+
     fn pending(entry_rsp: usize, return_address: usize) -> Pending {
         Pending {
             entry_rsp,
@@ -984,6 +1077,7 @@ mod tests {
             call: 1,
             logged: false,
             interface: None,
+            outputs: None,
         }
     }
 

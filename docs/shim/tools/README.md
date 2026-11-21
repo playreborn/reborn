@@ -116,3 +116,15 @@ object that hands out a child object when asked with a text (the child
 came back as a stand-in whose calls reached the real child; without a
 text it came back unchanged; a stand-in passed as the second argument
 reached the real code as the real object).
+
+Step 4b (ADR 0042): after a `Steam_BGetCallback` call whose result's
+lowest byte is 1, the proxy logs the first 16 bytes at the addresses
+`rdx` and `r8` held when the call started, as hex in groups of four bytes
+(`Steam_BGetCallback return n wrote rdx->[...] r8->[...]`), or "not
+readable" if `VirtualQuery` does not show all 16 bytes readable. It does
+this for every such call, also after the first 50. Nothing beyond the 16
+bytes is read. These lines can hold account data; check them before
+anything goes into `docs/shim/`. Checked without a game (2026-11-21): a
+unit test with two local arrays (only the first 16 bytes logged, nothing
+for a result whose lowest byte is not 1, "not readable" for unmapped
+addresses).

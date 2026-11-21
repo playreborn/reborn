@@ -110,8 +110,9 @@ names, field numbers and flows. Therefore:
 - Never edit files another agent is currently working on.
 - Every new behaviour comes with tests. Do not delete or weaken existing tests
   to make something pass.
-- Tests never contact Valve's live servers. Live experiments are manual,
-  with a secondary test account, and never part of `cargo test`.
+- Tests never contact Valve's live servers. Live experiments are run by a
+  person, or by an AI agent within ADR 0044, with a secondary test
+  account, and are never part of `cargo test`.
 - Code, comments, docs and commit messages are in English.
 - Commits follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`,
   `test:`, `build:`, `chore:`) and are signed off (`git commit -s`, DCO).

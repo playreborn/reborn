@@ -420,3 +420,13 @@ out; one game per pair of lines, in the order above):
 61 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x14245f202e0 rdx=0x0 r8=0x14251867ec0 r9=0xc
 61 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2423d6
 ```
+
+**Further run** (not part of experiment 3, which did not list it):
+Gravitas (1067310) asked for `SteamUtils009`, like Cave Crawlers, and
+position 9 returned `0x10492e` (1067310), its app ID. It changes no
+status.
+
+```text
+64 ms ThreadId(1) SteamUtils009#9 call 1 rcx=0x265b1df02e0 rdx=0x7ffdaef341d0 r8=0x265ad201680 r9=0xd
+64 ms ThreadId(1) SteamUtils009#9 return 1 rax=0x10492e
+```

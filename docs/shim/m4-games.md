@@ -51,7 +51,7 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 2600140 | Please, Touch The Artwork 2 | added | yes | yes | 3 GB | recorded (stage 3, agent) |
 | 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
 | 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | asks for a language before loading Steam; a run needs a person |
-| 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | installing |
+| 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | recorded (stage 3, agent); a launcher process starts the game process, and the game printed no `[S_API]` line |
 
 Left out: AION 2 (3393110, owned; online game) and Quatro! (2158270,
 owned; online PvP, no single-player listed). Added and installed, but

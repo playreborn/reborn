@@ -16,6 +16,9 @@ A game goes on the list only if all of these hold:
    are never run with the observation proxy: a foreign DLL in such a
    process could put the account at risk.
 3. **Small enough** for agent runs: at most 10 GB (ADR 0044).
+4a. **64-bit on Windows.** M4 covers 64-bit Windows and Linux; 32-bit
+   Windows comes with M5 (`docs/plan.md`). Whether a game is 32-bit
+   shows only after installing it (`steam_api.dll` without `64`).
 4. **Owned by the test account**, or free so that it can be added
    (ADR 0044, at most 3 a day).
 5. Ideally **Steam Achievements and Steam Cloud** are listed, so that
@@ -44,11 +47,19 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 588430 | Fallout Shelter | free | yes | yes | 2 GB | EULA |
 | 319630 | Life is Strange - Episode 1 | free | yes | yes | 5 GB | EULA |
 | 2420510 | HoloCure - Save the Fans! | free | yes | yes | 250 MB | EULA |
+| 2220360 | Paper Lily - Chapter 1 | added | yes | yes | 350 MB | recorded (stage 3, agent) |
+| 2600140 | Please, Touch The Artwork 2 | added | yes | yes | 3 GB | recorded (stage 3, agent) |
+| 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
+| 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | asks for a language before loading Steam; a run needs a person |
+| 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | installing |
 
 Left out: AION 2 (3393110, owned; online game) and Quatro! (2158270,
-owned; online PvP, no single-player listed).
+owned; online PvP, no single-player listed). Added and installed, but
+32-bit, so for M5: Katawa Shoujo (3068300), SCP – Containment Breach
+(2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
+(909080).
 
-Nine places are still open. Free games are a practical start for agent
+With these, 16 candidates are listed; four of them need a person for a run. Four places are still open. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

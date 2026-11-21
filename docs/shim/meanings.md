@@ -364,7 +364,7 @@ registers and the `rcx` note left out):
 - **Recording:** all five recorded games call position 9 about twice at
   start and position 14 about 50 to 90 times (`coverage.md`).
 
-### Position 9: candidate `GetAppID`
+### Position 9: `GetAppID`, experiment 3 matched (waiting for the maintainer's OK)
 
 - **Recorded:** the result was, in every recorded game, that game's own
   app ID: Cave Crawlers `0x20b336` (2143030, `SteamUtils009`), Bongo Cat
@@ -380,8 +380,9 @@ registers and the `rcx` note left out):
 
 ### Experiment 3 (planned 2026-11-21 12:48, before reading the runs)
 
-The agent's batch of stage 3 runs started at about 12:35 (ADR 0044),
-with these games: Paper Lily - Chapter 1 (2220360), Please, Touch The
+The agent's batch of stage 3 runs (ADR 0044) was running in the
+background with these games (correction: its first game started at
+12:47:52, not at about 12:35 as first written): Paper Lily - Chapter 1 (2220360), Please, Touch The
 Artwork 2 (2600140), Cube Escape: Paradox (909080), Katawa Shoujo
 (3068300), Higurashi When They Cry Hou - Ch.1 (310360), SCP –
 Containment Breach (2178380), Travellin Cats in Paris (2313250), An
@@ -393,3 +394,29 @@ proxy and asks for `SteamUtils009` or `SteamUtils010`, the first result
 of position 9 is that game's app ID. A game that does not load the proxy
 or does not call position 9 counts neither way. A single game where the
 result differs is a mismatch.
+
+**Result** (read after the plan was committed at 12:48:44; agent runs,
+ADR 0044). Three of the eight games loaded the proxy and called
+position 9 of `SteamUtils010`; in all three the first result was the
+game's app ID: Paper Lily `0x21e148` (2220360), Please, Touch The
+Artwork 2 `0x27accc` (2600140), An Arcade Full of Cats `0x2423d6`
+(2368470). **Matches.** The other five count neither way: four are
+32-bit games (Katawa Shoujo and SCP loaded `steamclient.dll`, which the
+64-bit proxy does not replace; Travellin Cats in Paris and Cube Escape
+ship only a 32-bit `steam_api.dll`), and Higurashi waited for a
+language choice before loading Steam.
+
+Under ADR 0044 an experiment the agent ran is marked confirmed only
+after the maintainer's OK; until then position 9 stays at "matched".
+
+Evidence (excerpt; floating-point registers and the `rcx` note left
+out; one game per pair of lines, in the order above):
+
+```text
+63 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x2705a7802e0 rdx=0x7ffdaf9041d0 r8=0x2707b621500 r9=0xd
+63 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x21e148
+61 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x1d7c26702e0 rdx=0x7ffdaf9041d0 r8=0x1d535b872c0 r9=0xd
+61 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x27accc
+61 ms ThreadId(1) SteamUtils010#9 call 1 rcx=0x14245f202e0 rdx=0x0 r8=0x14251867ec0 r9=0xc
+61 ms ThreadId(1) SteamUtils010#9 return 1 rax=0x2423d6
+```

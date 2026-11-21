@@ -44,6 +44,34 @@ format.
   `InstallSequence` under `HKLM\Software\Valve\Steam\Apps\0`; both did not
   exist (`NAME NOT FOUND`). Not needed for loading.
 
+### Windows: who loads it, and what follows
+
+- **Fact:** The game's `steam_api64.dll` is loaded from
+  `<game>\Cave Crawlers_Data\Plugins\x86_64\steam_api64.dll`, and right
+  after it `steamclient64.dll` from the official client's folder. After
+  that, `tier0_s64.dll` and `vstdlib_s64.dll` are loaded from the same
+  folder (`C:\Program Files (x86)\Steam\`). Then the debug message
+  `[S_API] SteamAPI_Init(): Loaded 'C:\Program Files (x86)\Steam\steamclient64.dll' OK.`
+  appears.
+- **Recorded:** 2026-11-21, Cave Crawlers (2143030), Windows 11 64-bit,
+  WinDbg 1.2611.4001.0 (Microsoft), module load events (`ModLoad`) and
+  debug output, five runs with the same order. Official client running,
+  first test account.
+- **Recorder:** the maintainer (see above).
+- **Evidence:**
+
+  ```text
+  ModLoad: ...   <game>\Cave Crawlers_Data\Plugins\x86_64\steam_api64.dll
+  ModLoad: ...   C:\Program Files (x86)\Steam\steamclient64.dll
+  ModLoad: ...   C:\Program Files (x86)\Steam\tier0_s64.dll
+  ModLoad: ...   C:\Program Files (x86)\Steam\vstdlib_s64.dll
+  [S_API] SteamAPI_Init(): Loaded 'C:\Program Files (x86)\Steam\steamclient64.dll' OK.
+  ```
+
+- **Meaning:** not known. Whether `tier0_s64.dll` and `vstdlib_s64.dll`
+  are needed by `steamclient64.dll` itself is not recorded; a shim would
+  not load them unless an observation shows the game needs them.
+
 ### Consequence for stage 2
 
 A proxy is only loaded on Windows if `SteamClientDll64` points to it.

@@ -1,0 +1,3 @@
+bm kernel32!GetProcAddress* ".if (@rdx > 0xffff) { .printf \"gpa %p %ma\\n\", @rcx, @rdx } .else { .printf \"gpa %p ordinal %p\\n\", @rcx, @rdx }; gc"
+bm kernelbase!GetProcAddress* ".if (@rdx > 0xffff) { .printf \"gpa %p %ma\\n\", @rcx, @rdx } .else { .printf \"gpa %p ordinal %p\\n\", @rcx, @rdx }; gc"
+g

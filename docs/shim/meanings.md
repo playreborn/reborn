@@ -565,6 +565,26 @@ positions called within the first 2 seconds. A position seen only in
 answer-mode runs, or a position within the first 2 seconds missing from
 them, is a mismatch.
 
+**Result of experiment 5** (agent runs, after the plan and its wording
+fix were committed):
+
+- All eight runs loaded the proxy, reached the first screen and closed
+  normally. In the four answer-mode runs position 9 was answered by
+  Reborn (twice per run).
+- Baldi's Basics: no position appeared only in an answer-mode run, and
+  none of the positions called in the first 2 seconds of the normal runs
+  was missing from them. **Matches.** The two new normal runs called
+  positions 0 and 6 of `STEAMUSERSTATS_INTERFACE_VERSION012`, which the
+  stage 3 run had not: the calls that made experiment 4 mismatch also
+  vary between normal runs.
+- An Arcade Full of Cats: the same. **Matches.** The extra positions 23
+  and 28 of experiment 4 (at about 30 seconds) appeared in none of the
+  eight runs.
+
+Answer mode for `GetAppID` matched experiment 5 in both games, which
+with Plant Therapy in experiment 4 makes three games. Under ADR 0044 the
+result counts once the maintainer gives the OK.
+
 ### `SteamUtils010` position 14: not known
 
 - **Recorded:** called about as often as frames are drawn; the first

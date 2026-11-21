@@ -53,3 +53,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0045](0045-higher-limits-for-agent-runs.md) | Higher limits for agent-run observation runs | Accepted |
 | [0046](0046-shadow-and-answer-mode.md) | Shadow and answer mode, the first step from proxy to shim (stage 5) | Accepted |
 | [0047](0047-shim-daemon-connection.md) | How the shim talks to rebornd | Accepted |
+| [0048](0048-loading-the-shim.md) | How games find the shim when Reborn starts them | Accepted |

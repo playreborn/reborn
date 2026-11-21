@@ -168,3 +168,23 @@ decides.
 
 If the official client rewrites `pid` during the run, the experiment
 tells nothing and is noted as such.
+
+### Result (agent runs, ADR 0044, after the plan was committed at 17:09:36)
+
+- `pid` held the official client's process ID before every run. In the
+  three replaced-`pid` runs `reborn-observe` wrote `rebornd`'s process ID,
+  and at disarm `pid` still held it, so the official client did not
+  rewrite it during a run; disarm put the old value back each time.
+- All six runs loaded the proxy, reached the first screen and closed on a
+  close request.
+- In the replaced-`pid` runs no game called any position that none of
+  its normal runs called, none missed a position its normal runs called
+  in the first 2 seconds, and position 9 of `SteamUtils010` returned the
+  game's app ID (4301370, 1712830, 2505120). **Matches** in all three
+  games.
+
+So far a game behaves the same when `pid` names a running process other
+than the official client. Under ADR 0048 `pid` gets `rebornd`'s process
+ID in shim mode, once the maintainer gives the OK (ADR 0044). Not
+covered: a `pid` that names no running process, and systems without the
+official client, which this experiment could not test.

@@ -353,3 +353,43 @@ registers and the `rcx` note left out):
 11871 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#12 return 2 rax=0x1e8aea80ee2
 169724 ms ThreadId(1) STEAMUSERSTATS_INTERFACE_VERSION011#6 call 50000 rcx=0x1e6a5ec0450 rdx=0x1e8e3019dd0 r8=0x7393cef100 r9=0x7ffe4c781890 rdx->"Keep_PotionEffect"
 ```
+
+## `SteamUtils009` and `SteamUtils010`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUtils>, read
+  2026-11-21. Its constants name the version text `SteamUtils009`, the
+  one Cave Crawlers asked for. Bongo Cat, Coin Maker Simulator, Baldi's
+  Basics and Linsips asked for `SteamUtils010`, which the page does not
+  name; for them the entry is a candidate only (ADR 0042, versions).
+- **Recording:** all five recorded games call position 9 about twice at
+  start and position 14 about 50 to 90 times (`coverage.md`).
+
+### Position 9: candidate `GetAppID`
+
+- **Recorded:** the result was, in every recorded game, that game's own
+  app ID: Cave Crawlers `0x20b336` (2143030, `SteamUtils009`), Bongo Cat
+  `0x342d26` (3419430), Coin Maker Simulator `0x4f37ce` (5191630),
+  Baldi's Basics `0x1a22be` (1712830), Linsips `0x41a23a` (4301370). The
+  argument registers held leftovers that changed between games (`rdx`
+  0 or an address, `r9` small numbers).
+- **Fit:** the page documents a function that takes no arguments and
+  returns the app ID of the current process. Of the other documented
+  functions without arguments that return a 32-bit number (lengths,
+  counts, seconds, server time), none would equal the app ID in five
+  games.
+
+### Experiment 3 (planned 2026-11-21 12:48, before reading the runs)
+
+The agent's batch of stage 3 runs started at about 12:35 (ADR 0044),
+with these games: Paper Lily - Chapter 1 (2220360), Please, Touch The
+Artwork 2 (2600140), Cube Escape: Paradox (909080), Katawa Shoujo
+(3068300), Higurashi When They Cry Hou - Ch.1 (310360), SCP –
+Containment Breach (2178380), Travellin Cats in Paris (2313250), An
+Arcade Full of Cats (2368470). Their logs had not been read when this
+plan was written.
+
+**Prediction from the page:** in every one of these games that loads the
+proxy and asks for `SteamUtils009` or `SteamUtils010`, the first result
+of position 9 is that game's app ID. A game that does not load the proxy
+or does not call position 9 counts neither way. A single game where the
+result differs is a mismatch.

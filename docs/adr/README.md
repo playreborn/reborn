@@ -48,3 +48,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0040](0040-observing-returned-objects.md) | Observing calls on returned objects (stage 3) | Accepted |
 | [0041](0041-stand-ins-for-nested-objects.md) | Stand-ins for objects returned through stand-ins (step 3c) | Accepted |
 | [0042](0042-meanings-and-callbacks.md) | How recorded calls get a meaning, and observing callbacks (stage 4) | Accepted |
+| [0043](0043-reading-results-for-experiments.md) | Reading result texts and output bytes for planned experiments (step 4c) | Accepted |

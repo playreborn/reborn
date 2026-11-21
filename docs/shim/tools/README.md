@@ -128,3 +128,17 @@ anything goes into `docs/shim/`. Checked without a game (2026-11-21): a
 unit test with two local arrays (only the first 16 bytes logged, nothing
 for a result whose lowest byte is not 1, "not readable" for unmapped
 addresses).
+
+Step 4c (ADR 0043): for the calls listed in `READS` in
+`crates/shim-observe/src/proxy.rs` (interface version text and position),
+and only when the call is logged anyway, the proxy adds one line after the
+return: the text `rax` points to (`return n result->"..."`, same rules as
+argument texts, or `result: no text`), or the first 16 bytes at the address
+a named argument register held when the call started (`return n after
+r8->[...]`, or "not readable"). Each entry belongs to an experiment in
+`docs/shim/meanings.md`; the first two are
+`STEAMUSERSTATS_INTERFACE_VERSION011` position 12 (result text) and
+position 6 (bytes at `r8`). Checked without a game (2026-11-21): unit
+tests (only listed version texts and positions get a read, with the
+address from the right register; text and only the first 16 bytes are
+logged, "not readable" for unmapped addresses).

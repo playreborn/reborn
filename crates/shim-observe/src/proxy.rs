@@ -22,7 +22,7 @@
 //! Logged per call: the raw register values; for an integer register that
 //! points to readable memory holding 2 to 64 printable ASCII characters
 //! and a NUL, that text. Memory is checked with `VirtualQuery` before it is
-//! read. Nothing else is read (apart from step 4b below), so binary data
+//! read. Nothing else is read (apart from steps 4b and 4c below), so binary data
 //! such as tickets never ends up in the log.
 //!
 //! The real DLL is loaded on the first call, not while this DLL is being
@@ -49,6 +49,12 @@
 //! lowest byte is 1, the first 16 bytes at the addresses `rdx` and `r8`
 //! held when the call started are logged as hex, each only if
 //! `VirtualQuery` shows them readable. Nothing beyond them is read.
+//!
+//! Step 4c (ADR 0043): for calls through stand-ins listed in [`READS`],
+//! and only when the call is logged, the proxy also logs after the return
+//! either the text `rax` points to (same rules as argument texts) or the
+//! first 16 bytes at the address one argument register held when the call
+//! started. Calls not on the list are logged as before.
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
@@ -81,9 +87,38 @@ const CREATE_INTERFACE: usize = 0;
 /// Position of `Steam_BGetCallback` in [`ENTRY_POINTS`].
 const B_GET_CALLBACK: usize = 2;
 
-/// Bytes logged at each of `rdx` and `r8` after `Steam_BGetCallback`
-/// (step 4b, ADR 0042).
-const CALLBACK_BYTES: usize = 16;
+/// Bytes logged behind an address: at each of `rdx` and `r8` after
+/// `Steam_BGetCallback` (step 4b, ADR 0042), and for listed calls
+/// (step 4c, ADR 0043).
+const READ_BYTES: usize = 16;
+
+/// What is read after a listed call returns (step 4c, ADR 0043).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Read {
+    /// The text `rax` points to.
+    ResultText,
+    /// The first [`READ_BYTES`] at the address this argument register
+    /// (`rdx`, `r8` or `r9`) held when the call started.
+    OutputBytes(&'static str),
+}
+
+/// The calls ADR 0043 allows reads for: interface version text, position,
+/// what is read. An entry is added only with a candidate and an experiment
+/// plan in `docs/shim/meanings.md` that names it, and the maintainer's OK;
+/// never for a call that could hand back a ticket, a token, a password or
+/// an account identifier.
+const READS: &[(&str, usize, Read)] = &[
+    // `docs/shim/meanings.md`, position 12: candidate
+    // `GetAchievementDisplayAttribute`.
+    ("STEAMUSERSTATS_INTERFACE_VERSION011", 12, Read::ResultText),
+    // `docs/shim/meanings.md`, position 6: candidates that read a value by
+    // name.
+    (
+        "STEAMUSERSTATS_INTERFACE_VERSION011",
+        6,
+        Read::OutputBytes("r8"),
+    ),
+];
 
 /// Most table entries counted in step 3a (ADR 0040).
 const MAX_TABLE: usize = 1024;
@@ -185,6 +220,20 @@ struct Pending {
     /// For `Steam_BGetCallback`: `rdx` and `r8` when the call started
     /// (step 4b).
     outputs: Option<[u64; 2]>,
+    /// For a listed call that is logged: what to read when it returns
+    /// (step 4c).
+    after: Option<After>,
+}
+
+/// A read to do when a listed call returns (step 4c, ADR 0043).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum After {
+    ResultText,
+    /// The register's name and the address it held when the call started.
+    Bytes {
+        register: &'static str,
+        address: u64,
+    },
 }
 
 thread_local! {
@@ -318,6 +367,7 @@ extern "C" fn observe_call(
                 logged,
                 interface,
                 outputs,
+                after: None,
             });
         });
         targets()[index]
@@ -354,6 +404,15 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 "{} ms {thread:?} {name} return {} {note}",
                 elapsed_ms(),
                 call.call
+            ));
+        }
+        // Step 4c: listed calls, only when they are logged.
+        if let Some(after) = call.after {
+            log(&format!(
+                "{} ms {thread:?} {name} return {} {}",
+                elapsed_ms(),
+                call.call,
+                describe_after(rax, after)
             ));
         }
         // CreateInterface (step 3b), and calls through stand-ins that passed
@@ -426,9 +485,11 @@ extern "C" fn observe_method(
             .into_iter()
             .find_map(ascii_at)
             .map(String::into_boxed_str);
-        let swapped = swap_stand_ins(saved, false);
         let call = METHOD_CALLS[number].fetch_add(1, Ordering::Relaxed) + 1;
         let logged = should_log(call);
+        // Step 4c: the registers as the call started, before any swap.
+        let after = logged.then(|| after_for(&info.name, slot, saved)).flatten();
+        let swapped = swap_stand_ins(saved, false);
         if logged {
             let beyond = if slot >= info.counted {
                 " (beyond the counted entries)"
@@ -463,6 +524,7 @@ extern "C" fn observe_method(
                 logged,
                 interface,
                 outputs: None,
+                after,
             });
         });
         target
@@ -644,7 +706,7 @@ fn ascii_at(address: u64) -> Option<String> {
 }
 
 /// Step 4b of ADR 0042: if the lowest byte of `rax` is 1, the first
-/// [`CALLBACK_BYTES`] at the addresses `rdx` and `r8` held, as hex in
+/// [`READ_BYTES`] at the addresses `rdx` and `r8` held, as hex in
 /// groups of four bytes (memory order). `None` for any other result.
 fn describe_callback(rax: u64, [rdx, r8]: [u64; 2]) -> Option<String> {
     if rax & 0xff != 1 {
@@ -652,39 +714,78 @@ fn describe_callback(rax: u64, [rdx, r8]: [u64; 2]) -> Option<String> {
     }
     let mut note = String::from("wrote");
     for (name, address) in [("rdx", rdx), ("r8", r8)] {
-        let _ = write!(note, " {name}->");
-        match bytes_at(address) {
-            Some(bytes) => {
-                note.push('[');
-                for (index, byte) in bytes.iter().enumerate() {
-                    if index > 0 && index % 4 == 0 {
-                        note.push(' ');
-                    }
-                    let _ = write!(note, "{byte:02x}");
-                }
-                note.push(']');
-            }
-            None => note.push_str("not readable"),
-        }
+        let _ = write!(note, " {name}->{}", hex_at(address));
     }
     Some(note)
 }
 
-/// The first [`CALLBACK_BYTES`] at `address`, if they all lie in one
+/// The first [`READ_BYTES`] at `address` as hex in groups of four bytes
+/// (memory order), or "not readable".
+fn hex_at(address: u64) -> String {
+    let Some(bytes) = bytes_at(address) else {
+        return "not readable".to_owned();
+    };
+    let mut hex = String::from("[");
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 && index % 4 == 0 {
+            hex.push(' ');
+        }
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex.push(']');
+    hex
+}
+
+/// Step 4c of ADR 0043: the read for a call at `slot` of the object asked
+/// for with `interface`, if [`READS`] lists it. Output addresses are taken
+/// from `saved` as the call started.
+fn after_for(interface: &str, slot: usize, saved: &Saved) -> Option<After> {
+    let &(_, _, read) = READS
+        .iter()
+        .find(|&&(name, position, _)| name == interface && position == slot)?;
+    match read {
+        Read::ResultText => Some(After::ResultText),
+        Read::OutputBytes(register) => {
+            let address = match register {
+                "rdx" => saved.rdx,
+                "r8" => saved.r8,
+                "r9" => saved.r9,
+                _ => return None,
+            };
+            Some(After::Bytes { register, address })
+        }
+    }
+}
+
+/// The log note for a listed call that returned with `rax` (step 4c).
+/// Nothing beyond the text or the [`READ_BYTES`] is read.
+fn describe_after(rax: u64, after: After) -> String {
+    match after {
+        After::ResultText => match ascii_at(rax) {
+            Some(text) => format!("result->\"{text}\""),
+            None => "result: no text".to_owned(),
+        },
+        After::Bytes { register, address } => {
+            format!("after {register}->{}", hex_at(address))
+        }
+    }
+}
+
+/// The first [`READ_BYTES`] at `address`, if they all lie in one
 /// committed, readable memory region.
-fn bytes_at(address: u64) -> Option<[u8; CALLBACK_BYTES]> {
+fn bytes_at(address: u64) -> Option<[u8; READ_BYTES]> {
     // As in `ascii_at`: the lowest 64 KiB are never mapped.
     if address < 0x1_0000 {
         return None;
     }
     let start = usize::try_from(address).ok()?;
     let end = readable_end(start)?;
-    if start.checked_add(CALLBACK_BYTES)? > end {
+    if start.checked_add(READ_BYTES)? > end {
         return None;
     }
     // SAFETY: the bytes lie inside a committed, readable region that
     // `readable_end` just checked; no alignment is assumed.
-    Some(unsafe { std::ptr::read_unaligned(start as *const [u8; CALLBACK_BYTES]) })
+    Some(unsafe { std::ptr::read_unaligned(start as *const [u8; READ_BYTES]) })
 }
 
 /// Windows' information about the memory at `address`, if it is
@@ -1078,7 +1179,83 @@ mod tests {
             logged: false,
             interface: None,
             outputs: None,
+            after: None,
         }
+    }
+
+    fn saved(rdx: u64, r8: u64, r9: u64) -> Saved {
+        Saved {
+            xmm: [[0; 2]; 4],
+            rcx: 0,
+            rdx,
+            r8,
+            r9,
+        }
+    }
+
+    #[test]
+    fn reads_only_for_listed_calls() {
+        let registers = saved(0x1111_0000, 0x2222_0000, 0x3333_0000);
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12, &registers),
+            Some(After::ResultText)
+        );
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 6, &registers),
+            Some(After::Bytes {
+                register: "r8",
+                address: 0x2222_0000
+            })
+        );
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 4, &registers),
+            None,
+            "another position"
+        );
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION013", 12, &registers),
+            None,
+            "another version"
+        );
+        assert_eq!(after_for("SteamUser020", 2, &registers), None);
+        for &(interface, position, _) in READS {
+            assert!(
+                after_for(interface, position, &registers).is_some(),
+                "every entry names a known register"
+            );
+        }
+    }
+
+    #[test]
+    fn logs_result_text_and_output_bytes() {
+        let text = c"Achievement name";
+        assert_eq!(
+            describe_after(text.as_ptr() as u64, After::ResultText),
+            "result->\"Achievement name\""
+        );
+        assert_eq!(describe_after(1, After::ResultText), "result: no text");
+        let bytes: [u8; 24] = core::array::from_fn(|index| index as u8);
+        assert_eq!(
+            describe_after(
+                1,
+                After::Bytes {
+                    register: "r8",
+                    address: bytes.as_ptr() as u64
+                }
+            ),
+            "after r8->[00010203 04050607 08090a0b 0c0d0e0f]",
+            "only the first 16 bytes"
+        );
+        assert_eq!(
+            describe_after(
+                1,
+                After::Bytes {
+                    register: "r8",
+                    address: 0x7fff_ffff_0000
+                }
+            ),
+            "after r8->not readable"
+        );
     }
 
     #[test]

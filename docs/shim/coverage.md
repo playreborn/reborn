@@ -68,7 +68,8 @@ game; their meanings are not known yet either.
 - Different `SteamClient` versions come with different versions of the
   other interfaces, so a position confirmed for one version is not
   confirmed for the next (ADR 0042).
-- Shared between all eight games (five before the agent's second batch): two positions of `SteamUtils` (9 and
+- Shared between the first eight games (Gravitas, an Unreal Engine game
+  with `SteamClient018`, calls only `SteamUtils` 9 and `SteamUser` 2 of these): two positions of `SteamUtils` (9 and
   14, in two versions), one of `SteamController` (2), and `SteamUser`
   position 2 (in three versions). Seven of eight use `SteamUtils010`,
   `SteamController008` and `SteamInput006`: good first targets.

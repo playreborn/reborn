@@ -106,6 +106,37 @@ pub enum FrameError {
     MultipleLines,
 }
 
+/// Where `rebornd` listens for shims (ADR 0047): on Windows the name of a
+/// named pipe in the local namespace (`reborn-shim-<user>`, user name with
+/// everything but ASCII letters and digits replaced by `_`), elsewhere the
+/// path of a socket file (`$XDG_RUNTIME_DIR/reborn-shim.sock`, or the temp
+/// directory with the user name in the file name). Same scheme as the
+/// frontend socket of ADR 0008.
+pub fn socket_name() -> String {
+    if cfg!(windows) {
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_owned());
+        let user: String = user
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        format!("reborn-shim-{user}")
+    } else {
+        match std::env::var_os("XDG_RUNTIME_DIR") {
+            Some(dir) if !dir.is_empty() => std::path::PathBuf::from(dir)
+                .join("reborn-shim.sock")
+                .to_string_lossy()
+                .into_owned(),
+            _ => {
+                let user = std::env::var("USER").unwrap_or_else(|_| "default".to_owned());
+                std::env::temp_dir()
+                    .join(format!("reborn-shim-{user}.sock"))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
+    }
+}
+
 /// One message as a line, ending in `\n`.
 pub fn encode<T: Serialize>(message: &T) -> Result<String, FrameError> {
     let mut line = serde_json::to_string(message)?;

@@ -132,6 +132,9 @@ pub struct Daemon {
     next_sign_in: AtomicU64,
     /// Apps whose game process (started by us) is still running.
     running: Arc<Mutex<BTreeSet<u32>>>,
+    /// Process ID of each game process we started, with its app (for shim
+    /// sessions, ADR 0047).
+    launched: Arc<Mutex<BTreeMap<u32, u32>>>,
     /// Friends of the signed-in account with their latest persona, kept
     /// current by the watcher (initial list plus every change).
     friends: Arc<Mutex<BTreeMap<u64, FriendInfo>>>,
@@ -161,6 +164,7 @@ impl Daemon {
             sign_in: Mutex::new(None),
             next_sign_in: AtomicU64::new(1),
             running: Arc::new(Mutex::new(BTreeSet::new())),
+            launched: Arc::new(Mutex::new(BTreeMap::new())),
             friends: Arc::new(Mutex::new(BTreeMap::new())),
             friends_loaded: Arc::new(AtomicBool::new(false)),
             friends_watch: Mutex::new(None),
@@ -192,6 +196,13 @@ impl Daemon {
 
     fn running(&self) -> MutexGuard<'_, BTreeSet<u32>> {
         lock(&self.running)
+    }
+
+    /// The app we started the process `pid` for, while it runs (ADR 0047).
+    /// Under Proton and with launchers the game's own process can differ
+    /// from the one we started; such games get no shim session yet.
+    pub fn launched_app(&self, pid: u32) -> Option<u32> {
+        lock(&self.launched).get(&pid).copied()
     }
 
     fn pending_sign_in(&self) -> MutexGuard<'_, Option<PendingSignIn>> {
@@ -1027,6 +1038,8 @@ impl Daemon {
             Err(error) => return error_response(&error),
         };
         self.running().insert(app_id);
+        let pid = child.id();
+        lock(&self.launched).insert(pid, app_id);
         info!(app_id, program = %plan.executable.display(), proton = ?plan.proton, "game started");
         self.emit(Event::GameStarted {
             app_id,
@@ -1035,9 +1048,11 @@ impl Daemon {
 
         let events = self.events.clone();
         let running = Arc::clone(&self.running);
+        let launched = Arc::clone(&self.launched);
         tokio::task::spawn_blocking(move || {
             let exit_code = child.wait().ok().and_then(|status| status.code());
             lock(&running).remove(&app_id);
+            lock(&launched).remove(&pid);
             info!(app_id, ?exit_code, "game exited");
             // No receivers just means no frontend is connected.
             let _ = events.send(Event::GameExited { app_id, exit_code });

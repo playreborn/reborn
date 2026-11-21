@@ -56,6 +56,27 @@ pub fn listen(access: &Access) -> io::Result<Listener> {
     listen_at(name()?, access)
 }
 
+/// Starts listening for shims (ADR 0047), with the same access rules as
+/// the frontend socket. The name comes from `reborn-shim-protocol`, so the
+/// shim finds it without depending on this crate.
+pub fn listen_shim(access: &Access) -> io::Result<Listener> {
+    listen_at(shim_name()?, access)
+}
+
+fn shim_name() -> io::Result<Name<'static>> {
+    let name = reborn_shim_protocol::socket_name();
+    #[cfg(windows)]
+    {
+        use interprocess::local_socket::GenericNamespaced;
+        name.to_ns_name::<GenericNamespaced>()
+    }
+    #[cfg(unix)]
+    {
+        use interprocess::local_socket::GenericFilePath;
+        std::path::PathBuf::from(name).to_fs_name::<GenericFilePath>()
+    }
+}
+
 fn listen_at(name: Name<'_>, access: &Access) -> io::Result<Listener> {
     let options = ListenerOptions::new().name(name);
     #[cfg(unix)]

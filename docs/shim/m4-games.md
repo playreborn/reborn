@@ -34,13 +34,13 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | App | Name | Owned | Achievements | Cloud | Min. disk | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2143030 | Cave Crawlers | yes | yes | yes | 1 GB | recorded (stages 3, 4) |
-| 4301370 | Linsips | yes | yes | yes | 4 MB | |
+| 4301370 | Linsips | yes | yes | yes | 4 MB | recorded (stage 3, agent) |
 | 3419430 | Bongo Cat | yes | yes | not listed | 100 MB | recorded (stage 3) |
 | 5191630 | Coin Maker Simulator Demo | yes | not listed | yes | 3 GB | recorded (stage 3) |
-| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | level 3 trivially; keep as a start check |
-| 1712830 | Baldi's Basics Classic Remastered | free | yes | yes | 600 MB | |
-| 332950 | Dark Deception | free | yes | yes | 1 GB | |
-| 897330 | Coloring Pixels | free | yes | yes | 500 MB | |
+| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | loads Steam only after a language screen; a run needs a person |
+| 1712830 | Baldi's Basics Classic Remastered | added | yes | yes | 600 MB | recorded (stage 3, agent) |
+| 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | first start asks for administrator rights (Windows dialog for the official client's install step); left for the maintainer |
+| 897330 | Coloring Pixels | added | yes | yes | 500 MB | shows its own settings window with a Play button before loading Steam; a run needs a person |
 | 588430 | Fallout Shelter | free | yes | yes | 2 GB | EULA |
 | 319630 | Life is Strange - Episode 1 | free | yes | yes | 5 GB | EULA |
 | 2420510 | HoloCure - Save the Fans! | free | yes | yes | 250 MB | EULA |

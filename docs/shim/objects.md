@@ -242,3 +242,43 @@ see `README.md` for the format.
 - **Meaning:** not known. The 32 stand-ins are nearly used up by newer
   games; a game asking for more objects gets the real ones for the rest
   (the log says so).
+
+### Windows: the same `SteamClient` version, asked in two ways (stage 3)
+
+- **Fact:** Two more games, recorded by an AI agent (ADR 0044):
+  - Baldi's Basics Classic Remastered asked for `SteamClient020`, like
+    Cave Crawlers, but unlike Cave Crawlers it asked for most objects at
+    a position of its own, with the text in `r9` (`r8` at position 9),
+    as Bongo Cat and Coin Maker Simulator did with 021 and 023: for
+    example `SteamUser021` at 5, `STEAMUSERSTATS_INTERFACE_VERSION012`
+    at 13, `STEAMREMOTESTORAGE_INTERFACE_VERSION016` at 17,
+    `STEAMHTTP_INTERFACE_VERSION003` at 24; seven texts went to 12. Its
+    `SteamClient020` table had 42 counted entries.
+  - Linsips asked for `SteamClient023`, like Coin Maker Simulator, but
+    asked for every object at position 12 (text in `r9`), except
+    `SteamUser023`, which it asked for at 5 and again at 12.
+  - So whether a game uses position 12 or a position per interface
+    depends on the game, not on the `SteamClient` version. Asking at 12
+    and at the interface's own position gave the same object (Linsips,
+    `SteamUser023`: one stand-in).
+  - Both games ran normally to their first screen and closed on a close
+    request. Baldi's Basics used 29 stand-ins, Linsips 9.
+- **Recorded:** 2026-11-21, Baldi's Basics Classic Remastered (1712830)
+  and Linsips (4301370), Windows 11 64-bit, `reborn-observe arm` with
+  the step 4c proxy, stage 3. Official client running, first test
+  account.
+- **Recorder:** an AI agent on the maintainer's computer, on the
+  maintainer's instruction (ADR 0044).
+- **Evidence** (excerpt; floating-point registers and the `rcx` note
+  left out):
+
+  ```text
+  20 ms ThreadId(1) CreateInterface result 2 shape: first field -> steamclient64+0x133aa08, 42 entries point into its executable memory
+  20 ms ThreadId(1) CreateInterface result 2 replaced by stand-in 1 (0x1d77de19c20) for SteamClient020
+  63 ms ThreadId(1) SteamClient020#5 call 1 rcx=0x7ffceac307f0 rdx=0x1 r8=0x1 r9=0x7ffdb68473b0 r9->"SteamUser021"
+  74 ms ThreadId(1) SteamClient023#5 call 1 rcx=0x7ffceac30808 rdx=0x1 r8=0x1 r9=0x7ffdb684c3e0 r9->"SteamUser023"
+  ```
+
+  The first three lines are Baldi's Basics, the last is Linsips.
+
+- **Meaning:** not known.

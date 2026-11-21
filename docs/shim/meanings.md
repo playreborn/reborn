@@ -486,6 +486,22 @@ experiment, and the open question is written down with it.
   allow a read entry for a call that could hand back an account
   identifier; that needs its own ADR first.
 
+### Shadow mode for `GetAppID` (ADR 0046)
+
+Three agent runs on 2026-11-21 with `reborn-observe arm --app <id>`:
+Linsips, Paper Lily - Chapter 1 and Chronigma. Every logged call at
+position 9 of `SteamUtils010` gave `shadow match`: the official client's
+result and Reborn's answer (the app ID Reborn started the game with)
+were the same. The games ran normally and closed on a close request.
+Under ADR 0046 this is the three-game condition for answer mode; answer
+mode also needs the maintainer's OK.
+
+```text
+79 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 4301370, Reborn 4301370
+67 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 2220360, Reborn 2220360
+60 ms ThreadId(1) SteamUtils010#9 return 1 shadow match: client 4051150, Reborn 4051150
+```
+
 ### `SteamUtils010` position 14: not known
 
 - **Recorded:** called about as often as frames are drawn; the first

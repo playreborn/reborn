@@ -65,7 +65,7 @@ Positions are listed in the order of their numbers.
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 4 | 0 (PT, TW); 0 10 (AC); 0 6 10 14 15 (OE) | not known |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 3 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS) | not known |
 | `SteamUtils009` | 3 | 9 14 (CC, OC); 9 16 (GR) | 9 `GetAppID`: candidate; rest not known |
-| `SteamUtils010` | 11 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE) | 9 `GetAppID`: confirmed; rest not known |
+| `SteamUtils010` | 11 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE) | 9 `GetAppID`: confirmed, shadow mode matched in 3 games; rest not known |
 
 Beyond these, the exported entry points (`entry-points.md`) and the
 callback numbers seen through `Steam_BGetCallback` are needed by every

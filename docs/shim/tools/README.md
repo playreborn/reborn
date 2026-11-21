@@ -34,3 +34,20 @@ Pitfalls, found the hard way (2026-11-21):
 - Comments in the script broke WinDbg's parsing, so it has none.
 - Tested with `cdb.exe` on `cmd.exe /c exit` and `ld:combase.dll`: no
   errors, one `gpa` line per call.
+
+## `reborn-observe` (stage 2, Windows)
+
+Arms and disarms a proxy session (ADR 0039). It changes only
+`HKCU\Software\Valve\Steam\ActiveProcess\SteamClientDll64`, always with
+a saved copy of the old value in Reborn's data folder
+(`shim-observe\`), and only when the user runs it.
+
+```text
+reborn-observe status
+reborn-observe arm --proxy <built proxy dll>
+reborn-observe disarm
+```
+
+Start the official client first, arm, run the game once, disarm before
+closing the official client. `disarm` only writes the old value back if
+the proxy's path is still there, and can be run any number of times.

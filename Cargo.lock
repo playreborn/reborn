@@ -3841,6 +3841,17 @@ name = "reborn-proto"
 version = "0.2.0"
 
 [[package]]
+name = "reborn-shim-observe"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reborn-platform",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "reborn-testkit"
 version = "0.2.0"
 

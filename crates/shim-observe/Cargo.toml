@@ -1,0 +1,26 @@
+[package]
+name = "reborn-shim-observe"
+description = "Observation tools for the steamclient replacement (ADR 0038, ADR 0039). Not published."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "GPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "reborn-observe"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+reborn-platform.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[lints]
+workspace = true

@@ -63,6 +63,7 @@ exceptions = [
     { allow = ["GPL-3.0-or-later"], crate = "reborn-platform" },
     { allow = ["GPL-3.0-or-later"], crate = "reborn-ipc" },
     { allow = ["GPL-3.0-or-later"], crate = "reborn-testkit" },
+    { allow = ["GPL-3.0-or-later"], crate = "reborn-shim-observe" },
     { allow = ["GPL-3.0-or-later"], crate = "rebornd" },
     { allow = ["GPL-3.0-or-later"], crate = "reborn-cli" },
     { allow = ["GPL-3.0-or-later"], crate = "reborn" },

@@ -43,6 +43,11 @@ All notable changes to Reborn are listed here. The format follows
 
 ### Changed
 
+- New, for developers of the planned `steamclient` replacement only:
+  `reborn-observe` arms and disarms an observation session by pointing
+  one registry value of the official client at a proxy and restoring it
+  afterwards (ADR 0038, ADR 0039). The proxy itself is not built yet.
+
 - The rules for the planned `steamclient` replacement are set: it is built
   without Valve's Steamworks SDK, only from observing games you own
   (ADR 0012, `docs/legal/shim-assessment.md`).

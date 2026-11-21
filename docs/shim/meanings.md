@@ -364,7 +364,7 @@ registers and the `rcx` note left out):
 - **Recording:** all five recorded games call position 9 about twice at
   start and position 14 about 50 to 90 times (`coverage.md`).
 
-### Position 9: `GetAppID`, experiment 3 matched (waiting for the maintainer's OK)
+### Position 9: confirmed `GetAppID` for `SteamUtils010` (experiment 3); candidate for `SteamUtils009`
 
 - **Recorded:** the result was, in every recorded game, that game's own
   app ID: Cave Crawlers `0x20b336` (2143030, `SteamUtils009`), Bongo Cat
@@ -406,8 +406,9 @@ Artwork 2 `0x27accc` (2600140), An Arcade Full of Cats `0x2423d6`
 ship only a 32-bit `steam_api.dll`), and Higurashi waited for a
 language choice before loading Steam.
 
-Under ADR 0044 an experiment the agent ran is marked confirmed only
-after the maintainer's OK; until then position 9 stays at "matched".
+The maintainer gave the OK on 2026-11-21 (ADR 0044): position 9 is
+confirmed as `GetAppID` for `SteamUtils010`. For `SteamUtils009` it
+stays a candidate: no `SteamUtils009` game was part of experiment 3.
 
 Evidence (excerpt; floating-point registers and the `rcx` note left
 out; one game per pair of lines, in the order above):

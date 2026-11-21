@@ -42,7 +42,7 @@ Positions are listed in the order of their numbers, not of the calls.
 | `SteamUser021` | BB, PL | 2 | not known |
 | `SteamUser023` | BC, CM, LS, PT, AC | 1 (BC, AC) 2 | not known |
 | `SteamUtils009` | CC, GR | 9 14 (CC); 9 16 (GR) | 9 `GetAppID`: candidate (fits, as for 010); 14 not known |
-| `SteamUtils010` | BC, CM, BB, LS, PL, PT, AC | 5 6 34 (PT) 9 14 | 9 `GetAppID`: experiment 3 matched, waiting for the maintainer's OK; rest not known |
+| `SteamUtils010` | BC, CM, BB, LS, PL, PT, AC | 5 6 34 (PT) 9 14 | 9 `GetAppID`: confirmed; rest not known |
 | `SteamFriends017` | CC, PL, PT, AC | 43 44 (CC); 0 (PL, AC); 3 4 36 37 (PT) | not known |
 | `SteamFriends018` | BC | 6 9 36 | not known |
 | `SteamInput001` | CC | 2 | not known |

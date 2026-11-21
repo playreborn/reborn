@@ -46,3 +46,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0038](0038-shim-observation-tool.md) | The shim observation tool | Accepted |
 | [0039](0039-loading-the-observation-proxy.md) | Loading the observation proxy | Accepted |
 | [0040](0040-observing-returned-objects.md) | Observing calls on returned objects (stage 3) | Accepted |
+| [0041](0041-stand-ins-for-nested-objects.md) | Stand-ins for objects returned through stand-ins (step 3c) | Accepted |

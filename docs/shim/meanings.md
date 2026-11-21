@@ -558,9 +558,9 @@ all with the same waiting time (30 seconds after the `[S_API]` line).
 
 **Prediction:** if answering `GetAppID` does not change what the game
 does, then every interface version and position called in an
-answer-mode run is also called in at least one of the four runs of that
-game without answer mode (its two new normal runs, its stage 3 run, or
-its experiment 4 run is not counted), and the other way round for the
+answer-mode run is also called in at least one of the three runs of
+that game without answer mode (its two new normal runs and its stage 3
+run; the experiment 4 runs are not counted), and the other way round for the
 positions called within the first 2 seconds. A position seen only in
 answer-mode runs, or a position within the first 2 seconds missing from
 them, is a mismatch.

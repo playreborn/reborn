@@ -52,6 +52,11 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
 | 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | asks for a language before loading Steam; a run needs a person |
 | 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | recorded (stage 3, agent); a launcher process starts the game process, and the game printed no `[S_API]` line |
+| 1275670 | Outcore: Desktop Adventure | added | yes | yes | 2 GB | recorded (stage 3, agent) |
+| 2505120 | Plant Therapy | added | yes | yes | 900 MB | recorded (stage 3, agent) |
+| 4051150 | Chronigma | added | yes | yes | 2 GB | recorded (stage 3, agent) |
+| 2233770 | The Thief, the Witch, the Toad, and the Mushroom. | added | yes | yes | 350 MB | recorded (stage 3, agent) |
+| 3086720 | One's Own Exile | added | yes | yes | 150 MB | recorded (stage 3, agent) |
 
 Left out: AION 2 (3393110, owned; online game) and Quatro! (2158270,
 owned; online PvP, no single-player listed). Added and installed, but
@@ -59,7 +64,7 @@ owned; online PvP, no single-player listed). Added and installed, but
 (2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
 (909080).
 
-With these, 16 candidates are listed; four of them need a person for a run. Four places are still open. Free games are a practical start for agent
+With these, 21 candidates are listed: 14 recorded by now, four that need a person for a run, and three that need the maintainer to accept an EULA. The maintainer picks the final 20. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

@@ -1033,9 +1033,20 @@ impl Daemon {
         if let Some(result) = cloud_restore_result(restore) {
             self.emit(Event::CloudRestore { app_id, result });
         }
+        let shim_mode = crate::shim_launch::enabled();
+        if shim_mode && let Err(message) = crate::shim_launch::enter() {
+            return Response::Error {
+                message: format!("shim mode: {message}"),
+            };
+        }
         let mut child = match spawn(&plan) {
             Ok(child) => child,
-            Err(error) => return error_response(&error),
+            Err(error) => {
+                if shim_mode {
+                    crate::shim_launch::leave();
+                }
+                return error_response(&error);
+            }
         };
         self.running().insert(app_id);
         let pid = child.id();
@@ -1053,6 +1064,9 @@ impl Daemon {
             let exit_code = child.wait().ok().and_then(|status| status.code());
             lock(&running).remove(&app_id);
             lock(&launched).remove(&pid);
+            if shim_mode {
+                crate::shim_launch::leave();
+            }
             info!(app_id, ?exit_code, "game exited");
             // No receivers just means no frontend is connected.
             let _ = events.send(Event::GameExited { app_id, exit_code });

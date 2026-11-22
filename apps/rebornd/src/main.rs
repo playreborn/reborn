@@ -9,6 +9,7 @@
 
 mod daemon;
 mod server;
+mod shim_launch;
 mod shim_server;
 
 use std::sync::Arc;
@@ -38,6 +39,9 @@ async fn main() -> Result<()> {
     let shim_listener = reborn_ipc::socket::listen_shim(&socket_access()?)
         .context("cannot open the local socket for shims")?;
 
+    // An interrupted shim-mode launch leaves ActiveProcess pointing at the
+    // shim; put it back first (ADR 0048).
+    shim_launch::leave();
     let daemon = Arc::new(Daemon::new());
     tokio::spawn(daemon::run_jobs(Arc::clone(&daemon)));
     tokio::spawn(daemon::keep_connected(Arc::clone(&daemon)));

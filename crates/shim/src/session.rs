@@ -147,11 +147,13 @@ pub fn resendable(request: &Request) -> bool {
         | Request::CloudFileSize { .. }
         | Request::CloudRead { .. } => true,
         // Never sent through `request`: the first message of a connection,
-        // or messages of `reborn-observe`.
+        // or messages of `reborn-observe` (`ComparePersonaName` is a
+        // shadow-session read of the observation proxy, ADR 0056).
         Request::Hello { .. }
         | Request::ShadowHello { .. }
         | Request::RegisterShadow { .. }
-        | Request::CancelShadow => false,
+        | Request::CancelShadow
+        | Request::ComparePersonaName { .. } => false,
     }
 }
 

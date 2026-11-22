@@ -15,6 +15,7 @@
 //! The name is account data (ADR 0056): [`PersonaName`] never prints it,
 //! and nothing here logs it.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,8 +28,8 @@ use tracing::debug;
 use crate::Session;
 
 /// How long [`Session::persona_name`] waits for the account info when it
-/// has not arrived yet.
-const ACCOUNT_INFO_TIMEOUT: Duration = Duration::from_secs(20);
+/// has not arrived yet: once per session; after that it answers at once.
+const ACCOUNT_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The account's persona name. `Debug` never shows it, and there is no
 /// `Display`: read it with [`PersonaName::as_str`] only to compare it.
@@ -66,6 +67,8 @@ pub(crate) struct AccountInfoSlot {
     /// The last message, redacted, for [`Session::record_account_info`].
     redacted: Mutex<Option<Vec<u8>>>,
     ready: Notify,
+    /// Whether a wait for the name already ran out in this session.
+    gave_up: AtomicBool,
 }
 
 impl AccountInfoSlot {
@@ -87,6 +90,22 @@ impl AccountInfoSlot {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    /// The name, waiting up to `timeout` for it the first time only: once
+    /// a wait ran out, later calls answer at once from what arrived.
+    async fn wait_for_name(&self, timeout: Duration) -> Option<PersonaName> {
+        let waiting = self.ready.notified();
+        if let Some(name) = self.name() {
+            return Some(name);
+        }
+        if self.gave_up.load(Ordering::SeqCst) {
+            return None;
+        }
+        if tokio::time::timeout(timeout, waiting).await.is_err() {
+            self.gave_up.store(true, Ordering::SeqCst);
+        }
+        self.name()
     }
 
     fn redacted(&self) -> Option<Vec<u8>> {
@@ -130,16 +149,11 @@ fn redact_account_info(message: &CMsgClientAccountInfo) -> CMsgClientAccountInfo
 
 impl Session {
     /// The account's persona name, from the account info Steam sent for
-    /// this session (no request is sent; module docs). Waits up to 20
-    /// seconds if it has not arrived yet; `None` if Steam sent none or no
-    /// name.
+    /// this session (no request is sent; module docs). If it has not
+    /// arrived yet, waits up to 5 seconds, once per session; `None` if
+    /// Steam sent none or no name.
     pub async fn persona_name(&self) -> Option<PersonaName> {
-        let waiting = self.account_info.ready.notified();
-        if let Some(name) = self.account_info.name() {
-            return Some(name);
-        }
-        let _ = tokio::time::timeout(ACCOUNT_INFO_TIMEOUT, waiting).await;
-        self.account_info.name()
+        self.account_info.wait_for_name(ACCOUNT_INFO_TIMEOUT).await
     }
 
     /// The last account info of this session as a redacted test fixture
@@ -189,6 +203,61 @@ mod tests {
         assert_eq!(redacted.ip_country, None);
         assert_eq!(redacted.account_flags, None);
         assert!(!String::from_utf8_lossy(&bytes).contains("Alice"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_wait_that_ran_out_is_not_repeated() {
+        let slot = Arc::new(AccountInfoSlot::default());
+        let short = Duration::from_millis(20);
+        assert_eq!(slot.wait_for_name(short).await, None);
+        // The second call does not wait, even with a long timeout.
+        let started = std::time::Instant::now();
+        assert_eq!(slot.wait_for_name(Duration::from_secs(60)).await, None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // A name that arrives later is still answered.
+        slot.store(&info(Some("Alice Example")));
+        assert!(slot.wait_for_name(short).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_name_arriving_during_the_wait_is_answered() {
+        let slot = Arc::new(AccountInfoSlot::default());
+        let storing = Arc::clone(&slot);
+        let store = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            storing.store(&info(Some("Alice Example")));
+        });
+        let name = slot.wait_for_name(Duration::from_secs(10)).await;
+        assert_eq!(
+            name.map(|name| name.as_str().to_owned()).as_deref(),
+            Some("Alice Example")
+        );
+        assert!(store.await.is_ok());
+    }
+
+    /// Replay of the recorded account info (AGENTS.md section 4). Read at
+    /// run time, not with `include_bytes!`, so the crate builds before the
+    /// file exists.
+    #[test]
+    #[ignore = "fixture crates/cm/tests/data/account_info.bin is not recorded yet: \
+                record it with `reborn-cli friends --record <dir>` on the test account \
+                (maintainer's OK), check it by hand, commit it with its README row and \
+                remove this ignore"]
+    fn replays_the_recorded_account_info() -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("data")
+            .join("account_info.bin");
+        let bytes = std::fs::read(&path)?;
+        let message = CMsgClientAccountInfo::parse_from_bytes(&bytes)?;
+        let name = persona_name_from(&message).ok_or("no persona_name in the fixture")?;
+        assert_eq!(name.as_str(), "Player 1", "the recorder replaces the name");
+        // The recorder keeps nothing else.
+        assert_eq!(redact_account_info(&message), message);
+        let slot = AccountInfoSlot::default();
+        slot.store(&message);
+        assert_eq!(slot.name(), Some(name));
         Ok(())
     }
 

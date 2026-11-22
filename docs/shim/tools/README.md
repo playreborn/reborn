@@ -159,7 +159,8 @@ ID reported; the app ID file written and removed by the session).
 Scripts the shim loop (`docs/shim/LOOP.md`) uses instead of typed steps:
 
 - `coverage.py`: regenerates the tables of `coverage.md` and `gaps.md`
-  from the reference runs in `games.json` and the statuses in
+  from the reference runs in `games.json` (the M4 games and the `extra`
+  entries of ADR 0056) and the statuses in
   `status.json`.
 - `run.sh <app id>`: one observation run (arm, start through the official
   client, wait, close, disarm), with the limits of ADR 0045 kept in

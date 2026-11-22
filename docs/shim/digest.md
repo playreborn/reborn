@@ -13,16 +13,21 @@ first, so the maintainer can read a day's work quickly and stop anything.
   sign-in state.
 - Implementing `SetRichPresence`, `GetFriendCount`, `GetFriendByIndex` in
   the shim (account and friends data).
-- A `READS` entry for `SteamUtils010` position 13 (`GetAPICallResult`
-  candidate, first 16 bytes of a call result; any game's call results,
-  some name a user), optional for experiment 26.
-- `SteamFriends017` position 0 (`GetPersonaName` or `ClearRichPresence`):
-  only the result text tells them apart, and that is the persona name;
-  would a match-only comparison by `rebornd` (ADR 0055) be acceptable?
 
 ## Log
 
 - 2026-11-22: loop iteration 13a (parallel agent, plan only, no runs):
+  survey positions of experiment 25. Experiment 26 (VPet-Simulator, about
+  27 minutes, closed from the tray by the maintainer) for
+  `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77, `SteamUtils010` 11/13,
+  `SteamUser023` 12 and `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/18/19
+  (needs four `READS` entries, one under ADR 0056); experiment 27
+  (HoloCure, Pixel Puzzles) for `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3.
+  No candidate: `STEAMUGC_INTERFACE_VERSION020` 74; no experiment yet:
+  `SteamFriends017` 0 (ADR 0056 allows a match-only comparison, needs
+  code). VPet-Simulator and Pixel Puzzles added to `games.json` as extra
+  entries (ADR 0056): 220 positions, 130 confirmed (M4 games alone 205,
+  130).
   survey positions of experiment 25. Experiment 26 (VPet-Simulator, at
   least 25 minutes) for `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77,
   `SteamUtils010` 11/13, `SteamUser023` 12 and

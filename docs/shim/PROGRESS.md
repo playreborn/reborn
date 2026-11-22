@@ -8,6 +8,7 @@ linked at the end.
 
 **Last updated:** 2026-11-22 (`BIsSubscribed` answered via `rebornd` in shim mode).
 **Last updated:** 2026-11-22 (first live shadow run with real data; stats shadow added).
+**Last updated:** 2026-11-22 (recordings of two games outside the M4 list counted, ADR 0056).
 
 ## In one sentence
 
@@ -19,7 +20,7 @@ but no game runs fully without Steam yet: **M4 is about 15 to 20 % done**
 
 | Area | State | Roughly |
 | --- | --- | --- |
-| Steam functions whose meaning is confirmed | 130 of the 205 positions our 20 games call | **63 %** |
+| Steam functions whose meaning is confirmed | 130 of the 205 positions our 20 M4 games call (this percentage counts the M4 games only; with the 2 recorded games outside the M4 list, ADR 0056: 130 of 220, 59 %) | **63 %** |
 | Of those, answered by the shim itself | connecting to Steam, handing out the interfaces, cleaning up at exit, the app ID, the battery level | **about 40 %** of all positions |
 | Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing), and the shim has that delivery machinery (a queue per handle, handing over and freeing); no callback content is in the shim yet, so it delivers nothing to games; 3 of 15 recorded message types have a confirmed meaning ("stats received", "stats stored", "call completed") | **about 25 %** |
 | Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | ADR 0055 accepted; stage 0 started: `rebornd` answers `AppOwnership` over the shim channel for the game and the DLC its depots name (strict, other apps refused), from the account's licence list loaded at a shim-mode launch; it also answers `RequestStats` for the run's own app (`Accepted`, then the event `StatsReceived` with Valve's result and English achievement names, from `Session::user_stats`, one `ClientGetUserStats` per run, no writes); read-only shadow sessions: `reborn-observe arm --app` registers the game with a signed-in `rebornd`, the proxy claims it and compares `BIsSubscribed` with Reborn's answer (match or mismatch only; any logoff stops it) — first live run matched in 3 of 3 games; in shim mode the shim now answers `BIsSubscribed` (`STEAMAPPS_INTERFACE_VERSION008` 0) with `rebornd`'s `AppOwnership` for the game itself (maintainer OK; no answer from `rebornd` stops the game); DLC (position 7), stats, stores and cloud still to come, so no game runs on it yet | **about 10 %** (estimate; one ownership call answered by Reborn in the shim, not yet run in a game) |

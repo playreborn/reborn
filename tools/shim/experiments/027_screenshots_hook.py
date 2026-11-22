@@ -14,10 +14,11 @@ C  Its result has a lowest byte other than 0 and 1 (not a bool: rules out
    non-zero upper 32 bits (not a 32-bit ScreenshotHandle, under the
    assumption that a 32-bit result clears them: rules out
    AddScreenshotToLibrary, AddVRScreenshotToLibrary and WriteScreenshot).
-D  Every callback number delivered (Steam_BGetCallback `wrote` lines) in
-   the 10 000 ms after the call returned also occurs in at least one
-   reference log of tools/shim/games.json whose game never calls any X
-   position (TriggerScreenshot "Triggers a ScreenshotReady_t callback";
+D  Every callback number delivered (Steam_BGetCallback `wrote` lines) from
+   the time of the call line of position 3 to 10 000 ms after it also
+   occurs in at least one reference log of tools/shim/games.json (M4 games
+   and extra entries) whose game never calls any X position
+   (TriggerScreenshot "Triggers a ScreenshotReady_t callback";
    such a number would be new). The numbers outside that set are printed
    (callback numbers are not account data).
 
@@ -48,7 +49,7 @@ GAMES = {
 }
 X = "STEAMSCREENSHOTS_INTERFACE_VERSION003"
 WINDOW_MS = 10_000
-PLAN_COMMITTED = datetime(2026, 11, 22, 18, 57, 22)  # commit 80afe13 on loop/plan-13a (final plan)
+PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set in the follow-up commit
 
 
 def numbers(path, start=None, end=None):
@@ -65,7 +66,8 @@ def numbers(path, start=None, end=None):
 
 def baseline():
     """Callback numbers of the reference logs whose game never calls X."""
-    games = json.loads((Path(__file__).resolve().parents[1] / "games.json").read_text(encoding="utf-8"))["games"]
+    data = json.loads((Path(__file__).resolve().parents[1] / "games.json").read_text(encoding="utf-8"))
+    games = data["games"] + data.get("extra", [])
     out, used = set(), 0
     for game in games:
         path = observelog.log_dir() / game[3]

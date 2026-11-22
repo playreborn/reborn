@@ -3097,7 +3097,15 @@ then `rdx`, `r8`, `r9`, further arguments on the stack, not logged), as in
 experiment 7. The proxy logs the first 50 calls of each position and then
 every 10 000th, so counts of 50 are the logging limit, not the game's.
 No value that could be account data is written here: IDs, handles, sizes
-and texts only as "a text", "an address", "small".
+and texts only as "a text", "an address", "small"; the raw logs stay on
+the recorder's computer.
+
+ADR 0056 (accepted by the maintainer, pull request #41) changes three
+things for this plan: the proxy may read call results (`SteamUtils010`
+13), `rebornd` may compare the persona name (match or mismatch only), and
+the recordings of games outside the M4 list count in `coverage.md` and
+`gaps.md` (VPet-Simulator and Pixel Puzzles are now extra entries of
+`tools/shim/games.json`).
 
 Pages, each fetched once on 2026-11-22:
 <https://partner.steamgames.com/doc/api/ISteamUGC> (93 function entries;
@@ -3135,13 +3143,13 @@ interface versions or positions. `k_EResultOK` = 1 is from
   | --- | --- | --- |
   | `CreateQueryAllUGCRequest` | `EUGCQuery`, `EUGCMatchingUGCType`, creator app ID, consumer app ID, page; `UGCQueryHandle_t` | 2: 0 = `k_EUGCQuery_RankedByVote`, 2 = `k_EUGCMatchingUGCType_Items_ReadyToUse`, `r9` the app ID; "up to 50 results" per page (`kNumUGCResultsPerPage`) fits an index of at most 49 |
   | `CreateQueryUserUGCRequest` | `AccountID_t`, list, matching type, sort order, two app IDs, page; handle | not 2: its third argument (`r9`) is an `EUGCMatchingUGCType` (0 to 12 or ~0), not an app ID |
-  | `CreateQueryUGCDetailsRequest` | array of item IDs, count; handle | not 2 only by judgement: `rdx` 0 would be a null array, and `r9` a leftover equal to the app ID in all 36 calls |
+  | `CreateQueryUGCDetailsRequest` | array of item IDs, count; handle | not 2 if U5 matches: with `r8` = 2 IDs it would give at most 2 results, but a query gives indexes above 2 (also, `rdx` 0 would be a null array and `r9` a leftover equal to the app ID in all 36 calls) |
   | `StartItemUpdate` | app ID, item ID; `UGCUpdateHandle_t` | not 2: `rdx` is 0, not an app ID |
-  | `SendQueryUGCRequest` | query handle; `SteamAPICall_t` | 4: the only function taking a query handle and returning a call handle |
+  | `SendQueryUGCRequest` | query handle; `SteamAPICall_t` | 4: the only function taking a query handle and returning a call handle; the item-ID functions that also return a call handle (below) fit the shape if `rdx` were an item ID, and are told apart by the call result (T13 in experiment 26) |
   | `GetQueryUGCResult`, `GetQueryUGCPreviewURL`, `GetQueryUGCMetadata`, `GetQueryUGCChildren` | handle, index, pointer (a size on the stack); `bool` | 5 and 9 both; which is which needs the bytes behind `r9` (H5, H9). Metadata and children are returned only when `SetReturnMetadata` / `SetReturnChildren` were called before `SendQueryUGCRequest` (page: "This must be set before you send a UGC Query handle"), and no call comes between 2 and 4 |
   | `GetQueryUGCContentDescriptors` | handle, index, pointer, count; `uint32` | not 5: a `uint32` result would clear the upper 32 bits (the assumption of experiment 24), 5's result keeps those of `r9`; not 9 if H9 matches (it writes descriptor IDs, not text) |
   | `GetQueryUGCStatistic` | handle, index, `EItemStatistic`, `uint64 *` (stack); `bool` | 12: `r9` runs over exactly the 13 values of `EItemStatistic` (0 to 12 on the page), all true |
-  | `GetQueryUGCTag`, `GetQueryUGCTagDisplayName`, `GetQueryUGCKeyValueTag`, `GetQueryUGCAdditionalPreview`, `GetSupportedGameVersionData` | handle, index, sub-index, …; `bool` | 12 by shape; ruled out by judgement: their sub-index is bounded by a count (`GetQueryUGCNumTags`, `GetQueryUGCNumKeyValueTags`, `GetQueryUGCNumAdditionalPreviews`, `GetNumSupportedGameVersions`) the game never asks for, and every item would need exactly 13 entries, all true |
+  | `GetQueryUGCTag`, `GetQueryUGCTagDisplayName`, `GetQueryUGCKeyValueTag`, `GetQueryUGCAdditionalPreview`, `GetSupportedGameVersionData` | handle, index, sub-index, …; `bool` | 12 by shape; ruled out by U12 in experiment 26: every fully logged item gets exactly the 13 calls 0 to 12, all true, which would need exactly 13 tags (or previews, versions) for every item; their counts (`GetQueryUGCNumTags`, `GetQueryUGCNumKeyValueTags`, `GetQueryUGCNumAdditionalPreviews`, `GetNumSupportedGameVersions`) are never asked for |
   | `GetQueryUGCNumTags`, `GetQueryUGCNumAdditionalPreviews`, `GetQueryUGCNumKeyValueTags`, `GetNumSupportedGameVersions` | handle, index; `uint32` | none: 5, 9 and 12 have a third argument that changes or is a pointer |
   | the query setters `AddExcludedTag`, `AddRequiredKeyValueTag`, `AddRequiredTag`, `AddRequiredTagGroup`, `SetAllowCachedResponse`, `SetAdminQuery`, `SetCloudFileNameFilter`, `SetLanguage`, `SetMatchAnyTag`, `SetRankedByTrendDays`, `SetReturnAdditionalPreviews`, `SetReturnChildren`, `SetReturnKeyValueTags`, `SetReturnLongDescription`, `SetReturnMetadata`, `SetReturnOnlyIDs`, `SetReturnPlaytimeStats`, `SetReturnTotalOnly`, `SetSearchText`, and `ReleaseQueryUGCRequest` | query handle and one value or none; `bool` | none: no call between 2 and 4; 5, 9 and 12 take an index and a third argument |
   | the update functions `AddItemKeyValueTag`, `AddItemPreviewFile`, `AddItemPreviewVideo`, `RemoveItemKeyValueTags`, `RemoveItemPreview`, `AddContentDescriptor`, `RemoveContentDescriptor`, `SetRequiredGameVersions`, `SetItemContent`, `SetItemDescription`, `SetItemMetadata`, `SetItemPreview`, `SetItemTags`, `SetItemTitle`, `SetItemUpdateLanguage`, `SetItemVisibility`, `UpdateItemPreviewFile`, `UpdateItemPreviewVideo`, `GetItemUpdateProgress`, `SubmitItemUpdate` | an update handle from `StartItemUpdate` first | none: no update handle is created |
@@ -3208,8 +3216,9 @@ subscribed items is account data, so no read is planned either.
   game got a moment before, which makes it an argument, not a leftover.
   `GetAPICallFailureReason` for 11 is ruled out only by the sequence (0,
   0, 1 as "Steam gone, Steam gone, network failure" followed by a
-  successful fetch is not credible), not by a value. So without a read of
-  the call result, 11 and 13 are recorded as **narrowed**.
+  successful fetch is not credible), not by a value. So 11 can only be
+  **narrowed**. 13 is decided by reading the call result (T13; ADR 0056
+  allows the read): only `GetAPICallResult` copies it.
 
 ### `SteamUser023` position 12 (VPet-Simulator)
 
@@ -3264,14 +3273,14 @@ subscribed items is account data, so no read is planned either.
   | Functions (page) | Shape on the page | Fits |
   | --- | --- | --- |
   | `FileWrite` | file, data, `int32` size; `bool` ("Creates a new file, writes the bytes to the file") | 0 |
-  | `FileWriteAsync` | file, data, `uint32` size; `SteamAPICall_t` | 0 by its arguments; ruled out by judgement: a call handle 1 with upper bits zero, while the call handles of this log have upper bits set |
+  | `FileWriteAsync` | file, data, `uint32` size; `SteamAPICall_t` | 0 by its arguments; ruled out under an assumption that experiment 26 checks in the same log: this client's call handles have non-zero upper 32 bits (U4), while 0 returns 1 with upper bits zero (R0) |
   | `FileRead` | file, buffer, size; `int32` bytes read | 0 by its arguments; ruled out by R18 and H19 (no new file) and by the result 1 with a size of about 4 KB |
   | `FileReadAsync` | file, offset, size; call handle | not 0: `r8` is an address, not an offset |
   | `FileDelete`, `FileExists`, `FileForget`, `FilePersisted`, `GetFileSize`, `GetFileTimestamp`, `GetSyncPlatforms`, `FileShare`, `FileWriteStreamOpen` | a file name only | 0 by the text; ruled out by R18 and H19 (none creates a file of size `r9`) |
   | `SetSyncPlatforms` | file, `ERemoteStoragePlatform`; `bool` | 0 by the text; ruled out by R18 and H19 |
   | `PublishWorkshopFile`, `PublishVideo`, `UGCDownloadToLocation` | two texts, an enum or a handle first | not 0: `r8` is not a text, or `rdx` is a text where they take an enum or handle |
   | `GetFileCount` | none; `int32` ("Used for enumeration with `GetFileNameAndSize`") | 18 |
-  | `GetCachedUGCCount`, `GetLocalFileChangeCount` | none; `int32` | 18 by shape; ruled out by judgement: the page's example bounds the `GetFileNameAndSize` loop with `GetFileCount`, and local file changes are changes Steam made ("have already been made to local files"), not the game's writes |
+  | `GetCachedUGCCount`, `GetLocalFileChangeCount` | none; `int32` | 18 by shape; not ruled out by any prediction, only by judgement: the page's example bounds the `GetFileNameAndSize` loop with `GetFileCount`, and local file changes are changes Steam made ("have already been made to local files"), not the game's writes; so 18 can only be narrowed |
   | `BeginFileWriteBatch`, `EndFileWriteBatch`, `IsCloudEnabledForAccount`, `IsCloudEnabledForApp`, `GetQuota` | none or two pointers; `bool` | not 18: results above 1 |
   | `GetFileNameAndSize` | `int` index, `int32 *` size; `const char *` | 19 |
   | `GetLocalFileChange` | index, two enum pointers; `const char *` | not 19: its third argument is a pointer and `r9` was small in every call; and H19 (it writes an enum, not a size) |
@@ -3316,79 +3325,107 @@ Four calls in VPet, no argument used as a text, the result a heap address
 (`GetPersonaName`, `ClearRichPresence`) and tells them apart no better
 than the five reference games: the result text would, but for
 `GetPersonaName` it is the account's persona name, which ADR 0043 keeps
-out of `READS`. **No experiment.** Whether `rebornd` may compare it in a
-shadow session and log only match or mismatch (ADR 0055) is a question
-for the maintainer.
+out of `READS`. ADR 0056 now lets `rebornd` compare the persona name in a
+shadow session and log only match or mismatch; that needs a new shadow
+entry in the proxy and in `rebornd` (code in `crates/`), so it is left to
+a later plan. **No experiment here.**
 
 ### Experiment 26 (planned 2026-11-22, before the runs)
 
-**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053; added by the
-main session before the run, not by this plan's branch):
+**Needs READS** (`crates/shim-observe`; added by the main session before
+the run, not by this plan's branch):
 
-- `("STEAMUGC_INTERFACE_VERSION020", 5, Read::OutputBytes("r9"))`: per the
-  page the candidates write a `SteamUGCDetails_t` (its first fields: item
-  ID, `EResult`, file type; the owner's Steam ID comes far behind, after the
-  title and description arrays), a preview URL, developer metadata or child
-  item IDs. Public Workshop data; no candidate hands back a ticket, token,
-  password or account identifier.
-- `("STEAMUGC_INTERFACE_VERSION020", 9, Read::OutputBytes("r9"))`: the same
-  candidates, the same reason.
-- `("STEAMREMOTESTORAGE_INTERFACE_VERSION016", 19, Read::OutputBytes("r8"))`:
-  the candidates write a file size (`GetFileNameAndSize`), an enum
-  (`GetLocalFileChange`) or nothing (`GetCachedUGCHandle`). No account data.
+- `("STEAMUGC_INTERFACE_VERSION020", 5, Read::OutputBytes("r9"))` (ADR
+  0053): per the page the candidates write a `SteamUGCDetails_t` (its first
+  fields: item ID, `EResult`, file type; the owner's Steam ID comes far
+  behind, after the title and description arrays), a preview URL,
+  developer metadata or child item IDs. Public Workshop data; no candidate
+  hands back a ticket, token, password or account identifier.
+- `("STEAMUGC_INTERFACE_VERSION020", 9, Read::OutputBytes("r9"))` (ADR
+  0053): the same candidates, the same reason.
+- `("STEAMREMOTESTORAGE_INTERFACE_VERSION016", 19, Read::OutputBytes("r8"))`
+  (ADR 0053): the candidates write a file size (`GetFileNameAndSize`), an
+  enum (`GetLocalFileChange`) or nothing (`GetCachedUGCHandle`). No account
+  data.
+- `("SteamUtils010", 13, Read::OutputBytes("r8"))` (ADR 0056 decision 1:
+  the proxy may read call results): the first 16 bytes of the call result
+  `GetAPICallResult` copies. In VPet that is a `SteamUGCQueryCompleted_t`
+  (query handle, `EResult`, result count). Other games' call results at
+  this position may name a user; as ADR 0056 says, such values never go
+  into `docs/shim/`, only match or mismatch.
 
-**Needs the maintainer** (the agent may not add it): `("SteamUtils010",
-13, Read::OutputBytes("r8"))`, the first 16 bytes of a call result. In
-VPet that is the UGC query result (query handle and `EResult`), but the
-entry would read every game's call results at this position, and a call
-result can name a user; ADR 0043 leaves such a read to its own ADR.
-Without it, prediction T13 has no verdict, and 11 and 13 stay narrowed
-(fixed below).
+The raw logs, with the Workshop item IDs, preview URLs and save file
+names they hold, stay on the recorder's computer.
 
 **Run:** VPet-Simulator (1920960) with `tools/shim/run.sh 1920960`, after
-the three READS entries are in the proxy. The official client shows its
-launch-options dialog first; the main session chooses "VPet spielen" there
-(ADR 0049's clause for the Play button, as in experiment 25). **The run
-lasts at least 25 minutes** (VPet saves every 600 s; R18 and H19 need two
-complete save sequences). No input in the game. Then a close request; VPet
-stays in the notification area, so the main session asks the maintainer to
-close it (no forced kill, ADR 0044) and runs the script after it exited.
-The saves are the game's own (`FileWrite` through the official client), as
-in experiment 25; nothing is written on Reborn's initiative.
+the four READS entries are in the proxy.
 
-**Risk:** the test account's VPet cloud already holds the files of
-experiment 25 (about 20), so N starts near 20. Two sequences take 2N + 3
-logged calls of 18; with N above 23 the second falls past the logging
-limit, and R18 and H19 mismatch. The outcome is recorded as it is; the
-limit is not raised for this experiment.
+- The official client shows its launch-options dialog first; the main
+  session chooses "VPet spielen" there, as in experiment 25 (ADR 0049's
+  clause for the Play button of a game the test account owns).
+- No input in the game.
+- VPet saves every 600 s (the first time at about 612 s in experiment
+  25), and R18 and H19 need two complete save sequences, so the game runs
+  about 27 minutes (two saves, at about 10 and 20 minutes, plus margin).
+  Then the main session asks the maintainer to close VPet from the
+  notification area (a close request leaves it running there; no forced
+  kill, ADR 0044), and runs the script after it exited.
+- Only calls up to 1 800 000 ms (30 minutes) after the proxy loaded are
+  evidence; the script leaves later ones out, so a late close does not
+  change the result.
+- The saves are the game's own (`FileWrite` through the official client),
+  as in experiment 25; nothing is written on Reborn's initiative.
+
+**Risk, accepted beforehand:** two fully logged save sequences may not
+happen:
+
+- the test account's VPet cloud already holds the files of experiment 25
+  (about 20), so N starts near 20, and two sequences take about 2N + 3
+  logged calls of 18 out of the 50 the proxy logs; with N above 23 the
+  second sequence falls past the logging limit;
+- VPet may enumerate its cloud files at start (a sequence before the first
+  save, which then has a different shape), or rotate its backups (delete
+  old saves, so N does not grow by one); the experiment 25 log shows
+  neither, but it started with no cloud files.
+
+In each of these cases R18 or H19 mismatch, and 0, 18 and 19 stay
+candidates. The outcome is recorded as it is; the logging limit is not
+raised and the run is not repeated with other settings for this plan.
 
 **Predictions** (`tools/shim/experiments/026_vpet_workshop_cloud.py`, one
 log; U = `STEAMUGC_INTERFACE_VERSION020`, T = `SteamUtils010`, S =
 `SteamUser023`, R = `STEAMREMOTESTORAGE_INTERFACE_VERSION016`; only calls
-up to the 50th of each position):
+up to 1 800 000 ms, and of those only up to the 50th of each position):
 
 - U2: U 2 is called; every call has `rdx` in 0..21 (`EUGCQuery`), `r8` in
   0..12 (`EUGCMatchingUGCType`), the low 32 bits of `r9` the game's app ID,
   and a new, non-zero result with upper 32 bits zero.
-- U4: every U 4 passes the result of the latest U 2 before it, with no
-  other U call in between; every result has non-zero upper 32 bits.
+- U4: every U 4 passes the result h of the latest U 2 before it, with no
+  other U call in between; every result has non-zero upper 32 bits; no U
+  call other than this one U 4 passes h before the first U 5 with h.
 - T: for every call handle A from U 4 (up to the logging limit of T 11 and
   T 13): T 11 and T 13 with A come after that U 4, T 13 exactly once,
   after a T 11 with A that returned 1, and no T 11 with A after it; T 11
   results are 0 or 1, T 13 results 1; T 13 has one `r9`, at least 16, T 11
   at least two different ones.
-- T13 (only with the maintainer's entry): bytes 0..8 at `r8` after T 13
-  are the query handle given to the U 4 that returned A, bytes 8..12 are 1.
-- U5: every U 5 and U 9 passes a U 2 handle whose query T 13 already
-  fetched, and an index running 0, 1, 2, … per handle, at most 49; lowest
-  result byte 1.
-- H5: after every U 5, bytes 8..12 at `r9` are 1 (`m_eResult`,
-  `k_EResultOK`) and bytes 0..8 (`m_nPublishedFileId`) equal `rdx` of the
-  next U 77 for the same item; at least one such pair.
+- T13: after every checked T 13, at `r8`: bytes 0..8 are the handle h the
+  U 4 that returned A was given (`m_handle`), bytes 8..12 are 1
+  (`m_eResult`), bytes 12..16 (`m_unNumResultsReturned`) are at most 50 and
+  at least the number of indexes U 5 is called with for h; in at least one
+  call result they are above 16.
+- U5: every U 5 and U 9 passes a U 2 handle whose query a checked T 13
+  already fetched, and an index running 0, 1, 2, … per handle, at most 49;
+  lowest result byte 1. For at least one handle the largest U 5 index is
+  greater than `r8` of the U 2 that returned it.
+- H5: after every U 5, bytes 8..12 at `r9` are 1 (`m_eResult`) and bytes
+  0..8 (`m_nPublishedFileId`) equal `rdx` of the next U 77 for the same
+  item; at least one such pair.
 - H9: after every U 9, bytes 0..4 at `r9` are the text `http`.
 - U12: every U 12 passes a U 2 handle, an index and a value in 0..12 in
-  `r9`, running 0, 1, 2, … per item; lowest result byte 1; at least one
-  item has all 13.
+  `r9`, lowest result byte 1; every fully logged item (all groups of calls
+  per handle and index, except a last one that holds the 50th logged call)
+  has exactly the 13 calls with `r9` 0, 1, … 12 in order; at least one such
+  item.
 - U77: every U 77 returns a lowest byte 0 and has the `r9` of the latest
   U 9.
 - S12: S 12 is called once; the result is from 11025 to 48000 with upper
@@ -3399,49 +3436,76 @@ up to the 50th of each position):
 - R0: R 0 is called at least twice; each call has a text in `rdx` (a new
   one each time; compared, never printed), `r8` an address, 0 < `r9` <
   0x80000000, and a result with lowest byte 1 and upper 32 bits zero.
-- R18: in every save sequence whose calls are all logged, R 18 always
-  returns the same N and R 19 is called with 0 … N-1 in order; at least
-  two such sequences follow each other, and N grows by one from each to
-  the next.
-- H19: in the later sequence of each such pair, one R 19 leaves the size
-  `r9` of the earlier sequence's R 0 in the first four bytes at `r8`.
+- R18: a save sequence is the R 18 and R 19 calls since the previous R 0
+  (or the start) up to an R 0; it is fully logged if that R 0 is logged
+  and comes before the 50th logged call of R 18 and of R 19. **Every**
+  fully logged sequence has at least one R 18, the same N from all of
+  them, and R 19 with 0 … N-1 in order; one that does not is a mismatch.
+  At least two fully logged sequences follow each other, and N grows by
+  one from each to the next.
+- H19: for every such pair, one R 19 of the later sequence leaves the size
+  `r9` of the R 0 that ended the earlier sequence in the first four bytes
+  at `r8`; every R 19 of those sequences was read.
 
 The script prints match or MISMATCH per prediction and "experiment 26:
-match" only when all of them match (T13 counts only when it is logged).
-It rejects a log given twice, maps the log to its game through
-`starts.log` (`observelog.app_of`), needs the VPet log and rejects a log
-whose start (`observelog.start_of`) is earlier than the plan commit
-(`PLAN_COMMITTED`, the local committer time of the final plan commit on
-`loop/plan-13a`, set in a follow-up commit: 2026-11-22 18:57:22, commit
-`80afe13`). It prints only positions, counts and match/MISMATCH.
+match" only when all of them match. It rejects a log given twice, maps
+the log to its game through `starts.log` (`observelog.app_of`), needs the
+VPet log and rejects a log whose start (`observelog.start_of`) is earlier
+than the plan commit (`PLAN_COMMITTED`, the local committer time of the
+final plan commit on `loop/plan-13a`, set in a follow-up commit). It
+prints only positions, counts and match/MISMATCH.
 
 **What a match confirms** (fixed now, before the run), for these
 interface versions:
 
-- U2: 2 `CreateQueryAllUGCRequest` (with the residual judgement on
-  `CreateQueryUGCDetailsRequest` in the table).
-- U2, U4 and T: 4 `SendQueryUGCRequest`.
+- U2 and U5: 2 `CreateQueryAllUGCRequest`. `CreateQueryUserUGCRequest`
+  and `StartItemUpdate` are ruled out by the arguments (table),
+  `CreateQueryUGCDetailsRequest` by U5 (more results than the 2 IDs it
+  would have been given).
+- U4, T, T13, U5 and H5: 4 `SendQueryUGCRequest`. The functions with the
+  same shape (one item ID in, a call handle out: `SubscribeItem`,
+  `UnsubscribeItem`, `DeleteItem`, `GetUserItemVote`, `RequestUGCDetails`,
+  the call-handle `GetAppDependencies`; app ID and item ID in:
+  `AddItemToFavorites`, `RemoveItemFromFavorites`) are ruled out because
+  their call results, per the structs on the pages, do not start with the
+  handle given, `k_EResultOK` and a count from 17 to 50
+  (`RemoteStorageSubscribePublishedFileResult_t`,
+  `RemoteStorageUnsubscribePublishedFileResult_t`, `DeleteItemResult_t` and
+  `GetAppDependenciesResult_t` start with `EResult`; `GetUserItemVoteResult_t`
+  and `UserFavoriteItemsListChanged_t` with an item ID, `EResult` and
+  `bool` fields; `SteamUGCRequestUGCDetailsResult_t` with a
+  `SteamUGCDetails_t`, whose bytes 12..16 are a file type of at most 16,
+  `k_EWorkshopFileTypeMax`), and because nothing but this call is done with
+  the handle before its 50 items are read (U4, U5).
 - U5 and H5: 5 `GetQueryUGCResult` (it writes the item ID and `EResult` at
   the start of a `SteamUGCDetails_t`; the text and ID functions do not).
 - U5, H5 and H9: 9 `GetQueryUGCPreviewURL` (it writes text starting with
-  `http`; metadata and children were not requested before the query was
-  sent, and `GetQueryUGCResult` is 5).
-- U12: 12 `GetQueryUGCStatistic` (with the residual judgement in the
-  table).
-- R0, R18 and H19: 0 `FileWrite`, 19 `GetFileNameAndSize`; 18
-  `GetFileCount` with the residual judgement in the table
-  (`GetCachedUGCCount`, `GetLocalFileChangeCount`).
-- With T13 matching as well: 13 `GetAPICallResult` (the only function of
-  the page that copies the call result to the address it gets).
+  `http`; `GetQueryUGCResult` is 5; children are item IDs, not text; and
+  metadata was not requested before the query was sent, which the page
+  requires).
+- U12: 12 `GetQueryUGCStatistic`: every fully logged item has exactly the
+  13 `EItemStatistic` values, all true; the tag, key-value, preview and
+  game-version functions would need exactly 13 entries for every item.
+- T and T13: 13 `GetAPICallResult` (the only function of the page that
+  copies the call result to the address it gets).
+- R0, R18 and H19: 0 `FileWrite`, 19 `GetFileNameAndSize`. For 0, the file
+  name functions, `SetSyncPlatforms` and `FileRead` are ruled out by R18
+  and H19 (a new file of size `r9` appears); `FileWriteAsync` under an
+  assumption checked in the same log: this client's call handles have
+  non-zero upper 32 bits (U4 checks every `SendQueryUGCRequest` result),
+  while R 0 returns 1 with upper bits zero (R0).
 
 **What stays a candidate**, even with a match:
 
-- U77: "narrowed: `GetItemInstallInfo`, `GetItemDownloadInfo`,
+- 18: "narrowed: `GetFileCount` (experiment 26)". `GetCachedUGCCount` and
+  `GetLocalFileChangeCount` have the same shape, and no prediction rules
+  them out; only the page's example loop and the meaning of "local file
+  changes" speak against them.
+- 11: "narrowed: `IsAPICallCompleted` (experiment 26)" (residual judgement
+  above: `GetAPICallFailureReason` is ruled out only by the sequence).
+- 77: "narrowed: `GetItemInstallInfo`, `GetItemDownloadInfo`,
   `GetItemState` or another item-ID function returning false or 0
   (experiment 26)".
-- T without T13: 11 "narrowed: `IsAPICallCompleted` (experiment 26)", 13
-  "narrowed: `GetAPICallResult` (experiment 26)"; with T13, 11 stays
-  narrowed (residual judgement above).
 - S12: "narrowed: `GetVoiceOptimalSampleRate` (experiment 26)", as for
   `SteamUser020`.
 - A prediction that mismatches leaves the positions it is named for above
@@ -3464,28 +3528,30 @@ game, X = `STEAMSCREENSHOTS_INTERFACE_VERSION003`):
 - B: its `rdx` has lowest byte 1.
 - C: its result has a lowest byte other than 0 and 1 and non-zero upper 32
   bits.
-- D: every callback number of a `Steam_BGetCallback` `wrote` line in the
-  10 000 ms after that call also occurs in a reference log of
-  `tools/shim/games.json` whose game never calls X (numbers outside that
-  set are printed; callback numbers are not account data).
+- D: every callback number of a `Steam_BGetCallback` `wrote` line from the
+  time of the call line of X 3 to 10 000 ms after it also occurs in a
+  reference log of `tools/shim/games.json` (the M4 games and the extra
+  entries) whose game never calls X (numbers outside that set are printed;
+  callback numbers are not account data).
 
 The script rejects a log given twice, maps each log to its game through
 `starts.log`, needs one log of each game and rejects a log whose start is
-earlier than `PLAN_COMMITTED` (the same time as for experiment 26). "experiment 27:
-match" only when both games match A to D.
+earlier than `PLAN_COMMITTED` (the same time as for experiment 26).
+"experiment 27: match" only when both games match A to D.
 
 **What a match confirms:** nothing. A full match records X 3 as
 **"narrowed: `HookScreenshots` (experiment 27)"**: A to C rule out the
 seven functions with a result, D speaks against `TriggerScreenshot` only
-under the residual judgement above. A mismatch of D (a new callback
-number) is evidence for `TriggerScreenshot`; a mismatch of A to C leaves
-"`HookScreenshots` or `TriggerScreenshot`".
+under the residual judgement above. Any mismatch, of D or of A to C,
+leaves the candidate unchanged: "`HookScreenshots` or
+`TriggerScreenshot`". A new callback number in D is not taken as evidence
+for `TriggerScreenshot`, because its number is not known from the page.
 
 **Already seen** (experiments 26 and 27): run with the plan time not yet
 set, on the experiment 25 logs (`observe-23624`, `observe-51312`).
-Experiment 26: U2, U4, T, U5, U12, U77, S12, R0 and R18 match; H5, H9 and
-H19 mismatch (not logged: no `READS` entry yet); T13 not logged.
-Experiment 27: A to D match for Pixel Puzzles; HoloCure's reference run
-has no `starts.log` line, so the script cannot take it. The predictions
-were written from these logs, so they are not the test; only fresh runs
-after the plan commit are.
+Experiment 26: U2, U4, T, U5, U12, U77, S12, R0 and R18 match (two save
+sequences fall within the first 30 minutes there); T13, H5, H9 and H19
+mismatch (not logged: no `READS` entry yet). Experiment 27: A to D match
+for Pixel Puzzles; HoloCure's reference run has no `starts.log` line, so
+the script cannot take it. The predictions were written from these logs,
+so they are not the test; only fresh runs after the plan commit are.

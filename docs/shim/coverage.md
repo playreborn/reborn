@@ -15,32 +15,37 @@ experiment 1, which went into a game; the games recorded from 2026-11-22 on ran
 with `GetAppID` answered by Reborn, ADR 0046). "Recorded by: agent" means an AI
 agent on the maintainer's computer under ADR 0044 and 0045. Every game
 also asked `CreateInterface` for `SteamClient017` and made no calls
-through it.
+through it. Since ADR 0056 the tables also count recordings of games
+outside the M4 list ("M4 list: no", the `extra` entries of
+`tools/shim/games.json`, from experiment runs); "What this shows so far"
+below is about the 20 M4 games.
 
 ## Games
 
-| Game | Code | `SteamClient` | Recorded by |
-| --- | --- | --- | --- |
-| Cave Crawlers (2143030) | CC | `SteamClient020` | maintainer |
-| Bongo Cat (3419430) | BC | `SteamClient021` | maintainer |
-| Coin Maker Simulator Demo (5191630) | CM | `SteamClient023` | maintainer |
-| Baldi's Basics Classic Remastered (1712830) | BB | `SteamClient020` | agent |
-| Linsips (4301370) | LS | `SteamClient023` | agent |
-| Paper Lily - Chapter 1 (2220360) | PL | `SteamClient020` | agent |
-| Please, Touch The Artwork 2 (2600140) | PT | `SteamClient020` | agent |
-| An Arcade Full of Cats (2368470) | AC | `SteamClient021` | agent |
-| Gravitas (1067310) | GR | `SteamClient018` | agent |
-| Outcore: Desktop Adventure (1275670) | OC | `SteamClient020` | agent |
-| Plant Therapy (2505120) | PY | `SteamClient020` | agent |
-| Chronigma (4051150) | CH | `SteamClient021` | agent |
-| The Thief, the Witch, the Toad, and the Mushroom. (2233770) | TW | `SteamClient020` | agent |
-| One's Own Exile (3086720) | OE | `SteamClient021` | agent |
-| Fallout Shelter (588430) | FS | `SteamClient021` | agent |
-| HoloCure - Save the Fans! (2420510) | HC | `SteamClient020` | agent |
-| Dark Deception (332950) | DD | `SteamClient019` | agent |
-| UNBEATABLE [white label] (1290490) | UB | `SteamClient020` | agent |
-| A Park Full of Cats (2610090) | PK | `SteamClient021` | agent |
-| Cartapli : Fold Quest (4314560) | CA | `SteamClient023` | agent |
+| Game | Code | `SteamClient` | Recorded by | M4 list |
+| --- | --- | --- | --- | --- |
+| Cave Crawlers (2143030) | CC | `SteamClient020` | maintainer | yes |
+| Bongo Cat (3419430) | BC | `SteamClient021` | maintainer | yes |
+| Coin Maker Simulator Demo (5191630) | CM | `SteamClient023` | maintainer | yes |
+| Baldi's Basics Classic Remastered (1712830) | BB | `SteamClient020` | agent | yes |
+| Linsips (4301370) | LS | `SteamClient023` | agent | yes |
+| Paper Lily - Chapter 1 (2220360) | PL | `SteamClient020` | agent | yes |
+| Please, Touch The Artwork 2 (2600140) | PT | `SteamClient020` | agent | yes |
+| An Arcade Full of Cats (2368470) | AC | `SteamClient021` | agent | yes |
+| Gravitas (1067310) | GR | `SteamClient018` | agent | yes |
+| Outcore: Desktop Adventure (1275670) | OC | `SteamClient020` | agent | yes |
+| Plant Therapy (2505120) | PY | `SteamClient020` | agent | yes |
+| Chronigma (4051150) | CH | `SteamClient021` | agent | yes |
+| The Thief, the Witch, the Toad, and the Mushroom. (2233770) | TW | `SteamClient020` | agent | yes |
+| One's Own Exile (3086720) | OE | `SteamClient021` | agent | yes |
+| Fallout Shelter (588430) | FS | `SteamClient021` | agent | yes |
+| HoloCure - Save the Fans! (2420510) | HC | `SteamClient020` | agent | yes |
+| Dark Deception (332950) | DD | `SteamClient019` | agent | yes |
+| UNBEATABLE [white label] (1290490) | UB | `SteamClient020` | agent | yes |
+| A Park Full of Cats (2610090) | PK | `SteamClient021` | agent | yes |
+| Cartapli : Fold Quest (4314560) | CA | `SteamClient023` | agent | yes |
+| VPet-Simulator (1920960) | VP | `SteamClient021` | agent | no |
+| Pixel Puzzles Ultimate Jigsaw Puzzles (351030) | PP | `SteamClient021` | agent | no |
 
 ## Positions by interface version
 
@@ -53,31 +58,32 @@ Positions are listed in the order of their numbers.
 | `SteamClient018` | 1 | 0 1 2 3 4 5 6 7 9 12 23 34 | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 3 CreateLocalUser, 4 ReleaseUser, 5 GetISteamUser, 6 GetISteamGameServer, 9 GetISteamUtils, 12 GetISteamGenericInterface, 23 BShutdownIfAllPipesClosed; candidate: 7 narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24), 34 SetWarningMessageHook |
 | `SteamClient019` | 1 | 0 1 2 3 4 5 6 7 9 12 23 26 34 38 | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 3 CreateLocalUser, 4 ReleaseUser, 5 GetISteamUser, 6 GetISteamGameServer, 9 GetISteamUtils, 12 GetISteamGenericInterface, 23 BShutdownIfAllPipesClosed, 26 GetISteamController; candidate: 7 narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24), 34 SetWarningMessageHook |
 | `SteamClient020` | 9 | 0 1 2 4 5 12 23 34 (CC, OC, HC); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (BB, PT); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (PL, PY); 0 2 5 12 34 (TW); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 30 31 34 35 36 37 38 39 40 (UB) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 19 GetISteam… (per interface), 23 BShutdownIfAllPipesClosed, 24 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 28 GetISteam… (per interface), 29 GetISteam… (per interface), 30 GetISteam… (per interface), 31 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface), 37 GetISteam… (per interface), 38 GetISteam… (per interface), 39 GetISteam… (per interface), 40 GetISteam… (per interface); candidate: 34 SetWarningMessageHook |
-| `SteamClient021` | 6 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE, PK) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 19 GetISteam… (per interface), 23 BShutdownIfAllPipesClosed, 24 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 28 GetISteam… (per interface), 29 GetISteam… (per interface), 33 GetISteam… (per interface), 34 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface), 37 GetISteam… (per interface), 38 GetISteam… (per interface); candidate: 32 SetWarningMessageHook |
+| `SteamClient021` | 8 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE, PK, VP); 0 2 5 12 32 (PP) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 19 GetISteam… (per interface), 23 BShutdownIfAllPipesClosed, 24 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 28 GetISteam… (per interface), 29 GetISteam… (per interface), 33 GetISteam… (per interface), 34 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface), 37 GetISteam… (per interface), 38 GetISteam… (per interface); candidate: 32 SetWarningMessageHook |
 | `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 22 BShutdownIfAllPipesClosed, 23 GetISteam… (per interface), 25 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 31 GetISteam… (per interface), 32 GetISteam… (per interface), 33 GetISteam… (per interface), 34 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface); candidate: 30 SetWarningMessageHook |
 | `SteamController007` | 4 | 2 | confirmed: 2 RunFrame |
-| `SteamController008` | 14 | 2 | confirmed: 2 RunFrame |
-| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | candidate: 0 GetPersonaName or ClearRichPresence, 36 narrowed: GetLargeFriendAvatar (experiment 17), 37 RequestUserInformation, HasFriend or another (Steam ID, 0) call, 44 ClearRichPresence or GetPersonaName; confirmed: 3 GetFriendCount, 4 GetFriendByIndex, 43 SetRichPresence |
+| `SteamController008` | 16 | 2 | confirmed: 2 RunFrame |
+| `SteamFriends017` | 9 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS); 0 43 (VP) | candidate: 0 GetPersonaName or ClearRichPresence, 36 narrowed: GetLargeFriendAvatar (experiment 17), 37 RequestUserInformation, HasFriend or another (Steam ID, 0) call, 44 ClearRichPresence or GetPersonaName; confirmed: 3 GetFriendCount, 4 GetFriendByIndex, 43 SetRichPresence |
 | `SteamFriends018` | 1 | 6 9 36 | candidate: 6 a text by Steam ID (GetFriendPersonaName, GetPlayerNickname and others), 9 one of many Steam ID functions returning 0, 36 RequestUserInformation, HasFriend or another (Steam ID, 0) call |
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
 | `SteamInput001` | 4 | 2 | candidate: 2 narrowed: a RunFrame-like per-frame call (experiment 16) |
-| `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | confirmed: 0 Init, 3 RunFrame; candidate: 6 GetConnectedControllers |
+| `SteamInput006` | 16 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA, VP, PP); 0 3 6 (BB, CH, HC) | confirmed: 0 Init, 3 RunFrame; candidate: 6 GetConnectedControllers |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle); confirmed: 3 GetResultTimestamp |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |
-| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 3 | 13 (BC, LS); 22 (CA) | candidate: 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
-| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 1 | 3 | candidate: 3 HookScreenshots(true) or TriggerScreenshot |
+| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 4 | 13 (BC, LS); 22 (CA); 0 18 19 (VP) | candidate: 0 FileWrite, 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others), 18 GetFileCount, 19 GetFileNameAndSize |
+| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 2 | 3 | candidate: 3 HookScreenshots(true) or TriggerScreenshot |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
+| `STEAMUGC_INTERFACE_VERSION020` | 2 | 2 4 5 9 12 77 (VP); 74 (PP) | candidate: 2 CreateQueryAllUGCRequest, 4 SendQueryUGCRequest, 5 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 9 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 12 GetQueryUGCStatistic, 77 a PublishedFileId_t function returning false or 0 (GetItemInstallInfo, GetItemDownloadInfo, GetItemState and others) |
 | `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 1 BLoggedOn, another no-argument bool, GetHSteamUser or others (one call), 2 GetSteamID |
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
-| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID |
+| `SteamUser023` | 13 | 1 2 (BC, AC, OE, FS, PK, PP); 2 (CM, LS, PT, PY, CH, CA); 2 12 (VP) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID, 12 GetVoiceOptimalSampleRate |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | confirmed: 0 RequestCurrentStats, 10 StoreStats, 12 GetAchievementDisplayAttribute; candidate: 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 10 narrowed: StoreStats or ResetAllStats (experiment 13) |
-| `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write); confirmed: 9 StoreStats, 15 RequestUserStats |
+| `STEAMUSERSTATS_INTERFACE_VERSION013` | 6 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA); 3 9 (VP); 1 3 5 9 22 23 30 (PP) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write); confirmed: 9 StoreStats, 15 RequestUserStats |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower |
-| `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower |
+| `SteamUtils010` | 17 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA, PP); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC); 9 11 13 14 (VP) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower; candidate: 11 IsAPICallCompleted, 13 GetAPICallResult |
 
 Beyond these, the exported entry points (`entry-points.md`) and the
 callback numbers seen through `Steam_BGetCallback` are needed by every

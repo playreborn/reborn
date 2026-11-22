@@ -2,32 +2,34 @@
 VPet-Simulator (1920960) called in experiment 25 that a public page can
 explain. Candidates from https://partner.steamgames.com/doc/api/ISteamUGC,
 .../ISteamUtils, .../ISteamUser and .../ISteamRemoteStorage (read
-2026-11-22); EResult 1 = k_EResultOK from .../steam_api, as in experiment 23.
+2026-11-22); EResult 1 = k_EResultOK from .../steam_api, as in loop
+iteration 9.
 
 Interfaces: U = STEAMUGC_INTERFACE_VERSION020, T = SteamUtils010,
 S = SteamUser023, R = STEAMREMOTESTORAGE_INTERFACE_VERSION016.
 
-Needs READS (crates/shim-observe, ADR 0043/0053), added by the main
-session before the run (the plan names them, see meanings.md):
-  (U, 5, OutputBytes("r9")), (U, 9, OutputBytes("r9")),
-  (R, 19, OutputBytes("r8")).
-Optional, only with the maintainer's OK (meanings.md says why):
-  (T, 13, OutputBytes("r8")).
-Without one of the three entries the prediction that needs it is a
-MISMATCH; what follows from each outcome is fixed in meanings.md.
+Needs READS (crates/shim-observe), added by the main session before the
+run (the plan in meanings.md names them):
+  (U, 5, OutputBytes("r9")), (U, 9, OutputBytes("r9")) and
+  (R, 19, OutputBytes("r8")) under ADR 0053;
+  (T, 13, OutputBytes("r8")) under ADR 0056 decision 1 (call results).
+Without an entry the prediction that needs it is a MISMATCH.
 
-The proxy logs the first 50 calls of each (interface, position) and then
-every 10000th; calls with a number above 50 are left out below.
+Evidence: only calls up to 1 800 000 ms after the proxy loaded (the plan
+has the maintainer close VPet from the tray at about 27 minutes), and of
+those only the first 50 calls of each (interface, position); the proxy
+logs every 10000th call after the 50th, those are left out too.
 
 Predictions:
 U2  At least one call of U 2; every call has rdx in 0..21 (EUGCQuery), r8
     in 0..12 (EUGCMatchingUGCType), the low 32 bits of r9 equal to the
     game's app ID (nCreatorAppID), and a result that is not 0, has upper 32
     bits zero and differs from every earlier result of U 2.
-U4  Every call of U 4 passes in rdx the result of the latest U 2 call before
-    it, and no other position of U is called between that U 2 and U 4 (no
-    SetReturn... call); every result has non-zero upper 32 bits (a 64-bit
-    call handle, not a bool or a uint32).
+U4  Every call of U 4 passes in rdx the result h of the latest U 2 call
+    before it, with no other U call in between (no SetReturn... call);
+    every result has non-zero upper 32 bits (a 64-bit call handle, not a
+    bool or a uint32); and no U call other than this U 4 passes h in rdx
+    before the first U 5 with h.
 T   For every result A of U 4: every call of T 11 or T 13 with rdx = A
     comes after that U 4; T 13 is called with A exactly once, the last
     T 11 call with A before it returned 1, and no T 11 call with A comes
@@ -37,24 +39,30 @@ T   For every result A of U 4: every call of T 11 or T 13 with rdx = A
     Only call handles whose T 13 call comes before the 50th logged T 11 call
     (without a T 13 call: whose U 4 comes before the 50th logged T 13 call)
     are checked, at least one; later calls may be missing from the log.
-T13 (optional READS) After T 13 with rdx = A returned: bytes 0..8 at r8 are
-    the handle the U 4 that returned A was given, bytes 8..12 are 1. Without
-    the entry T13 prints "not logged" and has no verdict (meanings.md fixes
-    what that leaves open).
-U5  Every call of U 5 and of U 9 passes in rdx a result of U 2 whose U 4
-    call result was already given to a T 13 that returned 1, and in r8 an
-    index; per handle the indexes of each position run 0, 1, 2, ... in
-    order, at most 49 (kNumUGCResultsPerPage is 50); every result has
-    lowest byte 1.
+T13 After every checked T 13 with rdx = A returned, at r8
+    (SteamUGCQueryCompleted_t): bytes 0..8 (m_handle) are the handle h the
+    U 4 that returned A was given, bytes 8..12 (m_eResult) are 1, and bytes
+    12..16 (m_unNumResultsReturned) are at most 50 and at least the number
+    of different indexes U 5 is called with for h; for at least one call
+    result they are above 16 (k_EWorkshopFileTypeMax, so not the m_eFileType
+    of a SteamUGCDetails_t, and not bool fields).
+U5  Every call of U 5 and of U 9 passes in rdx a U 2 handle whose query a
+    checked T 13 already fetched, and in r8 an index; per handle the indexes
+    of each position run 0, 1, 2, ... in order, at most 49
+    (kNumUGCResultsPerPage is 50); every result has lowest byte 1. For at
+    least one handle the largest U 5 index is greater than r8 of the U 2
+    call that returned it (more results than CreateQueryUGCDetailsRequest
+    would have IDs).
 H5  After every call of U 5: bytes 8..12 at r9 are 1 (m_eResult); when the
     next U call is U 9 or U 12 for the same handle and index and the next
     U 77 call after it comes before the next U 5, bytes 0..8 at r9
     (m_nPublishedFileId) equal rdx of that U 77 call; at least one pair.
 H9  After every call of U 9: bytes 0..4 at r9 are the ASCII text "http".
 U12 Every call of U 12 passes a U 2 handle in rdx, an index in r8 and a
-    value in 0..12 (EItemStatistic) in r9, with lowest result byte 1; per
-    (handle, index) the r9 values run 0, 1, 2, ... in order; at least one
-    (handle, index) has all of 0..12.
+    value in 0..12 (EItemStatistic) in r9, with lowest result byte 1. The
+    calls form groups per (handle, index), in log order; every group except
+    a last one that holds the 50th logged call has r9 exactly 0, 1, ..., 12
+    in order; at least one such group.
 U77 Every call of U 77 has a result with lowest byte 0 and r9 equal to r9
     of the latest U 9 call before it.
 S12 S 12 is called exactly once; its result is from 11025 to 48000 (the
@@ -66,15 +74,17 @@ S12 S 12 is called exactly once; its result is from 11025 to 48000 (the
 R0  At least two calls of R 0; every call has a text in rdx, r8 at least
     0x10000, 0 < r9 < 0x80000000 and a result with lowest byte 1 and upper
     32 bits zero; no text is passed to R 0 twice (compared, never printed).
-R18 A save sequence is the R 18 and R 19 calls before a call of R 0 (after
-    the previous R 0). In each sequence all of whose calls have numbers up
-    to 49, every R 18 returns the same N, and the R 19 calls have rdx 0, 1,
-    ..., N-1 in order. At least two such sequences follow each other
-    (sequence k ends with the k-th R 0 call, k+1 with the next); for each
-    such pair N(k+1) = N(k) + 1.
-H19 In each sequence k+1 of such a pair, the first four bytes at r8 after
-    one of its R 19 calls (int32 pnFileSizeInBytes) equal r9 of the k-th
-    R 0 call.
+R18 A save sequence is the R 18 and R 19 calls after the previous R 0 (or
+    the start) up to a call of R 0. A sequence is fully logged if its R 0
+    is logged and comes before the 50th logged call of R 18 and of R 19.
+    Every fully logged sequence has at least one R 18, all its R 18 return
+    the same N, and its R 19 calls have rdx 0, 1, ..., N-1 in order; any
+    fully logged sequence that does not is a MISMATCH. At least two fully
+    logged sequences follow each other, and for every such pair
+    N(k+1) = N(k) + 1.
+H19 For every such pair, the first four bytes at r8 after one of the R 19
+    calls of sequence k+1 (int32 pnFileSizeInBytes) equal r9 of the R 0
+    that ended sequence k; every R 19 of those sequences was read.
 
 One log, recorded by run.sh in starts.log (observelog.app_of) for
 VPet-Simulator; given twice or for another game it is rejected. Freshness
@@ -102,8 +112,9 @@ T = "SteamUtils010"
 S = "SteamUser023"
 R = "STEAMREMOTESTORAGE_INTERFACE_VERSION016"
 LOGGED = 50
+EVIDENCE_MS = 1_800_000
 REFERENCE = "observe-52912.log"  # Cave Crawlers, experiment 18
-PLAN_COMMITTED = datetime(2026, 11, 22, 18, 57, 22)  # commit 80afe13 on loop/plan-13a (final plan)
+PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set in the follow-up commit
 
 OUT = re.compile(r"after (rdx|r8|r9)->\[([0-9a-f ]+)\]")
 
@@ -139,7 +150,7 @@ def verdict(ok):
 
 def check(path, app):
     label = f"{Path(path).name} ({GAMES[app]})"
-    everything = observelog.calls(path)
+    everything = [c for c in observelog.calls(path) if c.ms <= EVIDENCE_MS]
     cs = [c for c in everything if c.number <= LOGGED]
     ok = []
 
@@ -167,6 +178,7 @@ def check(path, app):
         and c.rax not in (None, 0) and hi(c.rax) == 0 for c in creates)
     say("U2", good, f"{len(creates)} calls, arguments in the page's ranges and r9 the app ID, distinct handles")
     handles = {c.rax for c in creates}
+    created_by = {c.rax: c for c in creates}
 
     # U4: SendQueryUGCRequest.
     sends, bad = of(U, 4), 0
@@ -180,7 +192,15 @@ def check(path, app):
             bad += 1
         else:
             sent_handle[c.rax] = (last_create.rax, c)
-    say("U4", bool(sends) and bad == 0, f"{len(sends)} calls, {bad} not sending the latest new handle as a 64-bit call")
+    other_use = 0
+    for h in handles:
+        first5 = next((index[id(x)] for x in ugc if x.position == 5 and x.reg("rdx") == h), len(cs))
+        other_use += sum(1 for x in ugc if x.position not in (2, 4, 5) and x.reg("rdx") == h
+                         and index[id(x)] < first5)
+        other_use += max(0, sum(1 for x in ugc if x.position == 4 and x.reg("rdx") == h) - 1)
+    say("U4", bool(sends) and bad == 0 and other_use == 0,
+        f"{len(sends)} calls, {bad} not sending the latest new handle as a 64-bit call, "
+        f"{other_use} other uses of a handle before its first 5")
 
     # T: IsAPICallCompleted (11) and GetAPICallResult (13).
     t11, t13 = of(T, 11), of(T, 13)
@@ -215,15 +235,24 @@ def check(path, app):
         f"results 0/1 and 1: {values11}/{values13}, "
         f"one size at 13: {len(sizes13) == 1}, sizes at 11: {len(sizes11)}")
 
-    # T13: the call result bytes (optional READS).
-    read13 = [(r, c, out_bytes(c, "r8")) for r, c in done.items()]
-    logged = [x for x in read13 if x[2] is not None and len(x[2]) >= 12]
-    if not logged:
-        print(f"{label} T13: not logged (optional READS entry) -> no verdict")
-    else:
-        good = len(logged) == len(read13) and all(
-            u64(data, 0) == sent_handle[r][0] and u32(data, 8) == 1 for r, _, data in logged)
-        say("T13", good, f"{len(logged)} of {len(read13)} call results read, handle and result 1 in each")
+    # T13: the call result (SteamUGCQueryCompleted_t) at r8.
+    indexes5 = {}
+    for c in of(U, 5):
+        indexes5.setdefault(c.reg("rdx"), set()).add(c.reg("r8"))
+    bad, unread, big = 0, 0, 0
+    for result, got in done.items():
+        data = out_bytes(got, "r8")
+        if data is None or len(data) < 16:
+            unread += 1
+            continue
+        h = sent_handle[result][0]
+        n = u32(data, 12)
+        if u64(data, 0) != h or u32(data, 8) != 1 or n > 50 or n < len(indexes5.get(h, ())):
+            bad += 1
+        big += n > 16
+    say("T13", bool(done) and unread == 0 and bad == 0 and big > 0,
+        f"{len(done)} call results, {unread} not read, {bad} without the handle, result 1 and a fitting count, "
+        f"{big} with a count above 16")
 
     # U5 / U9: per-item calls on a completed query.
     completed_at = {}
@@ -238,8 +267,11 @@ def check(path, app):
                     or i != expected.get(h, 0) or i > 49):
                 bad += 1
             expected[h] = (i or 0) + 1
-    say("U5", bool(of(U, 5)) and bool(of(U, 9)) and bad == 0,
-        f"{len(of(U, 5))} and {len(of(U, 9))} calls, {bad} not on a completed query in index order or not true")
+    beyond = sum(1 for h, ix in indexes5.items()
+                 if h in created_by and ix and max(i for i in ix if i is not None) > created_by[h].reg("r8"))
+    say("U5", bool(of(U, 5)) and bool(of(U, 9)) and bad == 0 and beyond > 0,
+        f"{len(of(U, 5))} and {len(of(U, 9))} calls, {bad} not on a completed query in index order or not true, "
+        f"{beyond} handles with more results than the r8 of their 2")
 
     # H5: SteamUGCDetails_t at r9 after U 5.
     pairs, bad, unread = 0, 0, 0
@@ -269,19 +301,22 @@ def check(path, app):
     say("H9", bool(nines) and unread == 0 and http == len(nines),
         f"{len(nines)} calls, {unread} not read, {http} starting with the text http")
 
-    # U12: GetQueryUGCStatistic.
+    # U12: GetQueryUGCStatistic, 13 statistics per item.
     twelves, bad = of(U, 12), 0
-    runs = {}
+    groups = []
     for c in twelves:
         key = (c.reg("rdx"), c.reg("r8"))
-        value = c.reg("r9")
-        if (key[0] not in handles or value is None or value > 12 or low(c.rax) != 1
-                or value != len(runs.get(key, []))):
+        if key[0] not in handles or c.reg("r9") is None or c.reg("r9") > 12 or low(c.rax) != 1:
             bad += 1
-        runs.setdefault(key, []).append(value)
-    full = sum(1 for v in runs.values() if v == list(range(13)))
-    say("U12", bool(twelves) and bad == 0 and full > 0,
-        f"{len(twelves)} calls, {bad} out of shape, {full} items with all 13 statistics")
+        if groups and groups[-1][0] == key:
+            groups[-1][1].append(c)
+        else:
+            groups.append((key, [c]))
+    whole = [g for g in groups if not (g is groups[-1] and any(c.number == LOGGED for c in g[1]))]
+    shaped = sum(1 for _, g in whole if [c.reg("r9") for c in g] == list(range(13)))
+    good = bool(twelves) and bad == 0 and bool(whole) and shaped == len(whole)
+    say("U12", good, f"{len(twelves)} calls, {bad} out of range or not true, "
+        f"{shaped} of {len(whole)} fully logged items with exactly the 13 statistics")
 
     # U77.
     sevens, bad = of(U, 77), 0
@@ -305,8 +340,7 @@ def check(path, app):
         f" (reference found: {ref_value is not None})")
 
     # R0: FileWrite.
-    rs = [c for c in cs if c.interface == R]
-    writes = [c for c in rs if c.position == 0]
+    writes = [c for c in cs if c.interface == R and c.position == 0]
     texts = [c.texts.get("rdx") for c in writes]
     good = (len(writes) >= 2 and all(t is not None for t in texts) and len(set(texts)) == len(texts)
             and all(c.reg("r8") is not None and c.reg("r8") >= 0x10000
@@ -316,6 +350,9 @@ def check(path, app):
 
     # R18 / H19: GetFileCount and GetFileNameAndSize before each write.
     every_rs = [c for c in everything if c.interface == R]
+    at = {id(c): i for i, c in enumerate(every_rs)}
+    cap = min(next((at[id(c)] for c in every_rs if c.position == p and c.number == LOGGED), len(every_rs))
+              for p in (18, 19))
     sequences, current = [], []
     for c in every_rs:
         if c.position in (18, 19):
@@ -323,18 +360,22 @@ def check(path, app):
         elif c.position == 0:
             sequences.append((current, c))
             current = []
-    complete, count_of = [], {}
+    full, count_of, broken = [], {}, 0
     for k, (seq, write) in enumerate(sequences):
+        if write.number > LOGGED or at[id(write)] >= cap:
+            continue
+        full.append(k)
         counts = [c.rax for c in seq if c.position == 18]
         indexes = [c.reg("rdx") for c in seq if c.position == 19]
-        whole = all(c.number < LOGGED for c in seq) and write.number <= LOGGED and counts
-        if whole and len(set(counts)) == 1 and indexes == list(range(counts[0])):
-            complete.append(k)
+        if counts and len(set(counts)) == 1 and indexes == list(range(counts[0])):
             count_of[k] = counts[0]
-    pair_ks = [k for k in complete if k + 1 in complete]
+        else:
+            broken += 1
+    pair_ks = [k for k in full if k + 1 in full and k in count_of and k + 1 in count_of]
     grows = all(count_of[k + 1] == count_of[k] + 1 for k in pair_ks)
-    say("R18", bool(pair_ks) and grows,
-        f"{len(sequences)} sequences, {len(complete)} complete, {len(pair_ks)} following pairs, count +1 in each: {grows}")
+    say("R18", broken == 0 and bool(pair_ks) and grows,
+        f"{len(sequences)} sequences, {len(full)} fully logged, {broken} of them out of shape, "
+        f"{len(pair_ks)} following pairs, count +1 in each: {grows}")
     bad, unread = 0, 0
     for k in pair_ks:
         size = sequences[k][1].reg("r9")

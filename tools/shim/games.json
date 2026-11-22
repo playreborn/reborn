@@ -21,5 +21,10 @@
     ["UB", "UNBEATABLE [white label]", 1290490, "observe-45720.log", "agent"],
     ["PK", "A Park Full of Cats", 2610090, "observe-8248.log", "agent"],
     ["CA", "Cartapli : Fold Quest", 4314560, "observe-48168.log", "agent"]
+  ],
+  "_extra_comment": "Recordings of games outside the M4 list (ADR 0056 decision 3), same fields. They count in coverage.md and gaps.md and are marked there as not on the M4 list; M4's goal (m4-games.md) does not change.",
+  "extra": [
+    ["VP", "VPet-Simulator", 1920960, "observe-23624.log", "agent"],
+    ["PP", "Pixel Puzzles Ultimate Jigsaw Puzzles", 351030, "observe-51312.log", "agent"]
   ]
 }

@@ -18,7 +18,12 @@ struct Object {
 
 /// A built object, shareable between threads (it is never written after
 /// it is built).
-struct Built(Box<Object>);
+struct Built {
+    object: Box<Object>,
+    /// The same table, for the tests to read without raw pointers.
+    #[cfg_attr(not(test), allow(dead_code))]
+    table: &'static [usize; SLOTS],
+}
 // SAFETY: the object and its table are created once and only read
 // afterwards; the pointer targets a leaked, never-freed table.
 unsafe impl Send for Built {}
@@ -28,13 +33,16 @@ unsafe impl Sync for Built {}
 impl Built {
     fn new(table: [usize; SLOTS]) -> Self {
         let table: &'static [usize; SLOTS] = Box::leak(Box::new(table));
-        Built(Box::new(Object {
-            table: table.as_ptr(),
-        }))
+        Built {
+            object: Box::new(Object {
+                table: table.as_ptr(),
+            }),
+            table,
+        }
     }
 
     fn pointer(&self) -> *mut c_void {
-        (&*self.0 as *const Object).cast_mut().cast()
+        (&*self.object as *const Object).cast_mut().cast()
     }
 }
 
@@ -206,6 +214,10 @@ pub fn known_interfaces() -> &'static [&'static str] {
 
 /// The shim's object for a version text, if it has one.
 pub fn interface_for(version: &str) -> Option<*mut c_void> {
+    built_for(version).map(Built::pointer)
+}
+
+fn built_for(version: &str) -> Option<&'static Built> {
     let built = match version {
         "SteamClient020" => client_020(),
         "SteamClient021" => client_021(),
@@ -213,7 +225,7 @@ pub fn interface_for(version: &str) -> Option<*mut c_void> {
         "SteamUtils010" => utils_010(),
         _ => return None,
     };
-    Some(built.pointer())
+    Some(built)
 }
 
 #[cfg(test)]
@@ -221,17 +233,10 @@ mod tests {
     use super::*;
     use reborn_shim_protocol::{PROTOCOL_VERSION, Session};
 
-    /// The function at `position` of an object's table.
-    fn slot(object: *mut c_void, position: usize) -> usize {
-        assert!(!object.is_null(), "no object");
-        assert!(position < SLOTS, "position beyond the table");
-        // SAFETY: `object` is not null, comes from `interface_for` and
-        // points to an `Object` whose table has `SLOTS` entries, and
-        // `position` is below `SLOTS`.
-        unsafe {
-            let object = &*(object as *const Object);
-            *object.table.add(position)
-        }
+    /// The function at `position` of the table of the object for
+    /// `version`, read without going through raw pointers.
+    fn slot_of(version: &str, position: usize) -> usize {
+        built_for(version).map_or(0, |built| built.table[position])
     }
 
     fn object(version: &str) -> *mut c_void {
@@ -261,13 +266,13 @@ mod tests {
             // signatures (`client_table`).
             unsafe {
                 let pipe: extern "C" fn(*const Object) -> i32 =
-                    std::mem::transmute(slot(client, 0));
+                    std::mem::transmute(slot_of(version, 0));
                 let user: extern "C" fn(*const Object, i32) -> i32 =
-                    std::mem::transmute(slot(client, 2));
+                    std::mem::transmute(slot_of(version, 2));
                 let utils: extern "C" fn(*const Object, i32, *const c_char) -> *mut c_void =
-                    std::mem::transmute(slot(client, 9));
+                    std::mem::transmute(slot_of(version, 9));
                 let generic: extern "C" fn(*const Object, i32, i32, *const c_char) -> *mut c_void =
-                    std::mem::transmute(slot(client, 12));
+                    std::mem::transmute(slot_of(version, 12));
                 let p = pipe(client.cast());
                 let u = user(client.cast(), p);
                 assert_eq!((p, u), (1, 1), "{version}");
@@ -288,31 +293,27 @@ mod tests {
     fn per_interface_positions_differ_by_version() {
         let generic = get_user_interface as *const () as usize;
         assert_eq!(
-            slot(object("SteamClient020"), 30),
+            slot_of("SteamClient020", 30),
             generic,
             "MUSICREMOTE at 30 in 020"
         );
         assert_ne!(
-            slot(object("SteamClient023"), 30),
+            slot_of("SteamClient023", 30),
             generic,
             "30 is not an interface in 023"
         );
-        assert_eq!(
-            slot(object("SteamClient023"), 23),
-            generic,
-            "HTTP at 23 in 023"
-        );
+        assert_eq!(slot_of("SteamClient023", 23), generic, "HTTP at 23 in 023");
         assert_ne!(
-            slot(object("SteamClient020"), 23),
+            slot_of("SteamClient020", 23),
             generic,
             "23 is the shutdown in 020"
         );
         assert_eq!(
-            slot(object("SteamClient020"), 23),
+            slot_of("SteamClient020", 23),
             shutdown_if_all_pipes_closed as *const () as usize
         );
         assert_ne!(
-            slot(object("SteamClient021"), 23),
+            slot_of("SteamClient021", 23),
             shutdown_if_all_pipes_closed as *const () as usize,
             "the close calls are recorded for 020 only"
         );
@@ -327,7 +328,7 @@ mod tests {
         let utils = object("SteamUtils010");
         // SAFETY: position 9 holds `get_app_id`.
         let app_id: extern "C" fn(*const Object) -> u32 =
-            unsafe { std::mem::transmute(slot(utils, 9)) };
+            unsafe { std::mem::transmute(slot_of("SteamUtils010", 9)) };
         assert_eq!(app_id(utils.cast()), 2_143_030);
     }
 }

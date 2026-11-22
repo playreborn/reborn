@@ -1750,7 +1750,8 @@ F not checked (703 payload bytes not logged)
 experiment 19: match
 ```
 
-Under ADR 0051 the readings listed above under "What a full match
+Under ADR 0051 (for the recorded `SteamClient` versions and the five
+games' `steam_api` builds) the readings listed above under "What a full match
 confirms" are confirmed: header bytes 4 to 8 the callback number, 8 to 16
 the address of its data, 16 to 20 its size; one callback per poll that
 returns 1, freed by exactly one `Steam_FreeLastCallback` on the same `rcx`

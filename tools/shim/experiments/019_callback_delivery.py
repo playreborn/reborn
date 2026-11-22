@@ -26,18 +26,30 @@ E  Every Steam_GetAPICallResult call lies between a header with the number
    703 and its Steam_FreeLastCallback, on the same thread; each such window
    holds exactly one. At least one log must have a 703 callback.
 F  Only if the first payload bytes of 703 are logged (PAYLOAD_LISTED): bytes
-   0..8 equal `rdx` of the Steam_GetAPICallResult call in the window, and
-   bytes 12..16 equal its `r9`. Otherwise reported as not checked.
+   0..8 equal `rdx` of the Steam_GetAPICallResult call in the window
+   (all 64 bits, on purpose: the recorded `rdx` values use all 64 bits; the
+   page names the type but not its width), and bytes 12..16 equal the low
+   32 bits of its `r9` (the buffer size is an `int` on the page). Otherwise
+   reported as not checked.
 
 Each log must be a different file that run.sh recorded in starts.log
 (observelog.app_of); at least 3 different games. Logs with more than 50
 Steam_FreeLastCallback or Steam_GetAPICallResult calls cannot be checked for
-D and E (the proxy logs only the first 50) and count as a mismatch.
+D and E (the proxy logs only the first 50) and count as a mismatch. A2 must
+be checked at least once across all logs, and a `wrote` line without a
+readable header is a mismatch.
+
+Freshness (LOOP.md step 4): a log whose `start` line in starts.log (the last
+`start` of the same app before its `log` line, observelog.start_of) is
+earlier than PLAN_COMMITTED is rejected. PLAN_COMMITTED is the committer
+time (local, as run.sh writes starts.log) of the commit on loop/plan-9b that
+holds the final plan text; it is set in the follow-up commit.
 
 Usage: python tools/shim/experiments/019_callback_delivery.py <log>...
 """
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,6 +57,7 @@ import observelog  # noqa: E402
 
 COMPLETED = 703  # the number after which Steam_GetAPICallResult was seen (entry-points.md)
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
+PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set to the final plan commit's time
 low = observelog.low32
 
 
@@ -66,6 +79,8 @@ def check(path, sizes_all):
     out = {}
     lines = observelog.exports(path)
     heads = [(e, observelog.header(e)) for e in lines if e.kind == "wrote"]
+    unreadable = sum(h is None for _, h in heads)
+    heads = [(e, h) for e, h in heads if h is not None]
     p, u = handles(path)
 
     # A and B, and the sizes for C.
@@ -97,7 +112,9 @@ def check(path, sizes_all):
                 del open_cb[e.thread]
             if e.kind == "call":
                 last_call[e.thread] = (e.number, low(e.reg("rcx")))
-            if e.kind == "wrote":
+            if e.kind == "wrote" and observelog.header(e) is None:
+                d_ok = False  # counted as a mismatch in B too
+            elif e.kind == "wrote":
                 h = observelog.header(e)
                 number, rcx = last_call.get(e.thread, (None, None))
                 pipe = rcx if number == e.number else None
@@ -119,7 +136,7 @@ def check(path, sizes_all):
                     f_checked += 1
                     first = h.payload_first
                     f_ok &= (int.from_bytes(first[0:8], "little") == apis[0].reg("rdx")
-                             and int.from_bytes(first[12:16], "little") == apis[0].reg("r9"))
+                             and int.from_bytes(first[12:16], "little") == low(apis[0].reg("r9")))
             else:
                 e_ok &= not apis
         elif e.name == "Steam_GetAPICallResult" and e.kind == "call":
@@ -134,12 +151,12 @@ def check(path, sizes_all):
         d_ok &= state[1] == 1
     d_ok &= low_bytes <= {0, 1}
 
-    if not heads:
+    if not heads or unreadable:
         a_ok = b_ok = False
     out["A"] = (a_ok, f"{len(heads)} headers, bytes 0..4 {sorted(first_words)}, P={p} U={u}, "
                 f"{differs} from a call whose rcx differs")
     out["A2"] = (a2_ok, f"{a2_checked} frees and GetAPICallResult calls with a logged poll")
-    out["B"] = (b_ok, "size note equals bytes 16..20, bytes 20..24 zero")
+    out["B"] = (b_ok, f"size note equals bytes 16..20, bytes 20..24 zero, {unreadable} unreadable headers")
     out["C"] = (all(len(s) == 1 for s in sizes.values()),
                 f"{len(sizes)} numbers, {sum(len(s) > 1 for s in sizes.values())} with more than one size")
     out["D"] = (d_ok and checkable,
@@ -148,12 +165,12 @@ def check(path, sizes_all):
     out["E"] = (e_ok and checkable, f"{len(api_calls)} GetAPICallResult calls, {windows_703} callbacks 703")
     out["F"] = (f_ok if f_checked else None,
                 f"{f_checked} of {windows_703} 703 callbacks with payload bytes")
-    return out, windows_703, differs
+    return out, windows_703, differs, a2_checked
 
 
 paths = sys.argv[1:]
 verdicts, games, any_703, f_any, sizes_all = [], set(), False, False, defaultdict(set)
-any_differs = 0
+any_differs = any_a2 = 0
 if len({Path(p).resolve() for p in paths}) != len(paths):
     print("a log was given twice -> MISMATCH")
     verdicts.append(False)
@@ -163,14 +180,20 @@ for path in paths:
         print(f"{name}: not recorded by run.sh in starts.log -> MISMATCH")
         verdicts.append(False)
         continue
+    started = observelog.start_of(path)
+    if started is None or started < PLAN_COMMITTED:
+        print(f"{name} (app {app}): started {started}, before the plan commit {PLAN_COMMITTED} -> MISMATCH")
+        verdicts.append(False)
+        continue
     if not any(e.kind == "wrote" and "payload:" in e.rest for e in observelog.exports(path)):
         print(f"{name} (app {app}): no payload notes (step 4d) -> MISMATCH")
         verdicts.append(False)
         continue
     games.add(app)
-    result, n703, differs = check(path, sizes_all)
+    result, n703, differs, a2_checked = check(path, sizes_all)
     any_703 |= n703 > 0
     any_differs += differs
+    any_a2 += a2_checked
     for key, (ok, note) in result.items():
         if ok is None:
             print(f"{name} (app {app}) {key}: {note} -> not checked")
@@ -188,6 +211,9 @@ if len(games) < 3:
     verdicts.append(False)
 if not any_differs:
     print("no header from a call whose rcx differs from bytes 0..4 (A needs one) -> MISMATCH")
+    verdicts.append(False)
+if not any_a2:
+    print("A2 not checked in any log -> MISMATCH")
     verdicts.append(False)
 if not any_703:
     print("no log with a 703 callback (E needs one) -> MISMATCH")

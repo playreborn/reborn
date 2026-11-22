@@ -178,3 +178,24 @@ def header(export):
     first = bytes.fromhex(p.group(2).replace(" ", "")) if p and p.group(2) else None
     return Header(bytes.fromhex(m.group(1).replace(" ", "")),
                   int(p.group(1)) if p else None, first)
+
+
+def start_of(path):
+    """When `run.sh` started the game of this log: the time of the last
+    `start` line for the same app before the log's `log` line in
+    `starts.log` (local time, as written), or None."""
+    from datetime import datetime
+    name = Path(path).name
+    try:
+        lines = open(log_dir() / "starts.log", encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    for at in range(len(lines) - 1, -1, -1):
+        parts = lines[at].split()
+        if len(parts) == 5 and parts[2] == "log" and parts[4] == name:
+            for earlier in reversed(lines[:at]):
+                p = earlier.split()
+                if len(p) == 4 and p[2] == "start" and p[3] == parts[3]:
+                    return datetime.strptime(p[0] + " " + p[1], "%Y-%m-%d %H:%M:%S")
+            return None
+    return None

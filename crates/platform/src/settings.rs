@@ -6,10 +6,14 @@
 //! - `default-account`: the account used when none is given,
 //! - `library`: the folder for Reborn's game library, if not the default,
 //! - `proton`: the Proton build to use on Linux, if not the automatic choice,
-//! - `own-status`: the online status Reborn sets after sign-in, if any.
+//! - `own-status`: the online status Reborn sets after sign-in, if any,
+//! - `shim-notice-seen`: the app IDs whose shim-mode notice the user
+//!   confirmed (ADR 0057), one per line. App IDs only, no account data.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use directories::ProjectDirs;
 
@@ -17,6 +21,7 @@ const DEFAULT_ACCOUNT_FILE: &str = "default-account";
 const LIBRARY_FILE: &str = "library";
 const PROTON_FILE: &str = "proton";
 const OWN_STATUS_FILE: &str = "own-status";
+const SHIM_NOTICE_FILE: &str = "shim-notice-seen";
 
 /// Reading or writing a setting failed.
 #[derive(Debug, thiserror::Error)]
@@ -119,6 +124,77 @@ pub fn set_own_status(status: Option<&str>) -> Result<(), SettingsError> {
     write_value(&config_dir()?, OWN_STATUS_FILE, status)
 }
 
+/// The apps whose shim-mode notice the user confirmed (ADR 0057), kept in
+/// `shim-notice-seen` in a settings folder.
+#[derive(Clone, Debug)]
+pub struct ShimNotices {
+    dir: PathBuf,
+}
+
+impl ShimNotices {
+    /// The confirmations in the user's config directory.
+    pub fn in_config_dir() -> Result<Self, SettingsError> {
+        Ok(Self::new(config_dir()?))
+    }
+
+    /// The confirmations kept in `dir` (tests use a temporary folder).
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    /// Whether the user already confirmed the notice for this app.
+    pub fn seen(&self, app_id: u32) -> Result<bool, SettingsError> {
+        Ok(shim_notice_apps(&self.dir)?.contains(&app_id))
+    }
+
+    /// Remembers that the user confirmed the notice for this app.
+    pub fn remember(&self, app_id: u32) -> Result<(), SettingsError> {
+        remember_shim_notice_in(&self.dir, app_id)
+    }
+}
+
+/// The app IDs in `shim-notice-seen`. Lines that are not an app ID are
+/// skipped (and dropped on the next write).
+fn shim_notice_apps(dir: &Path) -> Result<BTreeSet<u32>, SettingsError> {
+    Ok(read_value(dir, SHIM_NOTICE_FILE)?
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| line.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Guards the read-modify-write of `shim-notice-seen`, so two first
+/// launches at the same time cannot lose an app ID. Only `rebornd` writes
+/// the file, and only one `rebornd` runs per user.
+static SHIM_NOTICE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Adds an app ID to `shim-notice-seen`. The new list is written to a
+/// temporary file first and then renamed over the old one, so a crash
+/// leaves either the old or the new list, never half of one.
+fn remember_shim_notice_in(dir: &Path, app_id: u32) -> Result<(), SettingsError> {
+    // A panic while holding the lock leaves nothing half-written (the
+    // rename is atomic), so a poisoned lock is still safe to use.
+    let _guard = SHIM_NOTICE_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let mut apps = shim_notice_apps(dir)?;
+    if !apps.insert(app_id) {
+        return Ok(());
+    }
+    let text = apps
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::create_dir_all(dir)?;
+    let temporary = dir.join(format!("{SHIM_NOTICE_FILE}.part"));
+    std::fs::write(&temporary, text)?;
+    std::fs::rename(&temporary, dir.join(SHIM_NOTICE_FILE))?;
+    Ok(())
+}
+
 /// Reads a one-line setting; missing or empty files mean "not set".
 fn read_value(dir: &Path, name: &str) -> Result<Option<String>, SettingsError> {
     match std::fs::read_to_string(dir.join(name)) {
@@ -201,6 +277,50 @@ mod tests {
         write_value(&dir, "x", None).unwrap();
         assert_eq!(read_value(&dir, "x").unwrap(), None);
         write_value(&dir, "x", None).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn shim_notices_are_remembered_per_app() {
+        let dir = temp_dir("shim-notice");
+        assert!(shim_notice_apps(&dir).unwrap().is_empty());
+        remember_shim_notice_in(&dir, 5_191_630).unwrap();
+        remember_shim_notice_in(&dir, 480).unwrap();
+        remember_shim_notice_in(&dir, 480).unwrap();
+        let apps = shim_notice_apps(&dir).unwrap();
+        assert_eq!(apps.into_iter().collect::<Vec<_>>(), [480, 5_191_630]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SHIM_NOTICE_FILE)).unwrap(),
+            "480\n5191630"
+        );
+
+        // A broken line does not hide the others and is dropped on write.
+        std::fs::write(dir.join(SHIM_NOTICE_FILE), "480\nnot an app\n 70 \n").unwrap();
+        let apps = shim_notice_apps(&dir).unwrap();
+        assert!(apps.contains(&480) && apps.contains(&70) && !apps.contains(&10));
+        remember_shim_notice_in(&dir, 10).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SHIM_NOTICE_FILE)).unwrap(),
+            "10\n70\n480"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn launches_at_the_same_time_lose_no_app_id() {
+        let dir = temp_dir("shim-notice-threads");
+        std::thread::scope(|scope| {
+            for app_id in 1..=16 {
+                let dir = &dir;
+                scope.spawn(move || remember_shim_notice_in(dir, app_id).unwrap());
+            }
+        });
+        let apps = shim_notice_apps(&dir).unwrap();
+        assert_eq!(
+            apps.into_iter().collect::<Vec<_>>(),
+            (1..=16).collect::<Vec<_>>()
+        );
+        assert!(!dir.join(format!("{SHIM_NOTICE_FILE}.part")).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

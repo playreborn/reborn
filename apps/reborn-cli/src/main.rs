@@ -1048,6 +1048,10 @@ enum DaemonCommand {
         /// backup.
         #[arg(long, value_parser = ["local", "cloud"])]
         cloud: Option<String>,
+        /// Confirm the shim-mode notice without asking (it is still
+        /// printed before the first shim-mode launch of the app).
+        #[arg(long)]
+        yes: bool,
     },
     /// Print events from the daemon until Ctrl+C.
     Watch,
@@ -1101,69 +1105,79 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             library,
             option,
             ..
-        } => Request::Launch {
-            app_id: *app_id,
-            library: library.clone(),
-            option: *option,
-            cloud_choice: None,
-        },
+        } => LaunchAnswers::default().request(*app_id, library.clone(), *option),
         DaemonCommand::Shutdown => Request::Shutdown,
     };
-    let cloud_choice = match &command {
-        DaemonCommand::Launch { cloud, .. } => cloud.as_deref().map(|choice| match choice {
+
+    let mut response = client.request(request).await?;
+    // The shim-mode notice (ADR 0057) and a cloud conflict (ADR 0055) are
+    // each asked once; every resend carries all answers given so far.
+    if let DaemonCommand::Launch {
+        library,
+        option,
+        cloud,
+        yes,
+        ..
+    } = &command
+    {
+        let cloud_choice = cloud.as_deref().map(|choice| match choice {
             "cloud" => reborn_ipc::protocol::CloudChoice::Cloud,
             _ => reborn_ipc::protocol::CloudChoice::Local,
-        }),
-        _ => None,
-    };
-
-    let mut response = client.request(request.clone()).await?;
-    if let (Response::CloudConflict { app_id, files }, Request::Launch { .. }) =
-        (&response, &request)
-    {
-        print_cloud_conflict(*app_id, files);
-        let Some(choice) = cloud_choice else {
-            println!(
-                "Start it again with `--cloud local` to play with Reborn's files or \
-                 `--cloud cloud` to play with the Steam Cloud version; you are asked to \
-                 confirm the files first, and the other version is kept as a backup."
-            );
-            return Ok(());
-        };
-        let version = match choice {
-            reborn_ipc::protocol::CloudChoice::Cloud => "the Steam Cloud version",
-            _ => "Reborn's files",
-        };
-        let confirm = prompt_line(&format!(
-            "Play with {version} for these {} files? Type `yes` to confirm: ",
-            files.len()
-        ))?;
-        if confirm != "yes" {
-            println!("Not started; nothing was changed.");
-            return Ok(());
-        }
-        let Request::Launch {
-            app_id,
-            library,
-            option,
-            ..
-        } = request
-        else {
-            unreachable!("matched above");
-        };
-        let answer = reborn_ipc::protocol::CloudAnswer::for_conflicts(choice, files);
-        response = client
-            .request(Request::Launch {
-                app_id,
-                library,
-                option,
-                cloud_choice: Some(answer),
-            })
-            .await?;
-        if let Response::CloudConflict { app_id, files } = &response {
-            print_cloud_conflict(*app_id, files);
-            println!("The saves changed again while you chose; start it again to see them.");
-            return Ok(());
+        });
+        let mut answers = LaunchAnswers::default();
+        loop {
+            let app_id = match &response {
+                Response::ShimModeNotice { app_id } if !answers.notice => {
+                    eprintln!("{}", shim_notice_text(*app_id));
+                    if !confirm_shim_notice(*yes)? {
+                        bail!("not started");
+                    }
+                    answers.notice = true;
+                    *app_id
+                }
+                Response::CloudConflict { app_id, files } if answers.cloud.is_none() => {
+                    print_cloud_conflict(*app_id, files);
+                    let Some(choice) = cloud_choice else {
+                        println!(
+                            "Start it again with `--cloud local` to play with Reborn's files or \
+                             `--cloud cloud` to play with the Steam Cloud version; you are asked \
+                             to confirm the files first, and the other version is kept as a \
+                             backup."
+                        );
+                        return Ok(());
+                    };
+                    let version = match choice {
+                        reborn_ipc::protocol::CloudChoice::Cloud => "the Steam Cloud version",
+                        _ => "Reborn's files",
+                    };
+                    let confirm = prompt_line(&format!(
+                        "Play with {version} for these {} files? Type `yes` to confirm: ",
+                        files.len()
+                    ))?;
+                    if !is_yes(&confirm) {
+                        println!("Not started; nothing was changed.");
+                        return Ok(());
+                    }
+                    answers.cloud = Some(reborn_ipc::protocol::CloudAnswer::for_conflicts(
+                        choice, files,
+                    ));
+                    *app_id
+                }
+                Response::CloudConflict { app_id, files } => {
+                    print_cloud_conflict(*app_id, files);
+                    println!(
+                        "The saves changed again while you chose; start it again to see them."
+                    );
+                    return Ok(());
+                }
+                Response::ShimModeNotice { .. } => {
+                    bail!("rebornd asked for the shim-mode notice again; not started")
+                }
+                _ => break,
+            };
+            response = client
+                .request(answers.request(app_id, library.clone(), *option))
+                .await?;
         }
     }
     match response {
@@ -1519,6 +1533,62 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// What the user answered so far for one launch: the shim-mode notice
+/// (ADR 0057) and a cloud conflict (ADR 0055). Every resend carries both,
+/// so a cloud-conflict resend after the notice keeps the notice accepted.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LaunchAnswers {
+    notice: bool,
+    cloud: Option<reborn_ipc::protocol::CloudAnswer>,
+}
+
+impl LaunchAnswers {
+    fn request(
+        &self,
+        app_id: u32,
+        library: Option<PathBuf>,
+        option: Option<u32>,
+    ) -> reborn_ipc::Request {
+        reborn_ipc::Request::Launch {
+            app_id,
+            library,
+            option,
+            cloud_choice: self.cloud.clone(),
+            shim_notice_accepted: self.notice,
+        }
+    }
+}
+
+/// The shim-mode notice as the CLI prints it.
+fn shim_notice_text(app_id: u32) -> String {
+    format!(
+        "App {app_id} starts in shim mode.\n{}",
+        reborn_ipc::SHIM_MODE_NOTICE
+    )
+}
+
+/// `--yes`, or the user types "yes" at the prompt. Without a terminal and
+/// without `--yes` the answer is no, so scripts never confirm by accident.
+fn confirm_shim_notice(yes: bool) -> Result<bool> {
+    use std::io::IsTerminal as _;
+    if yes {
+        eprintln!("Continuing (--yes).");
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        eprintln!("Run again with --yes to start it in shim mode.");
+        return Ok(false);
+    }
+    Ok(is_yes(&prompt_line(
+        "Type yes to start it in shim mode, anything else to cancel: ",
+    )?))
+}
+
+/// Only a full "yes" (any case) confirms.
+fn is_yes(answer: &str) -> bool {
+    answer.trim().eq_ignore_ascii_case("yes")
+}
+
 fn prompt_line(prompt: &str) -> Result<String> {
     let mut stderr = std::io::stderr();
     stderr.write_all(prompt.as_bytes())?;
@@ -1584,6 +1654,53 @@ mod tests {
         assert_eq!(utc_time(0), "1970-01-01 00:00 UTC");
         assert_eq!(utc_time(951_782_400), "2000-02-29 00:00 UTC");
         assert_eq!(utc_time(1_700_000_000), "2023-11-14 22:13 UTC");
+    }
+
+    #[test]
+    fn the_shim_notice_needs_a_full_yes() {
+        assert!(is_yes("yes") && is_yes(" YES\n") && is_yes("Yes"));
+        for answer in ["", "y", "no", "yes please", "ja"] {
+            assert!(!is_yes(answer), "{answer}");
+        }
+        let text = shim_notice_text(480);
+        assert!(text.starts_with("App 480 starts in shim mode."), "{text}");
+        assert!(text.contains(reborn_ipc::SHIM_MODE_NOTICE), "{text}");
+        assert!(confirm_shim_notice(true).unwrap());
+    }
+
+    #[test]
+    fn every_launch_resend_carries_both_answers() {
+        use reborn_ipc::protocol::{CloudAnswer, CloudChoice};
+        let mut answers = LaunchAnswers::default();
+        let first = answers.request(480, None, None);
+        assert_eq!(
+            first,
+            reborn_ipc::Request::Launch {
+                app_id: 480,
+                library: None,
+                option: None,
+                cloud_choice: None,
+                shim_notice_accepted: false,
+            }
+        );
+        answers.notice = true;
+        answers.cloud = Some(CloudAnswer::for_conflicts(CloudChoice::Cloud, &[]));
+        let reborn_ipc::Request::Launch {
+            cloud_choice,
+            shim_notice_accepted,
+            ..
+        } = answers.request(480, None, Some(1))
+        else {
+            panic!("expected a launch");
+        };
+        assert!(shim_notice_accepted, "the notice stays accepted");
+        assert_eq!(cloud_choice, answers.cloud);
+    }
+
+    #[test]
+    fn launch_takes_yes() {
+        let cli = Cli::try_parse_from(["reborn", "daemon", "launch", "480", "--yes"]);
+        assert!(cli.is_ok(), "{cli:?}");
     }
 
     #[test]

@@ -17,6 +17,22 @@ pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
 pub const PROTOCOL_MINOR: u16 = 13;
 
+/// What a frontend shows before the first shim-mode launch of a game
+/// (ADR 0055, 0057), when the daemon answers [`Request::Launch`] with
+/// [`Response::ShimModeNotice`]. One text for every frontend, so they all
+/// say the same.
+pub const SHIM_MODE_NOTICE: &str = "Reborn starts this game in shim mode. \
+In shim mode the game's saves stay in Reborn's own folder on this PC. \
+They are not uploaded to Steam Cloud yet, and the official Steam client, \
+also the one on this PC, does not see them. If you also play this game \
+with the official client, you can end up with two different versions of \
+your saves.";
+
+/// The first protocol minor version that knows the launch questions
+/// [`Response::ShimModeNotice`] and [`Response::CloudConflict`]; older
+/// frontends get them as [`Response::Error`].
+pub const LAUNCH_QUESTIONS_MINOR: u16 = 13;
+
 /// A password or Steam Guard code on its way to the daemon.
 ///
 /// Serialized as a plain JSON string, but `Debug` prints `<redacted>` so it
@@ -172,6 +188,11 @@ pub enum Request {
         /// protocol 1.13.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cloud_choice: Option<CloudAnswer>,
+        /// The user confirmed [`SHIM_MODE_NOTICE`] for this app (ADR
+        /// 0057). Only sent after the daemon answered
+        /// [`Response::ShimModeNotice`]. Added in protocol 1.13.
+        #[serde(default, skip_serializing_if = "is_false")]
+        shim_notice_accepted: bool,
     },
     /// Remove an installed app: its game folder, download leftovers and
     /// appmanifest (ADR 0018). Permanent. Refused while the app is running,
@@ -383,12 +404,22 @@ pub enum Response {
     /// version last downloaded (a true conflict, ADR 0055). Nothing was
     /// written and the game was not started. The frontend asks the user
     /// which version to play with and sends the launch again with
-    /// `cloud_choice`. Added in protocol 1.13.
+    /// `cloud_choice`. Added in protocol 1.13; older frontends get
+    /// [`Response::Error`] instead.
     CloudConflict {
         /// The app.
         app_id: u32,
         /// The files in conflict.
         files: Vec<CloudConflictFile>,
+    },
+    /// Answer to [`Request::Launch`] in shim mode before the first launch
+    /// of this app (ADR 0055, 0057): nothing was started. Show
+    /// [`SHIM_MODE_NOTICE`]; if the user continues, send the launch again
+    /// with `shim_notice_accepted: true`. Added in protocol 1.13; older
+    /// frontends get [`Response::Error`] with the notice instead.
+    ShimModeNotice {
+        /// The app.
+        app_id: u32,
     },
     /// The request was carried out.
     Ok,
@@ -397,6 +428,12 @@ pub enum Response {
         /// Human-readable reason.
         message: String,
     },
+}
+
+/// For `skip_serializing_if`: leaves out flags that are not set, so
+/// requests look as they did before the flag existed.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// An owned app.
@@ -1022,6 +1059,7 @@ mod tests {
                 library: None,
                 option: None,
                 cloud_choice: None,
+                shim_notice_accepted: false,
             },
         };
         // Without a choice the frame is the same as before protocol 1.13.
@@ -1078,6 +1116,7 @@ mod tests {
             library: None,
             option: None,
             cloud_choice: Some(CloudAnswer::for_conflicts(CloudChoice::Cloud, &[file])),
+            shim_notice_accepted: false,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -1091,6 +1130,71 @@ mod tests {
             serde_json::to_string(&CloudChoice::Local).unwrap(),
             r#""local""#
         );
+    }
+
+    #[test]
+    fn shim_notice_json_is_compatible() {
+        // A 1.12 frontend's launch still parses, without the flag.
+        let old: Request =
+            serde_json::from_str(r#"{"type":"launch","app_id":480,"library":null,"option":null}"#)
+                .unwrap();
+        assert_eq!(
+            old,
+            Request::Launch {
+                app_id: 480,
+                library: None,
+                option: None,
+                cloud_choice: None,
+                shim_notice_accepted: false,
+            }
+        );
+        let accepted = Request::Launch {
+            app_id: 480,
+            library: None,
+            option: None,
+            cloud_choice: None,
+            shim_notice_accepted: true,
+        };
+        let json = serde_json::to_string(&accepted).unwrap();
+        assert!(json.ends_with(r#""shim_notice_accepted":true}"#), "{json}");
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), accepted);
+        // Both answers in one launch: a cloud-conflict resend after the
+        // notice still carries the notice.
+        let both = Request::Launch {
+            app_id: 480,
+            library: None,
+            option: None,
+            cloud_choice: Some(CloudAnswer::for_conflicts(CloudChoice::Local, &[])),
+            shim_notice_accepted: true,
+        };
+        let json = serde_json::to_string(&both).unwrap();
+        assert!(
+            json.contains(r#""cloud_choice":{"choice":"local""#)
+                && json.ends_with(r#""shim_notice_accepted":true}"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), both);
+        assert_eq!(
+            serde_json::to_string(&Response::ShimModeNotice { app_id: 480 }).unwrap(),
+            r#"{"type":"shim_mode_notice","app_id":480}"#
+        );
+    }
+
+    #[test]
+    fn shim_notice_says_what_adr_0055_requires() {
+        // Saves stay in Reborn's folder, no Steam Cloud uploads, the
+        // official client (also on this PC) does not see them, and two
+        // versions can result.
+        for part in [
+            "Reborn's own folder",
+            "not uploaded to Steam Cloud",
+            "official Steam client",
+            "on this PC, does not see them",
+            "two different versions",
+        ] {
+            assert!(SHIM_MODE_NOTICE.contains(part), "{part}");
+        }
+        assert!(!SHIM_MODE_NOTICE.contains("  "), "{SHIM_MODE_NOTICE}");
     }
 
     #[test]

@@ -158,7 +158,9 @@ response types are in steam-vent-proto-steam
   - otherwise (both changed, or no base and L ≠ C): a **true conflict**.
     Nothing at all is written and the launch is answered with
     `Response::CloudConflict { app_id, files }` (IPC 1.13): name, SHA-1,
-    size and time of both versions, and whether a base was known. The
+    size and time of both versions, and whether a base was known.
+    Frontends older than 1.13 cannot answer it and get `Response::Error`
+    instead (`for_client` in `apps/rebornd/src/server.rs`). The
     frontend asks the user and sends the launch again with
     `cloud_choice { choice, files }`: `local` or `cloud`, and the
     conflicts the user was shown (name and both SHA-1s). The answer

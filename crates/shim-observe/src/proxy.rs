@@ -67,10 +67,24 @@
 //! and only when the call is logged, the proxy compares the official
 //! client's result with Reborn's own answer and logs match or mismatch.
 //! The game always gets the official client's result. For account data
-//! (ADR 0055: today `BIsSubscribed`, and the stats result in callback
-//! 0x44d) Reborn's answer comes from `rebornd`'s read-only shadow session,
-//! asked on a worker thread after the call returned, and the log says only
-//! match or mismatch.
+//! (ADR 0055: `BIsSubscribed`, the stats result in callback 0x44d, and
+//! the cloud reads `GetFileSize` and `FileRead`) Reborn's answer comes from
+//! `rebornd`'s read-only shadow session, asked on a worker thread after the
+//! call returned, and the log says only match or mismatch (or why there is
+//! no comparison).
+//!
+//! For the shadowed calls (`Shadow::is_account_data`) the call line shows
+//! neither `r9` (for `FileRead` it is the size `GetFileSize` answered) nor
+//! any register text (the file name at `rdx`, old buffer contents at
+//! `r8`), and the return line hides `rax`. For the cloud reads the file
+//! name the game passed in `rdx` is copied when the call starts (at most
+//! 1024 bytes, `VirtualQuery`-checked) and sent only to `rebornd`. For
+//! `FileRead` the proxy reads, after the return, the bytes the official
+//! client wrote into the game's buffer (the address in `r8`): exactly the
+//! result's count, never more than the size in `r9` or 16 MiB, only if
+//! `VirtualQuery` shows the whole range readable, copied in 64 KiB pieces
+//! into the SHA-1 (ADR 0055: "compared by size and SHA-1 only"); only the
+//! count and the hash are kept.
 //!
 //! Persona name (ADR 0056, decision 2): for `SteamFriends017` position 0
 //! (`GetPersonaName` or `ClearRichPresence`) the proxy reads the text the
@@ -229,7 +243,45 @@ enum Shadow {
     /// apart. The text is account data: never logged, and the call line
     /// shows no register texts.
     PersonaName,
+    /// `GetFileSize(name)`: the size `rebornd` reads for the name in its
+    /// shadow folder (ADR 0055, stage 1), compared with the low 32 bits of
+    /// the result. Asked like [`Shadow::Subscribed`].
+    FileSize,
+    /// `FileRead(name, buffer, size)`: the bytes `rebornd` reads for the
+    /// name in its shadow folder (at most `size`), compared by count and
+    /// SHA-1 with what the official client wrote into the game's buffer.
+    /// Asked like [`Shadow::Subscribed`].
+    FileRead,
 }
+
+impl Shadow {
+    /// Whether the call's arguments and result are account data, compared
+    /// through `rebornd` and kept out of the log (ADR 0055: "The log says
+    /// only `shadow match` or `shadow mismatch`").
+    fn is_account_data(self) -> bool {
+        matches!(
+            self,
+            Shadow::Subscribed | Shadow::FileSize | Shadow::FileRead
+        )
+    }
+
+    /// Whether the call passes a cloud file name in `rdx`.
+    fn takes_file_name(self) -> bool {
+        matches!(self, Shadow::FileSize | Shadow::FileRead)
+    }
+}
+
+/// Longest cloud file name copied for a shadow comparison, in bytes; the
+/// bound `rebornd` accepts (`reborn_core::run_cloud::MAX_NAME`).
+const MAX_NAME: usize = 1024;
+
+/// Most bytes of the game's buffer hashed after an official `FileRead`:
+/// the largest file `rebornd` hands out (`reborn_core::run_cloud::MAX_FILE`,
+/// ADR 0055: "at most 16 MiB").
+const MAX_SHADOW_READ: usize = 16 * 1024 * 1024;
+
+/// Bytes copied at a time from the game's buffer into the hash.
+const HASH_CHUNK: usize = 64 * 1024;
 
 /// The calls ADR 0046 compares in shadow mode: interface version text,
 /// position, Reborn's answer. Only confirmed meanings
@@ -255,6 +307,21 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     // a shadow comparison tell them apart. Not a confirmed meaning yet: the
     // comparison is the experiment.
     ("SteamFriends017", 0, Shadow::PersonaName),
+    // `docs/shim/meanings.md`: confirmed `GetFileSize` (position 15) and
+    // `FileRead` (position 1), experiment 1; Reborn's answer from
+    // `rebornd`'s shadow folder (ADR 0055, stage 1). `FileWrite` (position
+    // 0) is never shadowed: writes go straight to answer mode in shim mode
+    // (ADR 0055, stage 3).
+    (
+        "STEAMREMOTESTORAGE_INTERFACE_VERSION014",
+        15,
+        Shadow::FileSize,
+    ),
+    (
+        "STEAMREMOTESTORAGE_INTERFACE_VERSION014",
+        1,
+        Shadow::FileRead,
+    ),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -298,9 +365,9 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
         Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
         // Not in ANSWERS yet: shadow mode first (ADR 0046).
         Shadow::BatteryPower => None,
-        // Ownership and the persona name are never answered by the proxy
-        // (ADR 0046, 0055, 0056).
-        Shadow::Subscribed | Shadow::PersonaName => None,
+        // Ownership, the persona name and cloud files are never answered
+        // by the proxy (ADR 0046, 0055, 0056).
+        Shadow::Subscribed | Shadow::PersonaName | Shadow::FileSize | Shadow::FileRead => None,
     }
 }
 
@@ -320,6 +387,26 @@ enum Official {
     /// `SteamFriends017` position 0: the SHA-256 of the text the result
     /// pointed to, or why there was none (ADR 0056). Never the text.
     PersonaName(Result<reborn_shim_protocol::NameDigest, &'static str>),
+    /// `GetFileSize`: the game's file name and the official result.
+    FileSize { name: String, rax: u64 },
+    /// `FileRead`: the game's file name, its buffer size and what the
+    /// official client wrote into the buffer (count and SHA-1 only).
+    FileRead {
+        name: String,
+        max: u32,
+        read: crate::daemon::OfficialRead,
+    },
+}
+
+/// The arguments of a cloud read, copied when the call starts: the file
+/// name at `rdx` (`None` if it was not readable), the buffer address in
+/// `r8` and the size in `r9` (only `FileRead` uses them; the size is a
+/// 32-bit value, the low half of `r9`, as the result is of `rax`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CloudArgs {
+    name: Option<String>,
+    buffer: u64,
+    size: u32,
 }
 
 /// Callback number of `UserStatsReceived_t` (`docs/shim/meanings.md`,
@@ -370,10 +457,12 @@ fn ask(prefix: String, official: Official) {
 /// The worker: one shadow session with `rebornd` for this process, for the
 /// app given to `arm` only; one `AppOwnership` per `BIsSubscribed`, one
 /// `RequestStats` per 0x44d, one `ComparePersonaName` per
-/// `SteamFriends017` position 0.
+/// `SteamFriends017` position 0, one `CloudFileSize` or `CloudRead` per
+/// cloud read, all on the same link and queue.
 fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
     use crate::daemon::{
-        compare_persona_name, compare_stats_received, compare_subscribed, connect_with_waits,
+        compare_file_read, compare_file_size, compare_persona_name, compare_stats_received,
+        compare_subscribed, connect_with_waits,
     };
     let mut link = crate::daemon::ShadowLink::default();
     let pid = std::process::id();
@@ -394,9 +483,130 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
                 }),
                 Err(why) => compare_persona_name(Err(why), || Err("not asked".to_owned())),
             },
+            (Some(app_id), Official::FileSize { name, rax }) => {
+                compare_file_size(rax, link.file_size(pid, app_id, connect_with_waits, &name))
+            }
+            (Some(app_id), Official::FileRead { name, max, read }) => compare_file_read(
+                read,
+                link.file_read(pid, app_id, connect_with_waits, &name, max),
+            ),
         };
         log(&format!("{} {note}", ask.prefix));
     }
+}
+
+/// The comparison for a cloud read that returned `rax` (ADR 0055, stage
+/// 1), or why there is none. For `FileRead` the official client's bytes
+/// are hashed here, on the game's thread right after the return; only
+/// their count and SHA-1 are kept.
+fn cloud_official(shadow: Shadow, rax: u64, args: &CloudArgs) -> Result<Official, &'static str> {
+    let name = args.name.clone().ok_or("file name not readable")?;
+    match shadow {
+        Shadow::FileSize => Ok(Official::FileSize { name, rax }),
+        Shadow::FileRead => Ok(Official::FileRead {
+            name,
+            max: args.size,
+            read: official_read(rax, args)?,
+        }),
+        _ => Err("not a cloud read"),
+    }
+}
+
+/// What the official `FileRead` wrote into the game's buffer: its result
+/// (the low 32 bits of `rax`, a byte count, `docs/shim/meanings.md`
+/// experiment 1) and the SHA-1 of that many bytes at the buffer address.
+/// Refused when the count is negative, larger than the buffer size the
+/// game passed or than [`MAX_SHADOW_READ`], or the range is not readable.
+/// The bytes are copied [`HASH_CHUNK`] at a time into the hash, never all
+/// at once. This runs on the game's thread before `FileRead` returns to
+/// the game: SHA-1 in software hashes several hundred MB a second, so the
+/// recorded 44875-byte save costs well under a millisecond, and the
+/// 16 MiB bound some tens of milliseconds at worst (once, at load).
+fn official_read(rax: u64, args: &CloudArgs) -> Result<crate::daemon::OfficialRead, &'static str> {
+    use sha1::{Digest, Sha1};
+    let count = rax as u32 as i32;
+    let len = usize::try_from(count).map_err(|_| "official result negative")?;
+    if len > args.size as usize {
+        return Err("official result larger than the buffer");
+    }
+    if len > MAX_SHADOW_READ {
+        return Err("official result larger than 16 MiB");
+    }
+    if len > 0 && !range_readable(args.buffer, len) {
+        return Err("buffer not readable");
+    }
+    let mut hasher = Sha1::new();
+    let mut chunk = vec![0u8; len.min(HASH_CHUNK)];
+    let mut done = 0;
+    while done < len {
+        let take = (len - done).min(HASH_CHUNK);
+        let start = (args.buffer as usize) + done;
+        // SAFETY: `range_readable` checked just now that the whole range
+        // `buffer..buffer + len` lies in committed, readable regions; this
+        // piece is inside it and `chunk` has room for `take` bytes. No
+        // reference to the game's memory is made. As in `bytes_in`, the
+        // memory is assumed not to be freed during the copy (the game's
+        // call has returned and the game is still in our return stub).
+        unsafe {
+            std::ptr::copy_nonoverlapping(start as *const u8, chunk.as_mut_ptr(), take);
+        }
+        hasher.update(&chunk[..take]);
+        done += take;
+    }
+    Ok(crate::daemon::OfficialRead {
+        len,
+        sha1: hasher.finalize().into(),
+    })
+}
+
+/// Whether the `len` bytes at `address` all lie in committed, readable
+/// memory, region after region (`VirtualQuery`, as in [`readable_end`]).
+fn range_readable(address: u64, len: usize) -> bool {
+    if address < 0x1_0000 {
+        return false;
+    }
+    let Ok(start) = usize::try_from(address) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(len) else {
+        return false;
+    };
+    let mut at = start;
+    while at < end {
+        match readable_end(at) {
+            Some(region_end) if region_end > at => at = region_end,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// The cloud file name at `address`: 1 to [`MAX_NAME`] bytes of UTF-8
+/// followed by a NUL, all within one readable memory region (checked with
+/// `VirtualQuery`, as in [`ascii_at`]).
+fn name_at(address: u64) -> Option<String> {
+    if address < 0x1_0000 {
+        return None;
+    }
+    let start = usize::try_from(address).ok()?;
+    let end = readable_end(start)?;
+    let mut name = Vec::new();
+    for offset in 0..=MAX_NAME {
+        let at = start.checked_add(offset)?;
+        if at >= end {
+            return None;
+        }
+        // SAFETY: `at` lies inside a committed, readable region that
+        // `readable_end` just checked.
+        let byte = unsafe { std::ptr::read_volatile(at as *const u8) };
+        if byte == 0 {
+            return (!name.is_empty())
+                .then(|| String::from_utf8(name).ok())
+                .flatten();
+        }
+        name.push(byte);
+    }
+    None
 }
 
 /// The compared fields of callback 0x44d, if the callback `Steam_BGetCallback`
@@ -491,16 +701,19 @@ fn c_text_at(address: u64, max: usize) -> Option<Wiped> {
 }
 
 /// Whether the call's argument texts stay out of the log: for the persona
-/// name comparison a leftover register could point to the name (ADR 0056).
+/// name comparison a leftover register could point to the name (ADR 0056);
+/// for the account-data shadows (ownership, cloud reads, ADR 0055) the file
+/// name and old buffer contents.
 fn hides_texts(interface: &str, slot: usize) -> bool {
-    shadow_for(interface, slot) == Some(Shadow::PersonaName)
+    shadow_for(interface, slot)
+        .is_some_and(|shadow| shadow == Shadow::PersonaName || shadow.is_account_data())
 }
 
 /// The result part of a return line: `rax` as a number, except for an
-/// ownership shadow (account data). For the persona name comparison `rax`
+/// ownership or cloud read shadow (account data, [`Shadow::is_account_data`]). For the persona name comparison `rax`
 /// is an address, never the text it points to.
 fn result_note(rax: u64, shadow: Option<Shadow>) -> String {
-    if shadow == Some(Shadow::Subscribed) {
+    if shadow.is_some_and(Shadow::is_account_data) {
         "rax hidden (account data)".to_owned()
     } else {
         format!("rax=0x{rax:x}")
@@ -613,6 +826,9 @@ struct Pending {
     /// For a call in [`SHADOWS`] that is logged: Reborn's answer to compare
     /// when it returns (ADR 0046).
     shadow: Option<Shadow>,
+    /// For a shadowed cloud read: its arguments as the call started
+    /// (ADR 0055, stage 1).
+    cloud: Option<CloudArgs>,
 }
 
 /// A read to do when a listed call returns (step 4c, ADR 0043).
@@ -759,6 +975,7 @@ extern "C" fn observe_call(
                 outputs,
                 after: None,
                 shadow: None,
+                cloud: None,
             });
         });
         targets()[index]
@@ -834,6 +1051,15 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 Shadow::PersonaName => {
                     ask(prefix, Official::PersonaName(text_digest_at(rax)));
                 }
+                // ADR 0055, stage 1: the cloud reads, from `rebornd`'s
+                // shadow folder.
+                Shadow::FileSize | Shadow::FileRead => {
+                    let args = call.cloud.as_ref().ok_or("no arguments");
+                    match args.and_then(|args| cloud_official(shadow, rax, args)) {
+                        Ok(official) => ask(prefix, official),
+                        Err(why) => log(&format!("{prefix} shadow: skipped, {why}")),
+                    }
+                }
                 _ => log(&format!(
                     "{prefix} {}",
                     describe_shadow(rax, shadow, given_app_id())
@@ -904,6 +1130,9 @@ extern "C" fn observe_method(
         } else {
             "rcx did not hold the stand-in, left as it was"
         };
+        // A shadowed account-data call (ADR 0055): no register text and no
+        // `r9` in the log, and no text kept as a stand-in name.
+        let hidden = shadow_for(&info.name, slot).is_some_and(Shadow::is_account_data);
         // Texts are looked for before swapping, in the registers the
         // object is not in (step 3c); never for the persona name call.
         let hide_texts = hides_texts(&info.name, slot);
@@ -920,6 +1149,15 @@ extern "C" fn observe_method(
         // Step 4c: the registers as the call started, before any swap.
         let after = logged.then(|| after_for(&info.name, slot, saved)).flatten();
         let shadow = logged.then(|| shadow_for(&info.name, slot)).flatten();
+        // ADR 0055, stage 1: a cloud read's arguments, copied before the
+        // official client runs.
+        let cloud = shadow
+            .filter(|shadow| shadow.takes_file_name())
+            .map(|_| CloudArgs {
+                name: name_at(saved.rdx),
+                buffer: saved.r8,
+                size: saved.r9 as u32,
+            });
         let swapped = swap_stand_ins(saved, false);
         if logged {
             let beyond = if slot >= info.counted {
@@ -932,7 +1170,11 @@ extern "C" fn observe_method(
                 elapsed_ms(),
                 std::thread::current().id(),
                 kind_name(Kind::Method { object, slot }),
-                describe_registers(saved, !hide_texts)
+                if hidden {
+                    describe_registers_hidden(saved)
+                } else {
+                    describe_registers(saved, !hide_texts)
+                }
             ));
         }
         let Some(target) = info
@@ -952,7 +1194,11 @@ extern "C" fn observe_method(
             .get_or_init(|| own_dir().is_some_and(|dir| dir.join(READ_ONLY_MARKER).exists()));
         let answered = (!read_only).then(|| answer_for(&info.name, slot)).flatten();
         let target = answered.unwrap_or(target);
-        let shadow = if answered.is_some() { None } else { shadow };
+        let (shadow, cloud) = if answered.is_some() {
+            (None, None)
+        } else {
+            (shadow, cloud)
+        };
         if answered.is_some() && logged {
             log(&format!(
                 "{} ms {:?} {} call {call} answered by Reborn, not forwarded",
@@ -972,6 +1218,7 @@ extern "C" fn observe_method(
                 outputs: None,
                 after,
                 shadow,
+                cloud,
             });
         });
         target
@@ -1098,6 +1345,21 @@ fn should_log(call: u64) -> bool {
 
 fn elapsed_ms() -> u128 {
     START.get_or_init(Instant::now).elapsed().as_millis()
+}
+
+/// The argument registers of a shadowed account-data call (ADR 0055):
+/// `rcx`, `rdx` and `r8` as raw values (addresses), `r9` hidden (for
+/// `FileRead` it is the size `GetFileSize` answered) and no register text
+/// (the file name at `rdx`, old buffer contents at `r8`).
+fn describe_registers_hidden(saved: &Saved) -> String {
+    let mut line = format!(
+        "rcx=0x{:x} rdx=0x{:x} r8=0x{:x} r9 hidden (account data)",
+        saved.rcx, saved.rdx, saved.r8
+    );
+    for (number, xmm) in saved.xmm.iter().enumerate() {
+        let _ = write!(line, " xmm{number}=0x{:x}", xmm[0]);
+    }
+    line
 }
 
 /// The argument registers as raw values, plus (with `texts`) text where an
@@ -1292,7 +1554,9 @@ fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
         }
         // Needs `rebornd`'s answer: compared by the worker thread
         // (`ask`), never here.
-        Shadow::Subscribed | Shadow::PersonaName => "shadow: asked rebornd".to_owned(),
+        Shadow::Subscribed | Shadow::PersonaName | Shadow::FileSize | Shadow::FileRead => {
+            "shadow: asked rebornd".to_owned()
+        }
     }
 }
 
@@ -1863,6 +2127,7 @@ mod tests {
             outputs: None,
             after: None,
             shadow: None,
+            cloud: None,
         }
     }
 
@@ -2114,6 +2379,134 @@ mod tests {
         );
         // SAFETY: releases the allocation made above; nothing uses it later.
         assert_ne!(unsafe { VirtualFree(page, 0, MEM_RELEASE) }, 0);
+    }
+
+    #[test]
+    fn cloud_reads_are_shadowed_and_never_answered() {
+        let remote = "STEAMREMOTESTORAGE_INTERFACE_VERSION014";
+        assert_eq!(shadow_for(remote, 15), Some(Shadow::FileSize));
+        assert_eq!(shadow_for(remote, 1), Some(Shadow::FileRead));
+        // Writes are never shadowed (ADR 0055); position 13 is a candidate.
+        assert_eq!(shadow_for(remote, 0), None);
+        assert_eq!(shadow_for(remote, 13), None);
+        assert_eq!(
+            shadow_for("STEAMREMOTESTORAGE_INTERFACE_VERSION016", 15),
+            None
+        );
+        assert_eq!(answer_for(remote, 15), None);
+        assert_eq!(answer_for(remote, 1), None);
+        assert!(Shadow::FileSize.is_account_data() && Shadow::FileRead.is_account_data());
+        assert!(!Shadow::AppId.is_account_data());
+        assert!(Shadow::FileRead.takes_file_name() && !Shadow::Subscribed.takes_file_name());
+    }
+
+    #[test]
+    fn account_data_calls_log_no_text_and_no_r9() {
+        let name = c"MainPlayerData.json";
+        let registers = saved(name.as_ptr() as u64, name.as_ptr() as u64, 0xaf4b);
+        let shown = describe_registers(&registers, true);
+        assert!(shown.contains("MainPlayerData") && shown.contains("r9=0xaf4b"));
+        let hidden = describe_registers_hidden(&registers);
+        assert!(!hidden.contains("MainPlayerData"), "{hidden}");
+        assert!(
+            !hidden.contains("af4b") && !hidden.contains("44875"),
+            "{hidden}"
+        );
+        assert!(hidden.contains("r9 hidden (account data)"), "{hidden}");
+    }
+
+    #[test]
+    fn reads_cloud_file_names_up_to_the_bound() {
+        let name = c"MainPlayerData.json";
+        assert_eq!(
+            name_at(name.as_ptr() as u64).as_deref(),
+            Some("MainPlayerData.json")
+        );
+        assert_eq!(name_at(c"".as_ptr() as u64), None, "empty");
+        assert_eq!(name_at(c"\xff\xfe".as_ptr() as u64), None, "not UTF-8");
+        let mut long = vec![b'a'; MAX_NAME];
+        long.push(0);
+        assert_eq!(
+            name_at(long.as_ptr() as u64).map(|n| n.len()),
+            Some(MAX_NAME)
+        );
+        let too_long = [b'a'; MAX_NAME + 8];
+        assert_eq!(name_at(too_long.as_ptr() as u64), None, "too long");
+        assert_eq!(name_at(0x10), None);
+        assert_eq!(name_at(0x7fff_ffff_0000), None, "not mapped");
+    }
+
+    #[test]
+    fn a_file_read_keeps_only_count_and_sha1_of_the_official_bytes() {
+        let buffer = *b"{\"level\":3}....";
+        let args = |size| CloudArgs {
+            name: Some("MainPlayerData.json".to_owned()),
+            buffer: buffer.as_ptr() as u64,
+            size,
+        };
+        // The official client read 11 bytes into a 16-byte buffer.
+        let official = official_read(11, &args(16)).unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(official.len, 11);
+        assert_eq!(official.sha1, crate::daemon::sha1_of(&buffer[..11]));
+        // The result's low 32 bits are the count.
+        assert_eq!(
+            official_read(0xffff_ffff_0000_000b, &args(16)).map(|read| read.len),
+            Ok(11)
+        );
+        assert_eq!(official_read(0, &args(16)).map(|read| read.len), Ok(0));
+        assert_eq!(
+            official_read(0xffff_ffff, &args(16)),
+            Err("official result negative")
+        );
+        assert_eq!(
+            official_read(17, &args(16)),
+            Err("official result larger than the buffer")
+        );
+        let unreadable = CloudArgs {
+            buffer: 0x7fff_ffff_0000,
+            ..args(16)
+        };
+        assert_eq!(official_read(4, &unreadable), Err("buffer not readable"));
+
+        // The asks carry the game's name and buffer size.
+        let Ok(Official::FileRead { name, max, read }) =
+            cloud_official(Shadow::FileRead, 11, &args(16))
+        else {
+            panic!("no FileRead ask");
+        };
+        assert_eq!(
+            (name.as_str(), max, read),
+            ("MainPlayerData.json", 16, official)
+        );
+        assert!(matches!(
+            cloud_official(Shadow::FileSize, 44_875, &args(16)),
+            Ok(Official::FileSize { rax: 44_875, .. })
+        ));
+        let nameless = CloudArgs {
+            name: None,
+            ..args(16)
+        };
+        assert!(matches!(
+            cloud_official(Shadow::FileSize, 1, &nameless),
+            Err("file name not readable")
+        ));
+    }
+
+    #[test]
+    fn a_large_file_read_is_hashed_in_pieces() {
+        // More than three pieces, with a short last one.
+        let buffer: Vec<u8> = (0..HASH_CHUNK * 3 + 123).map(|i| (i % 251) as u8).collect();
+        let args = CloudArgs {
+            name: Some("big.sav".to_owned()),
+            buffer: buffer.as_ptr() as u64,
+            size: buffer.len() as u32,
+        };
+        let read = official_read(buffer.len() as u64, &args).unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(read.len, buffer.len());
+        assert_eq!(read.sha1, crate::daemon::sha1_of(&buffer));
+        assert!(range_readable(buffer.as_ptr() as u64, buffer.len()));
+        assert!(!range_readable(0x10, 4));
+        assert!(!range_readable(u64::MAX - 2, 8));
     }
 
     #[test]

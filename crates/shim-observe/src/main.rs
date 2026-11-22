@@ -122,7 +122,7 @@ fn run(command: Command) -> Result<()> {
 
 /// Registers the shadow session for `app` with `rebornd` (ADR 0055); what
 /// to tell the user. A failure leaves the session armed: the proxy then
-/// logs that it has no Reborn answer for ownership.
+/// logs that it has no Reborn answer for ownership and cloud reads.
 #[cfg(windows)]
 fn register_shadow(app: u32) -> String {
     use reborn_shim_observe::daemon::{connect, reason_name};
@@ -146,11 +146,13 @@ fn register_shadow(app: u32) -> String {
                 | UnavailableReason::NotReceived => "",
             };
             format!(
-                "rebornd refused the shadow session ({}); ownership is not compared.{advice}",
+                "rebornd refused the shadow session ({}); ownership and cloud reads are not compared.{advice}",
                 reason_name(reason)
             )
         }
-        Err(error) => format!("No shadow session ({error}); ownership is not compared."),
+        Err(error) => {
+            format!("No shadow session ({error}); ownership and cloud reads are not compared.")
+        }
     }
 }
 

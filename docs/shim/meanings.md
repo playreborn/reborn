@@ -53,6 +53,51 @@ are linked, not copied. The shim implements only confirmed meanings.
   take only a file name return true or false, a platform bit field, a
   timestamp or a handle; 44875 used as a buffer size fits a size best.
 
+### Shadow mode for positions 15 and 1 (ADR 0055 stage 1; planned, not run)
+
+Added 2026-11-22; no live run yet.
+
+- **What:** the proxy's `SHADOWS` lists position 15 as
+  `Shadow::FileSize` and position 1 as `Shadow::FileRead`. When the call
+  starts, the proxy copies the file name at `rdx` (at most 1024 bytes of
+  UTF-8, `VirtualQuery`-checked) and, for position 1, the buffer address
+  in `r8` and the size in `r9`. After the official call returns, a worker
+  thread asks `rebornd`'s read-only shadow session `CloudFileSize { name
+  }` or `CloudRead { name, max: r9 }`. `rebornd` answers from the
+  session's separate **shadow folder**
+  (`<Reborn data>/shadow-cloud/<account>/<app>/`), which it filled once
+  when `arm` registered the app: one app info, one cloud listing and one
+  SHA-1-checked download per file a game can read through the API (at
+  most 64 files and 64 MiB; at most one fill a minute, one at a time;
+  `reborn_core::shadow_cloud`, `docs/protocol/cloud.md`). Nothing is
+  written in the official client's folders or the cloud.
+- **Compared:** position 15: the low 32 bits of `rax` with Reborn's size.
+  Position 1, by size and SHA-1 only (ADR 0055): the official result (a
+  byte count, at most the low 32 bits of `r9` and 16 MiB) and the SHA-1
+  of that many bytes at `r8`, hashed on the game's thread right after the
+  return in 64 KiB pieces and only if `VirtualQuery` shows the whole range
+  readable, with the count and SHA-1 of
+  Reborn's bytes. A file Reborn does not have is not compared (the
+  official answer for a missing file is not recorded).
+- **Logged:** only `shadow match`, `shadow mismatch`, `shadow: no Reborn
+  answer (<reason>)` or `shadow: skipped, <reason>`. No file names and no
+  sizes: the call line shows `rcx`, `rdx` and `r8` as raw addresses, says
+  `r9 hidden (account data)` and shows no register text (no file name at
+  `rdx`, no old buffer contents at `r8`); the return line says `rax
+  hidden (account data)`; the shadow line never carries the file name, a
+  size or contents. The same holds for `BIsSubscribed`. The game always
+  gets the official client's result;
+  neither position is in `ANSWERS`. Position 0 (`FileWrite`) is never
+  shadowed (ADR 0055: writes go to answer mode in stage 3).
+- **Prediction for a live run** (Cave Crawlers, 2143030, which calls 15
+  then 1 with `MainPlayerData.json` at start): `rebornd` signed in to the
+  test account, the official client running; `reborn-observe arm --app
+  2143030`; `rebornd`'s log says the shadow folder was filled (2 written);
+  both positions log `shadow match`. A mismatch is expected if the
+  official client's local file differs from the cloud version at arm
+  time (for example a save not yet uploaded); it is then noted here, not
+  explained away.
+
 ### Position 13: candidates `FileExists`, `FilePersisted`, `FileForget`
 
 - **Recorded:** once at start, first of the five: `rdx` pointed to

@@ -20,10 +20,15 @@
 //!   not needed for `BIsSubscribed`, so DLC get `NotAllowed` like any
 //!   other app until a shadow for position 7 needs them.
 //! - **Reads only.** A shadow session gets `AppOwnership`,
-//!   `RequestStats` and `ComparePersonaName` (only `matches`, ADR 0056);
-//!   every write is refused (`shim_server`). Cloud reads
-//!   (`CloudFileSize`, `CloudRead`) get `NotAllowed` until the separate
-//!   shadow folder of ADR 0055 exists (stage 1).
+//!   `RequestStats`, `ComparePersonaName` (only `matches`, ADR 0056) and
+//!   the cloud reads `CloudFileSize` and `CloudRead`; every write is
+//!   refused (`shim_server`). Cloud reads are answered from the
+//!   registration's separate **shadow folder** (ADR 0055: "`CloudRead`
+//!   against a separate shadow folder"; `reborn_core::shadow_cloud`),
+//!   filled from Valve's cloud once, when the app is registered; never
+//!   from the official client's folders or a shim-mode run's folder.
+//!   Without a shadow folder (an app without a cloud quota, or the fill
+//!   failed) cloud reads get `NotAllowed`.
 //! - **Any logoff stops the stage.** When the Valve session ends in any
 //!   way (a logoff or kick, a lost connection, a sign-out), every shadow
 //!   session and the registration are dropped and later requests get
@@ -34,6 +39,9 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use reborn_core::run_cloud::RunCloud;
 
 use crate::shim_server::{RunOwnership, ShimRun};
 use crate::shim_stats::RunStats;
@@ -43,6 +51,8 @@ use crate::shim_stats::RunStats;
 struct Registration {
     app_id: u32,
     ownership: Arc<RunOwnership>,
+    /// The shadow folder for cloud reads, if the app has one.
+    cloud: Option<Arc<RunCloud>>,
 }
 
 #[derive(Debug, Default)]
@@ -61,6 +71,54 @@ pub struct ShadowSessions {
     inner: Mutex<Inner>,
 }
 
+/// Shortest time between the starts of two shadow cloud fills (red line
+/// 8): ADR 0052's one minute between game starts, so a real shadow run is
+/// never held back, while a local client sending `RegisterShadow` in a
+/// loop reaches Valve at most once a minute.
+pub const FILL_COOLDOWN: Duration = Duration::from_secs(60);
+
+/// What [`FillGate::run`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Gated<T> {
+    /// The fill ran to its end.
+    Ran(T),
+    /// The fill took longer than its limit and was dropped.
+    TimedOut,
+    /// Another fill started less than the cooldown ago; nothing ran.
+    Cooldown,
+}
+
+/// Runs shadow cloud fills one at a time, at most one per cooldown,
+/// whatever the account or app (ADR 0055: requests "bounded per run"; red
+/// line 8). A fill that failed or timed out counts too, so errors are not
+/// retried in a loop either.
+#[derive(Debug, Default)]
+pub struct FillGate {
+    /// When the last fill started; the lock makes fills take turns.
+    last: tokio::sync::Mutex<Option<Instant>>,
+}
+
+impl FillGate {
+    /// Runs `fill` unless one started less than `cooldown` ago, waiting
+    /// for a running one first; drops it after `limit`.
+    pub async fn run<T>(
+        &self,
+        cooldown: Duration,
+        limit: Duration,
+        fill: impl Future<Output = T>,
+    ) -> Gated<T> {
+        let mut last = self.last.lock().await;
+        if last.is_some_and(|started| started.elapsed() < cooldown) {
+            return Gated::Cooldown;
+        }
+        *last = Some(Instant::now());
+        match tokio::time::timeout(limit, fill).await {
+            Ok(done) => Gated::Ran(done),
+            Err(_) => Gated::TimedOut,
+        }
+    }
+}
+
 impl ShadowSessions {
     fn inner(&self) -> MutexGuard<'_, Inner> {
         self.inner
@@ -70,10 +128,26 @@ impl ShadowSessions {
 
     /// Registers `app_id` with the account's owned apps, replacing an
     /// unclaimed registration.
+    #[cfg(test)]
     pub fn register(&self, app_id: u32, ownership: RunOwnership) {
+        self.register_with_cloud(app_id, ownership, None);
+    }
+
+    /// Registers `app_id` with the account's owned apps (replacing an
+    /// unclaimed registration) and the shadow folder `cloud` for cloud reads
+    /// (ADR 0055, stage 1). Only a shadow folder is taken
+    /// ([`RunCloud::is_shadow`]); any other folder is dropped, so a shadow
+    /// session never reads a shim-mode run's saves.
+    pub fn register_with_cloud(
+        &self,
+        app_id: u32,
+        ownership: RunOwnership,
+        cloud: Option<Arc<RunCloud>>,
+    ) {
         self.inner().registration = Some(Registration {
             app_id,
             ownership: Arc::new(ownership),
+            cloud: cloud.filter(|cloud| cloud.is_shadow()),
         });
     }
 
@@ -100,8 +174,7 @@ impl ShadowSessions {
             app_id,
             ownership: Some(registration.ownership),
             stats: Some(Arc::new(RunStats::default())),
-            // The shadow folder for cloud reads comes with stage 1.
-            cloud: None,
+            cloud: registration.cloud,
             shadow: true,
         };
         inner.last_token += 1;
@@ -209,6 +282,82 @@ mod tests {
         assert!(shadows.claim(10, DARK_DECEPTION).is_none());
         // The registration stays open for another process.
         assert!(shadows.claim(12, DARK_DECEPTION).is_some());
+    }
+
+    #[test]
+    fn a_claim_gets_the_shadow_folder_and_never_a_runs_folder() {
+        let shadows = ShadowSessions::default();
+        let data = std::path::Path::new("data");
+        let shadow = Arc::new(RunCloud::shadow(data, 1, DARK_DECEPTION, 10));
+        shadows.register_with_cloud(DARK_DECEPTION, owned(&[]), Some(Arc::clone(&shadow)));
+        let (_, run) = shadows
+            .claim(10, DARK_DECEPTION)
+            .unwrap_or_else(|| panic!("not claimed"));
+        assert_eq!(run.cloud, Some(shadow));
+        // A shim-mode run's folder is not a shadow folder: dropped.
+        let run_folder = Arc::new(RunCloud::new(data, 1, DARK_DECEPTION, 10));
+        shadows.register_with_cloud(DARK_DECEPTION, owned(&[]), Some(run_folder));
+        let (_, run) = shadows
+            .claim(11, DARK_DECEPTION)
+            .unwrap_or_else(|| panic!("not claimed"));
+        assert_eq!(run.cloud, None);
+    }
+
+    #[tokio::test]
+    async fn fills_take_turns_once_per_cooldown() {
+        let gate = FillGate::default();
+        let long = Duration::from_secs(60);
+        assert_eq!(gate.run(long, long, async { 1 }).await, Gated::Ran(1));
+        // Within the cooldown nothing runs, whatever the app.
+        let polled = std::sync::atomic::AtomicBool::new(false);
+        let second = gate
+            .run(long, long, async {
+                polled.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+            .await;
+        assert_eq!(second, Gated::Cooldown);
+        assert!(!polled.load(std::sync::atomic::Ordering::SeqCst));
+        // Without a cooldown it runs again; a slow fill is dropped.
+        let none = Duration::ZERO;
+        let slow = gate
+            .run(
+                none,
+                Duration::from_millis(20),
+                std::future::pending::<()>(),
+            )
+            .await;
+        assert_eq!(slow, Gated::TimedOut);
+        // A timed-out fill counts for the cooldown too.
+        assert_eq!(gate.run(long, long, async { 2 }).await, Gated::Cooldown);
+    }
+
+    #[tokio::test]
+    async fn concurrent_fills_wait_for_each_other() {
+        let gate = Arc::new(FillGate::default());
+        let long = Duration::from_secs(60);
+        let (started, wait) = tokio::sync::oneshot::channel::<()>();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let first = tokio::spawn({
+            let gate = Arc::clone(&gate);
+            async move {
+                gate.run(long, long, async move {
+                    let _ = started.send(());
+                    let _ = released.await;
+                    "first"
+                })
+                .await
+            }
+        });
+        let _ = wait.await;
+        let second = tokio::spawn({
+            let gate = Arc::clone(&gate);
+            async move { gate.run(long, long, async { "second" }).await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!second.is_finished(), "waits for the running fill");
+        let _ = release.send(());
+        assert_eq!(first.await.ok(), Some(Gated::Ran("first")));
+        assert_eq!(second.await.ok(), Some(Gated::Cooldown));
     }
 
     #[test]

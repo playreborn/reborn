@@ -32,9 +32,10 @@
 //! app's quota (at most 16 MiB), and `NotAllowed` for an unsafe name (a
 //! path that could leave the folder, an absolute path, a root token), a
 //! symlink, a folder, a read error, a run without shim mode, an app
-//! without a quota, and shadow sessions (their separate shadow folder
-//! comes with stage 1). Nothing is written. File names and contents are
-//! never logged.
+//! without a quota, and a shadow session without a shadow folder. A
+//! shadow session reads only its separate shadow folder (ADR 0055, stage
+//! 1; `shim_shadow`, `reborn_core::shadow_cloud`). Nothing is written.
+//! File names and contents are never logged.
 //!
 //! Shadow sessions (ADR 0055, amending ADR 0047; `shim_shadow`): a
 //! connection without a session may send `RegisterShadow { app_id }`
@@ -44,7 +45,8 @@
 //! connection is bound to that process as a shadow session, for good:
 //! it never becomes a launched run's session, and a launched process never
 //! gets a shadow session. A shadow session is answered like a shim-mode run
-//! for reads (`AppOwnership`, `RequestStats`), and every write is refused
+//! for reads (`AppOwnership`, `RequestStats`, `CloudFileSize` and
+//! `CloudRead` from its shadow folder), and every write is refused
 //! with `NotAllowed` before anything else. It ends when the connection
 //! closes, or for all at once when the Valve session ends.
 //!
@@ -100,8 +102,9 @@ pub struct ShimRun {
     /// The run's stats, fetched on the game's first `RequestStats`; `None`
     /// for a run that was not started in shim mode.
     pub stats: Option<Arc<RunStats>>,
-    /// The run's cloud folder (ADR 0055); `None` for a run not started in
-    /// shim mode, an app without a cloud quota, and shadow sessions.
+    /// The run's cloud folder (ADR 0055), for a shadow session its shadow
+    /// folder; `None` for a run not started in shim mode, an app without a
+    /// cloud quota, and a shadow session whose folder could not be filled.
     pub cloud: Option<Arc<RunCloud>>,
     /// Whether this is a read-only shadow session for a process
     /// `reborn-observe arm` registered (ADR 0055), not a process `rebornd`
@@ -2010,7 +2013,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_shadow_session_gets_no_cloud_reads_yet() {
+    async fn a_shadow_session_without_a_shadow_folder_gets_no_cloud_reads() {
         let temp = TempDir::new("shadow");
         let runs = with_cloud(&temp, QUOTA);
         registered(&runs, SHADOW_GAME).await;
@@ -2025,6 +2028,53 @@ mod tests {
                 cloud_refused(UnavailableReason::NotAllowed)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_shadow_session_reads_only_its_shadow_folder() {
+        // ADR 0055, stage 1: "`CloudRead` against a separate shadow folder".
+        let temp = TempDir::new("shadow-folder");
+        let runs = with_cloud(&temp, QUOTA);
+        // What `reborn_core::shadow_cloud` downloaded for the shadow game;
+        // the launched game's run folder (with SAVE_DATA) stays apart.
+        let shadow = RunCloud::shadow(&temp.0, STEAM_ID, SHADOW_GAME, QUOTA);
+        std::fs::create_dir_all(shadow.dir()).unwrap_or_else(|error| panic!("{error}"));
+        std::fs::write(shadow.dir().join(SAVE), b"from the cloud")
+            .unwrap_or_else(|error| panic!("{error}"));
+        runs.shadows.register_with_cloud(
+            SHADOW_GAME,
+            RunOwnership::default(),
+            Some(Arc::new(shadow)),
+        );
+        let mut proxy = Connection::default();
+        assert_eq!(
+            cloud_reply(&shadow_hello(SHADOW_PID, SHADOW_GAME), &mut proxy, &runs).await,
+            shadow_session()
+        );
+        assert_eq!(
+            cloud_reply(&cloud_size(SAVE), &mut proxy, &runs).await,
+            file_size(Some(14))
+        );
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 4096), &mut proxy, &runs).await,
+            file_data(Some(b"from the cloud"))
+        );
+        assert_eq!(
+            cloud_reply(&cloud_size("other.json"), &mut proxy, &runs).await,
+            file_size(None)
+        );
+        // The same name checks as for a run's folder.
+        assert_eq!(
+            cloud_reply(&cloud_read("../../123456/2143030/x", 10), &mut proxy, &runs).await,
+            cloud_refused(UnavailableReason::NotAllowed)
+        );
+        // The launched game still reads its own folder.
+        let mut game = Connection::default();
+        cloud_reply(&hello(100, PROTOCOL_VERSION), &mut game, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 4096), &mut game, &runs).await,
+            file_data(Some(SAVE_DATA))
+        );
     }
 
     #[tokio::test]

@@ -40,6 +40,11 @@
 //! Filling the folder at launch from Valve's cloud, with the base file
 //! (SHA-1, size and time of the version last downloaded), is
 //! [`crate::run_cloud_fill`]. Writes by the game are not here yet.
+//!
+//! Shadow sessions (ADR 0055, stage 1) read the same way from a separate
+//! **shadow folder**, `<Reborn data>/shadow-cloud/<account ID>/<app ID>/`
+//! ([`RunCloud::shadow`]), which no game writes to and which
+//! [`crate::shadow_cloud`] fills from Valve's cloud once per shadow run.
 
 use std::fs::{File, Metadata};
 use std::io::{self, Read};
@@ -55,6 +60,10 @@ use crate::cloud::split_root;
 /// The largest file the run's cloud folder hands out or (later) takes,
 /// whatever the app's quota says (ADR 0055: "at most 16 MiB").
 pub const MAX_FILE: u64 = 16 * 1024 * 1024;
+
+/// The folder below the Reborn data folder that holds the shadow folders
+/// ([`RunCloud::shadow`]).
+pub const SHADOW_DIR: &str = "shadow-cloud";
 
 /// The longest file name accepted, in bytes. Reborn's own bound against
 /// absurd input, not a rule recorded from the official client.
@@ -95,6 +104,10 @@ pub enum RunCloudError {
     /// The name names something that is not a regular file (a folder).
     #[error("the cloud file name names a folder")]
     NotAFile,
+    /// A folder that is not a shadow folder was to be cleared
+    /// (`crate::shadow_cloud::clear`).
+    #[error("not a shadow folder")]
+    NotShadow,
     /// The file is larger than the run's limit.
     #[error("the cloud file is larger than the app's quota")]
     TooLarge,
@@ -118,6 +131,8 @@ pub struct RunCloud {
     relative: PathBuf,
     /// The largest file handed out.
     limit: u64,
+    /// Whether this is a shadow session's folder (ADR 0055, stage 1).
+    shadow: bool,
 }
 
 impl RunCloud {
@@ -131,7 +146,51 @@ impl RunCloud {
                 .join(account_id(steam_id).to_string())
                 .join(app_id.to_string()),
             limit: limit.min(MAX_FILE),
+            shadow: false,
         }
+    }
+
+    /// The **shadow folder** of `app_id` for the account `steam_id` (ADR
+    /// 0055, stage 1: "Shadow runs use a separate shadow folder that no
+    /// game writes to"): `shadow-cloud/<account ID>/<app ID>` below
+    /// `data_dir`, read like [`RunCloud::new`]'s folder. Creates nothing.
+    pub fn shadow(data_dir: &Path, steam_id: u64, app_id: u32, limit: u64) -> Self {
+        Self {
+            data_dir: data_dir.to_path_buf(),
+            relative: Path::new(SHADOW_DIR)
+                .join(account_id(steam_id).to_string())
+                .join(app_id.to_string()),
+            limit: limit.min(MAX_FILE),
+            shadow: true,
+        }
+    }
+
+    /// Whether this is a shadow folder ([`RunCloud::shadow`]).
+    pub fn is_shadow(&self) -> bool {
+        self.shadow
+    }
+
+    /// Whether the folder exists, checked part by part from the Reborn
+    /// data folder without following any link: a link anywhere on the way
+    /// (the folder itself included) is [`RunCloudError::Symlink`], a file
+    /// on the way [`RunCloudError::NotAFile`].
+    pub fn dir_exists(&self) -> Result<bool, RunCloudError> {
+        let mut path = self.data_dir.clone();
+        for component in self.relative.components() {
+            path.push(component);
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.into()),
+            };
+            if metadata.file_type().is_symlink() {
+                return Err(RunCloudError::Symlink);
+            }
+            if !metadata.is_dir() {
+                return Err(RunCloudError::NotAFile);
+            }
+        }
+        Ok(true)
     }
 
     /// The run's folder.
@@ -444,6 +503,44 @@ mod tests {
                 .join("2143030")
         );
         assert_eq!(account_id(STEAM_ID), 123_456);
+        assert!(!cloud.is_shadow());
+    }
+
+    #[test]
+    fn the_shadow_folder_is_apart_from_the_runs_folder() {
+        let shadow = RunCloud::shadow(Path::new("data"), STEAM_ID, APP, QUOTA);
+        assert_eq!(
+            shadow.dir(),
+            Path::new("data")
+                .join("shadow-cloud")
+                .join("123456")
+                .join("2143030")
+        );
+        assert!(shadow.is_shadow());
+        assert_ne!(
+            shadow.dir(),
+            RunCloud::new(Path::new("data"), STEAM_ID, APP, QUOTA).dir()
+        );
+        assert_eq!(
+            RunCloud::shadow(Path::new("d"), STEAM_ID, APP, u64::MAX).limit(),
+            MAX_FILE
+        );
+    }
+
+    #[test]
+    fn the_folder_is_checked_part_by_part() {
+        let (temp, cloud) = with_files("dir-exists");
+        assert_eq!(cloud.dir_exists(), Ok(true));
+        let missing = RunCloud::shadow(&temp.0, STEAM_ID, APP, QUOTA);
+        assert_eq!(missing.dir_exists(), Ok(false));
+        // A file where a folder belongs.
+        std::fs::write(temp.0.join(SHADOW_DIR), b"x").unwrap();
+        assert_eq!(missing.dir_exists(), Err(RunCloudError::NotAFile));
+        std::fs::remove_file(temp.0.join(SHADOW_DIR)).unwrap();
+        // A folder link on the way.
+        let outside = outside(&temp);
+        folder_link(&outside, &temp.0.join(SHADOW_DIR));
+        assert_eq!(missing.dir_exists(), Err(RunCloudError::Symlink));
     }
 
     #[test]

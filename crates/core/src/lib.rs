@@ -7,6 +7,7 @@
 //! - [`launch`]: starting installed games.
 //! - [`library`]: apps installed in a library folder.
 //! - [`run_cloud`]: the cloud folder a game reads through the shim (ADR 0055; reading only).
+//! - [`shadow_cloud`]: the shadow folder for cloud reads in shadow mode, filled from Valve once per run (ADR 0055, stage 1).
 //! - [`uninstall`]: removing an installed app.
 //!
 //! This crate glues `reborn-cm` (Steam), `reborn-content` (downloads),
@@ -23,6 +24,7 @@ pub mod launch;
 pub mod library;
 pub mod run_cloud;
 pub mod run_cloud_fill;
+pub mod shadow_cloud;
 pub mod uninstall;
 
 pub use error::CoreError;

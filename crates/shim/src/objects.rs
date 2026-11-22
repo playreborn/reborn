@@ -193,11 +193,18 @@ extern "C" fn get_app_id(_this: *const Object) -> u32 {
     }
 }
 
+/// `GetCurrentBatteryPower`, confirmed (experiment 10): 255 on AC power,
+/// otherwise the battery level in percent (`crate::power`).
+extern "C" fn get_current_battery_power(_this: *const Object) -> u8 {
+    crate::power::battery_power()
+}
+
 fn utils_010() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
         let mut table = stubs!("SteamUtils010");
         table[9] = get_app_id as *const () as usize;
+        table[14] = get_current_battery_power as *const () as usize;
         Built::new(table)
     })
 }
@@ -317,6 +324,15 @@ mod tests {
             shutdown_if_all_pipes_closed as *const () as usize,
             "the close calls are recorded for 020 only"
         );
+    }
+
+    #[test]
+    fn battery_power_is_a_percentage_or_255() {
+        // SAFETY: position 14 holds `get_current_battery_power`.
+        let power: extern "C" fn(*const Object) -> u8 =
+            unsafe { std::mem::transmute(slot_of("SteamUtils010", 14)) };
+        let value = power(object("SteamUtils010").cast());
+        assert!(value == 255 || value <= 100, "{value}");
     }
 
     #[test]

@@ -136,6 +136,9 @@ enum Shadow {
     /// `GetAppID`: the app ID `reborn-observe arm --app` gave the proxy,
     /// compared with the low 32 bits of the result.
     AppId,
+    /// `GetCurrentBatteryPower`: 255 on AC power, else the battery percent
+    /// from `GetSystemPowerStatus`, compared with the lowest byte.
+    BatteryPower,
 }
 
 /// The calls ADR 0046 compares in shadow mode: interface version text,
@@ -145,6 +148,9 @@ enum Shadow {
 const SHADOWS: &[(&str, usize, Shadow)] = &[
     // `docs/shim/meanings.md`: confirmed `GetAppID` (experiment 3).
     ("SteamUtils010", 9, Shadow::AppId),
+    // `docs/shim/meanings.md`: confirmed `GetCurrentBatteryPower`
+    // (experiment 10).
+    ("SteamUtils010", 14, Shadow::BatteryPower),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -186,6 +192,8 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
         .find(|&&(name, position, _)| name == interface && position == slot)?;
     match answer {
         Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
+        // Not in ANSWERS yet: shadow mode first (ADR 0046).
+        Shadow::BatteryPower => None,
     }
 }
 
@@ -885,6 +893,34 @@ fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
             };
             format!("shadow {verdict}: client {client}, Reborn {reborn}")
         }
+        Shadow::BatteryPower => {
+            let client = rax as u8;
+            let reborn = battery_power();
+            let verdict = if client == reborn {
+                "match"
+            } else {
+                "mismatch"
+            };
+            format!("shadow {verdict}: client {client}, Reborn {reborn}")
+        }
+    }
+}
+
+/// 255 on AC power or when unknown, otherwise the battery percent, from
+/// `GetSystemPowerStatus` as Microsoft documents it (`ACLineStatus` 1 is AC
+/// power; `BatteryLifePercent` 255 is unknown).
+fn battery_power() -> u8 {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    // SAFETY: an all-zero SYSTEM_POWER_STATUS is valid; the call fills it.
+    let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    // SAFETY: `status` is a valid, writable SYSTEM_POWER_STATUS.
+    if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
+        return 255;
+    }
+    if status.ACLineStatus == 1 || status.BatteryLifePercent > 100 {
+        255
+    } else {
+        status.BatteryLifePercent
     }
 }
 
@@ -1378,7 +1414,8 @@ mod tests {
             None,
             "only confirmed versions"
         );
-        assert_eq!(shadow_for("SteamUtils010", 14), None);
+        assert_eq!(shadow_for("SteamUtils010", 14), Some(Shadow::BatteryPower));
+        assert_eq!(shadow_for("SteamUtils010", 15), None);
         assert_eq!(
             describe_shadow(0x20_b336, Shadow::AppId, Some(2_143_030)),
             "shadow match: client 2143030, Reborn 2143030"

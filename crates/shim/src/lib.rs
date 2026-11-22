@@ -17,10 +17,12 @@
 //!   per-interface positions, and for 020 positions 4, 1, 23
 //!   (`meanings.md`, experiment 7; waiting for the maintainer's OK).
 //! - `SteamUtils010` position 9, `GetAppID` (`meanings.md`, experiments 3
-//!   to 5, confirmed).
+//!   to 5, confirmed), and position 14, `GetCurrentBatteryPower`
+//!   (experiment 10, confirmed).
 #![allow(unsafe_code)]
 
 mod objects;
+mod power;
 mod session;
 
 use std::ffi::{CStr, c_char, c_void};

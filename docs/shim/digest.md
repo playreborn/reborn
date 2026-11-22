@@ -22,7 +22,7 @@ first, so the maintainer can read a day's work quickly and stop anything.
   session's app (1 or 0); `Unavailable` or a lost daemon stops the game.
   The shim keeps its `Hello` connection, exchanges run under one lock with
   their own ids, one reconnect per run. Every other position, 7 included,
-  stops. PR to follow.
+  stops. PR #35.
 - 2026-11-22: first live shadow run with real account data (ADR 0055):
   `BIsSubscribed` shadow **matched** in Dark Deception, A Park Full of
   Cats and An Arcade Full of Cats; `rebornd` and the official client were

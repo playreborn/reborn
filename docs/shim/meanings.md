@@ -923,7 +923,11 @@ position 14 returned 255 in its lowest byte. Outcore was not run (its
 launch-option window was answered too late, the run timed out), so
 `SteamUtils009` position 14 stays a candidate. Under ADR 0051 position 14
 of `SteamUtils010` is confirmed as `GetCurrentBatteryPower`, with the
-known limit that only the AC-power case was observed.
+known limit that only the AC-power case was observed. The review pass
+noted that this prediction repeats the observation that led to the
+candidate (it could only have failed if the behaviour changed); the
+meaning rests mainly on the elimination of the other functions on the
+page. A run on a laptop on battery would make it a real test.
 
 ```text
 observe-46356.log: 108 logged calls, 0 not 255 -> match

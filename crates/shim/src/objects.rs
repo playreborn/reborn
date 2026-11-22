@@ -326,6 +326,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn battery_power_is_a_percentage_or_255() {
         // SAFETY: position 14 holds `get_current_battery_power`.

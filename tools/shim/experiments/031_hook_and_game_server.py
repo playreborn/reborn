@@ -66,7 +66,7 @@ GAMES = {
     332950: "Dark Deception",
 }
 UTILS, SERVER = "SteamUtils009", "SteamGameServer012"
-PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in a follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 20, 17, 38)  # commit a85feef on loop/plan-15a (final plan)
 EXECUTABLE = "after rdx: executable (outside steamclient64)"
 SLOT = re.compile(r"\b(\d)=(0x[0-9a-f]+|not readable)")
 POINTS = re.compile(r'\b(\d)->"')

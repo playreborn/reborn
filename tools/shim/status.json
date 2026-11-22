@@ -185,7 +185,7 @@
     ],
     "10": [
       "candidate",
-      "StoreStats"
+      "StoreStats or ResetAllStats"
     ],
     "4": [
       "candidate",
@@ -268,8 +268,8 @@
       "RequestCurrentStats"
     ],
     "10": [
-      "confirmed",
-      "StoreStats"
+      "candidate",
+      "narrowed: StoreStats or ResetAllStats (experiment 13)"
     ],
     "6": [
       "candidate",
@@ -283,7 +283,7 @@
     ],
     "9": [
       "candidate",
-      "StoreStats"
+      "StoreStats or ResetAllStats"
     ],
     "5": [
       "candidate",

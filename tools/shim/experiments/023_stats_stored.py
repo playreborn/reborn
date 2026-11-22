@@ -1,7 +1,7 @@
 """Experiment 23 (docs/shim/meanings.md, loop iteration 10a): callback
 number 0x44e (1102), candidate UserStatsStored_t (ISteamUserStats page:
 m_nGameID uint64, m_eResult EResult), and the positions that trigger it,
-candidate StoreStats: STEAMUSERSTATS_INTERFACE_VERSION011 position 10 in
+candidates StoreStats or ResetAllStats: STEAMUSERSTATS_INTERFACE_VERSION011 position 10 in
 Cave Crawlers, STEAMUSERSTATS_INTERFACE_VERSION013 position 9 in Bongo Cat.
 
 0x44e is already in PAYLOAD_LISTED (experiment 20).
@@ -13,13 +13,20 @@ A  The trigger position is called at least once, and there are exactly as
    0x44e callback comes before the first trigger call.
 B  Every 0x44e callback has size 16, payload bytes 0..4 the game's app ID,
    bytes 4..8 zero, bytes 8..12 equal to 1 (k_EResultOK).
-C  Every trigger call returns exactly 1 (a bool true, not a 64-bit call
-   handle), and no Steam_GetAPICallResult call lies between the i-th
-   trigger call and the i-th 0x44e callback (the callback is not fetched
-   as a call result).
-D  No trigger call has a text argument (IndicateAchievementProgress, the
-   other function the page says triggers UserStatsStored_t, takes an
-   achievement name; StoreStats takes nothing).
+C  Every trigger call's result has lowest byte 1 and upper 32 bits zero
+   (a bool true, not a 64-bit call handle), and no 703 callback between the
+   i-th trigger call and the i-th 0x44e callback has 1102 in payload bytes
+   8..12 (no call result of number 1102 is announced); a 703 in between
+   without logged payload bytes is a mismatch (703 is listed for
+   experiment 22).
+D  No trigger call has a text argument (IndicateAchievementProgress, which
+   the page says triggers UserStatsStored_t, takes an achievement name;
+   StoreStats takes nothing).
+E  In each game, at least one trigger call has a lowest rdx byte other
+   than 0 and 1. ResetAllStats (one bool; the page: it "automatically
+   calls StoreStats") would have its bool in the lowest byte of rdx
+   (Microsoft x64 calling convention: register arguments right-justified);
+   that a bool is passed as 0 or 1 is an assumption, not on a page.
 
 Each log must be a different file recorded by run.sh in starts.log
 (observelog.app_of) for one of the two games, one log per game, both
@@ -44,24 +51,30 @@ GAMES = {
     3419430: ("Bongo Cat", "STEAMUSERSTATS_INTERFACE_VERSION013", 9),
 }
 STORED = 0x44E
+COMPLETED = 703
 WINDOW_MS = 1000
-PLAN_COMMITTED = datetime(2026, 11, 22, 13, 26, 55)  # commit 43f09cd on loop/plan-10a (final plan)
+PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in the follow-up commit
 
 
 def u32(data, at):
     return int.from_bytes(data[at:at + 4], "little")
 
 
-def stored_callbacks(path):
-    """(ms, size, payload bytes or None) for every 0x44e callback."""
+def callbacks(path, number):
+    """(ms, size, payload bytes or None) for every callback with `number`."""
     out = []
     for e in observelog.exports(path):
         if e.kind != "wrote":
             continue
         h = observelog.header(e)
-        if h is not None and h.u32(4) == STORED:
+        if h is not None and h.u32(4) == number:
             out.append((e.ms, h.payload_size, h.payload_first))
     return out
+
+
+def is_true(rax):
+    """A bool true: lowest byte 1, upper 32 bits zero (not a call handle)."""
+    return rax is not None and rax & 0xFF == 1 and rax >> 32 == 0
 
 
 def verdict(ok):
@@ -87,7 +100,7 @@ for path in paths:
     seen.add(app)
     game, interface, position = GAMES[app]
     triggers = [c for c in observelog.calls(path) if c.interface == interface and c.position == position]
-    cbs = stored_callbacks(path)
+    cbs = callbacks(path, STORED)
     label = f"{name} ({game})"
 
     gaps = [cb[0] - t.ms for t, cb in zip(triggers, cbs)]
@@ -105,14 +118,24 @@ for path in paths:
     verdicts.append(ok_b)
     print(f"{label} B: size, app ID, zero bytes 4..8 and result 1 in every callback -> {verdict(ok_b)}")
 
-    gacr = [e.ms for e in observelog.exports(path) if e.kind == "call" and e.name == "Steam_GetAPICallResult"]
-    between = sum(1 for t, cb in zip(triggers, cbs) for at in gacr if t.ms <= at <= cb[0])
-    ok_c = bool(triggers) and all(t.rax == 1 for t in triggers) and between == 0
+    completed = callbacks(path, COMPLETED)
+    inside = [c for t, cb in zip(triggers, cbs) for c in completed if t.ms <= c[0] <= cb[0]]
+    unreadable = sum(1 for c in inside if c[2] is None or len(c[2]) < 12)
+    announcing = sum(1 for c in inside if c[2] is not None and len(c[2]) >= 12 and u32(c[2], 8) == STORED)
+    ok_c = (bool(triggers) and all(is_true(t.rax) for t in triggers)
+            and unreadable == 0 and announcing == 0)
     verdicts.append(ok_c)
-    print(f"{label} C: results {sorted({t.rax == 1 for t in triggers})} (True = exactly 1), "
-          f"{between} GetAPICallResult calls in between -> {verdict(ok_c)}")
+    print(f"{label} C: {sum(1 for t in triggers if is_true(t.rax))} of {len(triggers)} results a bool true, "
+          f"{len(inside)} callbacks 703 in between ({unreadable} without payload bytes, "
+          f"{announcing} announcing 1102) -> {verdict(ok_c)}")
 
     ok_d = bool(triggers) and all(not t.texts for t in triggers)
     verdicts.append(ok_d)
     print(f"{label} D: {sum(1 for t in triggers if t.texts)} trigger calls with a text argument -> {verdict(ok_d)}")
+
+    not_bool = sum(1 for t in triggers if t.reg("rdx") is not None and t.reg("rdx") & 0xFF not in (0, 1))
+    ok_e = not_bool > 0
+    verdicts.append(ok_e)
+    print(f"{label} E: {not_bool} of {len(triggers)} trigger calls with a lowest rdx byte other than 0 and 1 "
+          f"-> {verdict(ok_e)}")
 print("experiment 23:", "match" if seen == set(GAMES) and all(verdicts) else "MISMATCH")

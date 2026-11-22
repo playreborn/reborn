@@ -19,8 +19,9 @@ F  For every window with a Steam_GetAPICallResult call: payload bytes 0..8
    its `r9`. At least 10 windows checked across all logs; a log with 50 or
    more Steam_GetAPICallResult calls cannot be checked (the proxy logs only
    the first 50) and counts as a mismatch.
-G  Every 703 callback whose bytes 0..8 equal a result of an earlier
-   STEAMUSERSTATS_INTERFACE_VERSION013 position 15 call (candidate
+G  Every 703 callback whose bytes 0..8 equal a result of a
+   STEAMUSERSTATS_INTERFACE_VERSION013 position 15 call made (started)
+   before that 703 (candidate
    RequestUserStats; the ISteamUserStats page: "to be used with a
    UserStatsReceived_t call result") has bytes 8..12 = 1101 (0x44d,
    UserStatsReceived_t, experiment 21) and bytes 12..16 = 24 (its recorded
@@ -63,7 +64,7 @@ STATS_RECEIVED_SIZE = 24
 REQUEST_USER_STATS = ("STEAMUSERSTATS_INTERFACE_VERSION013", 15)
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
 F_MIN = 10
-PLAN_COMMITTED = datetime(2026, 11, 22, 13, 26, 55)  # commit 43f09cd on loop/plan-10a (final plan)
+PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in the follow-up commit
 low = observelog.low32
 
 
@@ -161,11 +162,13 @@ for path in paths:
     print(f"{name} ({GAMES[app]}) F: {f_checked} windows with GetAPICallResult checked, {f_ok} equal, "
           f"{n_gacr} calls logged -> {'match' if ok_f else 'MISMATCH'}")
 
-    handles = {c.rax for c in observelog.calls(path)
-               if (c.interface, c.position) == REQUEST_USER_STATS and c.rax is not None}
+    handles = [(c.ms, c.rax) for c in observelog.calls(path)
+               if (c.interface, c.position) == REQUEST_USER_STATS and c.rax is not None]
     g_checked = g_ok = 0
     for w in ws:
-        if w["data"] is None or len(w["data"]) < 16 or u64(w["data"], 0) not in handles:
+        if w["data"] is None or len(w["data"]) < 16:
+            continue
+        if not any(rax == u64(w["data"], 0) and at <= w["ms"] for at, rax in handles):
             continue
         g_checked += 1
         if u32(w["data"], 8) == STATS_RECEIVED and u32(w["data"], 12) == STATS_RECEIVED_SIZE:

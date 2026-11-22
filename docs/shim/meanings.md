@@ -2893,3 +2893,103 @@ the plan time lifted (a scratch copy, not committed), the script finds
 in `observe-20708` as the only qualifying positions, and U and A to F
 match in both. That checks the search, not the new games: none of the
 three was ever recorded.
+
+**Result of experiment 25** (agent runs by the main session after the
+plan time 14:50:51; the three licenses were added and installed after the
+plan was pushed): **mismatch** as scripted.
+
+- Super Jigsaw Puzzle: Generations (1036950) ships only `steam_api.dll`
+  (32-bit) and loaded no proxy; no log, so the game is missing (32-bit
+  games belong to M5).
+- Pixel Puzzles Ultimate (351030, `observe-51312`): U, A to D and F
+  match (`…VERSION013` position 9, two calls, each followed by one 0x44e),
+  but **E mismatches**: in both calls the lowest byte of `rdx` was 0 or 1.
+  The game did not exit on the close request within two minutes and was
+  ended with `taskkill /F` afterwards.
+- VPet-Simulator (1920960, `observe-23624`): all predictions match (24
+  calls of `…VERSION013` position 9, each followed by one 0x44e 1 to 271
+  ms later). VPet showed a launch-options dialog ("VPet spielen") on its
+  first start, which blocked the first run; on the second run the agent
+  clicked "VPet spielen" (ADR 0049: input for the run's purpose). VPet
+  stayed running after the close request (tray) and was left running as
+  the plan says.
+
+```text
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) S: 20 positions called
+    S: STEAMSCREENSHOTS_INTERFACE_VERSION003 position 3: 1 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 74: 1 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 1: 15 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 3: 9 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 5: 13 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 9: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 22: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 23: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 30: 2 calls
+    S: SteamClient021 position 0: 1 calls
+    S: SteamClient021 position 2: 1 calls
+    S: SteamClient021 position 5: 1 calls
+    S: SteamClient021 position 12: 9 calls
+    S: SteamClient021 position 32: 1 calls
+    S: SteamController008 position 2: 53 calls
+    S: SteamInput006 position 3: 53 calls
+    S: SteamUser023 position 1: 3 calls
+    S: SteamUser023 position 2: 1 calls
+    S: SteamUtils010 position 9: 6 calls
+    S: SteamUtils010 position 14: 53 calls
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U: 45 calls of ['STEAMUSERSTATS_INTERFACE_VERSION013'] -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) A: 2 callbacks 0x44e, qualifying positions ['STEAMUSERSTATS_INTERFACE_VERSION013 position 9'] -> match
+    A: 2 calls of T, gaps [313, 512] ms
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) C: 2 of 2 results a bool true, 1 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) D: 0 calls of T with a text argument -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) E: 0 of 2 calls of T with a lowest rdx byte other than 0 and 1 -> MISMATCH
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F: T is STEAMUSERSTATS_INTERFACE_VERSION013 position 9, confirmed StoreStats is position 9 -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles): MISMATCH
+observe-23624.log (VPet-Simulator) S: 23 positions called
+    S: STEAMUGC_INTERFACE_VERSION020 position 2: 36 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 4: 36 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 5: 50 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 9: 50 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 12: 52 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 77: 50 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 3: 50 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 9: 24 calls
+    S: SteamClient021 position 0: 1 calls
+    S: SteamClient021 position 2: 1 calls
+    S: SteamClient021 position 5: 1 calls
+    S: SteamClient021 position 12: 26 calls
+    S: SteamClient021 position 32: 2 calls
+    S: SteamController008 position 2: 52 calls
+    S: SteamFriends017 position 0: 4 calls
+    S: SteamFriends017 position 43: 50 calls
+    S: SteamInput006 position 3: 52 calls
+    S: SteamUser023 position 2: 5 calls
+    S: SteamUser023 position 12: 1 calls
+    S: SteamUtils010 position 9: 2 calls
+    S: SteamUtils010 position 11: 50 calls
+    S: SteamUtils010 position 13: 36 calls
+    S: SteamUtils010 position 14: 52 calls
+observe-23624.log (VPet-Simulator) U: 74 calls of ['STEAMUSERSTATS_INTERFACE_VERSION013'] -> match
+observe-23624.log (VPet-Simulator) A: 24 callbacks 0x44e, qualifying positions ['STEAMUSERSTATS_INTERFACE_VERSION013 position 9'] -> match
+    A: 24 calls of T, gaps [271, 8, 6, 13, 9, 10, 6, 3, 13, 15, 4, 16, 12, 4, 12, 1, 5, 15, 3, 9, 12, 257, 8, 5] ms
+observe-23624.log (VPet-Simulator) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-23624.log (VPet-Simulator) C: 24 of 24 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-23624.log (VPet-Simulator) D: 0 calls of T with a text argument -> match
+observe-23624.log (VPet-Simulator) E: 24 of 24 calls of T with a lowest rdx byte other than 0 and 1 -> match
+observe-23624.log (VPet-Simulator) F: T is STEAMUSERSTATS_INTERFACE_VERSION013 position 9, confirmed StoreStats is position 9 -> match
+observe-23624.log (VPet-Simulator): match
+experiment 25: MISMATCH
+```
+
+As fixed before the runs: VPet-Simulator counts as a third recorded game
+with the `StoreStats` → `UserStatsStored_t` exchange (ADR 0055's
+three-game rule: Cave Crawlers, Bongo Cat, VPet-Simulator), and as a
+further game for `…VERSION013` position 9 = `StoreStats`. Pixel Puzzles
+does not count. Its E mismatch does not contradict `StoreStats`, but it
+shows that a lowest `rdx` byte of 0 or 1 does occur with this position,
+so prediction E cannot rule out `ResetAllStats` for every game; the
+confirmation of experiment 23 rests on its own games and stays under its
+stated assumption. Survey (S) data of both games, new positions such as
+`STEAMUGC_INTERFACE_VERSION020`, `STEAMSCREENSHOTS_INTERFACE_VERSION003`
+3 and `SteamUtils010` 11 and 13, are left for later rows (the logs stay
+local).

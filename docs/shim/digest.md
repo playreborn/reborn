@@ -16,6 +16,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 12a: experiment 25 **mismatched** as
+  scripted (Super Jigsaw is 32-bit; Pixel Puzzles' E: `rdx` 0/1 at
+  `StoreStats`). VPet-Simulator matched fully and is the third recorded
+  `StoreStats` game for ADR 0055. Three free games added and installed.
+  PR #29.
 - 2026-11-22: experiment 25 planned (parallel agent, no runs): first
   recordings of VPet-Simulator (1920960), Pixel Puzzles Ultimate Jigsaw
   Puzzles (351030) and Super Jigsaw Puzzle: Generations (1036950), a

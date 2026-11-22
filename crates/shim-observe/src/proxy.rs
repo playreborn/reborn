@@ -136,6 +136,10 @@ const PAYLOAD_LISTED: &[u32] = &[
     // `UserStatsStored_t`, `GlobalStatsReceived_t`,
     // `GlobalAchievementPercentagesReady_t`.
     0x44e,
+    // `docs/shim/meanings.md`, experiment 22: candidate
+    // `SteamAPICallCompleted_t` (a call handle, a callback number and a
+    // size; no account identifier on the page).
+    0x2bf,
 ];
 
 /// What is read after a listed call returns (step 4c, ADR 0043).

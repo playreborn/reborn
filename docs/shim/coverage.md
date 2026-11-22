@@ -64,7 +64,7 @@ Positions are listed in the order of their numbers.
 | `SteamController008` | 16 | 2 | confirmed: 2 RunFrame |
 | `SteamFriends017` | 9 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS); 0 43 (VP) | candidate: 0 GetPersonaName or ClearRichPresence, 36 narrowed: GetLargeFriendAvatar (experiment 17), 37 RequestUserInformation, HasFriend or another (Steam ID, 0) call, 44 ClearRichPresence or GetPersonaName; confirmed: 3 GetFriendCount, 4 GetFriendByIndex, 43 SetRichPresence |
 | `SteamFriends018` | 1 | 6 9 36 | candidate: 6 a text by Steam ID (GetFriendPersonaName, GetPlayerNickname and others), 9 one of many Steam ID functions returning 0, 36 RequestUserInformation, HasFriend or another (Steam ID, 0) call |
-| `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
+| `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | candidate: 0 InitGameServer (experiment 31) |
 | `SteamInput001` | 4 | 2 | candidate: 2 narrowed: a RunFrame-like per-frame call (experiment 16) |
 | `SteamInput006` | 16 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA, VP, PP); 0 3 6 (BB, CH, HC) | confirmed: 0 Init, 3 RunFrame; candidate: 6 GetConnectedControllers |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle); confirmed: 3 GetResultTimestamp |
@@ -81,8 +81,8 @@ Positions are listed in the order of their numbers.
 | `SteamUser023` | 13 | 1 2 (BC, AC, OE, FS, PK, PP); 2 (CM, LS, PT, PY, CH, CA); 2 12 (VP) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 26) |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | confirmed: 0 RequestCurrentStats, 10 StoreStats, 12 GetAchievementDisplayAttribute; candidate: 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 10 narrowed: StoreStats or ResetAllStats (experiment 13) |
-| `STEAMUSERSTATS_INTERFACE_VERSION013` | 6 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA); 3 9 (VP); 1 3 5 9 22 23 30 (PP) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write); confirmed: 9 StoreStats, 15 RequestUserStats |
-| `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower |
+| `STEAMUSERSTATS_INTERFACE_VERSION013` | 6 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA); 3 9 (VP); 1 3 5 9 22 23 30 (PP) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 37 narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet); confirmed: 9 StoreStats, 15 RequestUserStats |
+| `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower; candidate: 16 SetWarningMessageHook (experiment 31) |
 | `SteamUtils010` | 17 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA, PP); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC); 9 11 13 14 (VP) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 13 GetAPICallResult, 14 GetCurrentBatteryPower; candidate: 11 narrowed: IsAPICallCompleted (experiment 26) |
 
 Beyond these, the exported entry points (`entry-points.md`) and the

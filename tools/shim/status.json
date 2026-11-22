@@ -238,6 +238,10 @@
     "14": [
       "confirmed",
       "GetCurrentBatteryPower"
+    ],
+    "16": [
+      "candidate",
+      "SetWarningMessageHook (experiment 31)"
     ]
   },
   "SteamUtils010": {
@@ -416,6 +420,10 @@
     "5": [
       "candidate",
       "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
+    ],
+    "37": [
+      "candidate",
+      "narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet)"
     ]
   },
   "SteamInput001": {
@@ -530,6 +538,12 @@
     "77": [
       "candidate",
       "narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26)"
+    ]
+  },
+  "SteamGameServer012": {
+    "0": [
+      "candidate",
+      "InitGameServer (experiment 31)"
     ]
   }
 }

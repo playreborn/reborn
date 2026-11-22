@@ -3759,3 +3759,226 @@ been made**, and no result is claimed.
   `CMsgClientAccountInfo` (`reborn-cli friends --record` now writes
   `account_info.bin` with the name replaced by `Player 1`), recorded by a
   person on the test account.
+## Top rows of the gap list (loop iteration 15a)
+
+`python tools/shim/coverage.py` on `main` (2026-11-22, 205 positions, 130
+confirmed) put these unknown positions first: `SteamClient020`/`021` 22,
+`SteamUtils010` 34, `STEAMUSERSTATS_INTERFACE_VERSION013` 37,
+`SteamClient023` 21, `SteamGameServer012` 0 and `SteamUtils009` 16. No
+open pull request (`gh pr list`: #37, #39, #40, #41, #44 to #47) and no
+section above plans any of them. The recordings are the reference runs of
+`coverage.md` and every later `run.sh` log in the recorder's data folder
+(raw logs stay there). Pages read on 2026-11-22:
+<https://partner.steamgames.com/doc/api/ISteamClient> (31 functions),
+<https://partner.steamgames.com/doc/api/ISteamUtils> (38 functions),
+<https://partner.steamgames.com/doc/api/ISteamGameServer> (44 functions;
+its constant `STEAMGAMESERVER_INTERFACE_VERSION` is the text
+`SteamGameServer012`, the one both games ask for) and, for the call-result
+structs, <https://partner.steamgames.com/doc/api/ISteamUserStats>.
+Argument registers follow the Microsoft x64 convention (`rcx` the object,
+then `rdx`, `r8`, `r9`, then the stack above 32 bytes of shadow space,
+<https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>), as
+in experiment 7.
+
+### `SteamClient020`/`021` 22 and `SteamClient023` 21: still no candidate
+
+- **Recorded** (41 logs since iteration 5): one call each, about 100 ms
+  after start, before any getter; `rdx` an address (heap or module
+  range), `r8` 0x18, a heap address or 0x7ffffffffffffffc, `r9` varying;
+  `rax` 0x7ffcead24550 in every log, the same value as `SteamUtils009` 16
+  below (a void function's leftover look).
+- **Page:** the void functions are `ReleaseUser` (pipe, user: `rdx` is
+  an address, not a small handle), `SetLocalIPBinding` (`uint32`,
+  `uint16`: `r8` is not always a port) and `SetWarningMessageHook`,
+  already the candidate for 020/021 34 and 023 30, called in the same
+  runs. Every other function returns a handle, a `bool`, a count or an
+  object, or takes a text. Same result as iteration 5: **no candidate**;
+  the new recordings change nothing.
+
+### `SteamUtils010` 34: candidates, no separating experiment
+
+- **Recorded:** Please, Touch The Artwork 2 (5 logs): 33 calls from about
+  130 ms, about 30 ms apart (the proxy sees calls through the stand-in
+  only until call 33 hands the game the real object), `rdx` a stack
+  address, `r8` 1, `r9` 0xe; The Thief, the Witch, the Toad, and the
+  Mushroom. (1 log): once, `rdx` and `r9` module addresses, `r8`
+  0x15b970; HoloCure (4 logs): once after 1.3 to 3.1 s, `rdx` 1, `r8`
+  0x7ffffffffffffffc, `r9` 0xd or 0x1d. Result 0 at every call.
+- **Fit:** the arguments differ between games and look like leftovers, so
+  the call most likely takes none. Every no-argument function of the page
+  that can be false or 0 fits: `BOverlayNeedsPresent` (the page asks for
+  polling about 33 times a second, which matches the interval in Please,
+  Touch The Artwork 2 but is not proof), `IsOverlayEnabled` (false for a
+  few seconds while the overlay loads), `IsSteamInBigPictureMode`,
+  `IsSteamRunningInVR`, `IsVRHeadsetStreamingEnabled`,
+  `IsSteamChinaLauncher`, `IsRunningUnderProton`,
+  `IsSteamRunningOnSteamDeck`, `InitFilterText`, the counters
+  `GetIPCCallCount`, `GetSecondsSinceAppActive`,
+  `GetSecondsSinceComputerActive` and `GetEnteredGamepadTextLength`, the
+  enums `IsRunningOnSteamHardware` and `GetSteamHardwareDefaultConfig`,
+  and the void `StartVRDashboard`; HoloCure's `rdx` 1 also fits the
+  one-argument void setters (`SetGameLauncherMode`,
+  `SetVRHeadsetStreamingEnabled`, `SetOverlayNotificationPosition`).
+- **No experiment:** on this computer all of them give 0 or false; only a
+  change of client settings (overlay, Big Picture, VR) would separate
+  them, and no proxy read helps a call without arguments. Left as not
+  known.
+
+### `STEAMUSERSTATS_INTERFACE_VERSION013` 37: narrowed by recorded call results
+
+- **Recorded:** Bongo Cat (4 logs): once, after position 15
+  (`RequestUserStats`), `rdx` 1, `r8` 0; Coin Maker Simulator (3 logs):
+  every 15 s, `rdx` 0. The result is a 64-bit value that the game then
+  passes to `Steam_GetAPICallResult` with `r9` 16 (result 1); in the two
+  logs with 703 payloads (one per game, experiment 22) every finished
+  call has callback number 1112 and size 16. No call has a text argument.
+  In Coin Maker, position 39 follows each result with a stat name and a
+  stack address.
+- **Fit:** of the page's `SteamAPICall_t` functions, those whose
+  call-result struct has 16 bytes under natural alignment (which
+  experiment 21 found for `UserStatsReceived_t`, 24 bytes) are
+  `RequestGlobalStats` (`int` days, at most 60;
+  `GlobalStatsReceived_t`: `uint64` game ID, `EResult`),
+  `RequestGlobalAchievementPercentages` (no argument;
+  `GlobalAchievementPercentagesReady_t`, the same two fields),
+  `FindLeaderboard` and `FindOrCreateLeaderboard` (a name first;
+  `LeaderboardFindResult_t`: handle, `uint8`) and `AttachLeaderboardUGC`
+  (two handles; `LeaderboardUGCSet_t`: `EResult`, handle).
+  `UserStatsReceived_t` (24), `LeaderboardScoresDownloaded_t` (24),
+  `LeaderboardScoreUploaded_t` (32) and `NumberOfCurrentPlayers_t` (8) do
+  not have 16 bytes, and no call has the name the two leaderboard finders
+  take. Recorded as **narrowed: `RequestGlobalStats`,
+  `RequestGlobalAchievementPercentages` or `AttachLeaderboardUGC`**, no
+  experiment yet. Separating them needs the call-result bytes of
+  `Steam_GetAPICallResult` (a game ID first for the two global calls, a
+  result code first for `AttachLeaderboardUGC`; ADR 0056 decision 1 allows
+  the read, but the proxy has no read for entry points yet), and the two
+  global calls share one layout; left to a later plan.
+
+### `SteamUtils009` 16: candidate `SetWarningMessageHook`
+
+- **Recorded** (Gravitas, `SteamClient018`, 8 logs; Dark Deception,
+  `SteamClient019`, 11 logs; every run the same): Gravitas calls it twice,
+  once on each `SteamUtils009` object (pipe 1 at about 75 ms right after
+  `GetAppID`, pipe 2 at about 135 ms), with the same `rdx`; Dark
+  Deception does the same and then calls it a third time on the pipe-1
+  object with another `rdx`. `rdx` lies where Windows loads program
+  modules (upper bits 0x7ff6 or 0x7ff7), with the same low 16 bits in
+  every run of a game (0x4760 in Gravitas; 0xe150, then 0xee50 in Dark
+  Deception) and no text behind it; `r8` a heap address or
+  0x7ffffffffffffffc, `r9` 0x1a, 2 or 0xd. `rax` is 0x7ffcead24550 at
+  every call.
+- **Every function of the page against the recorded shape:**
+
+  | Functions (page) | Shape | Ruled out by |
+  | --- | --- | --- |
+  | `SetWarningMessageHook` | a function pointer; void | fits (U1 to U3) |
+  | `SetGameLauncherMode`, `SetVRHeadsetStreamingEnabled` (`bool`), `SetOverlayNotificationPosition` (enum), `SetOverlayNotificationInset` (two `int`), `GetImageSize`, `GetImageRGBA` (`int` first), `FilterText`, `ShowGamepadTextInput`, `ShowFloatingGamepadTextInput` (enum first) | a 32-bit or smaller first argument | U1 under A1 (`rdx` has non-zero upper bits) |
+  | `CheckFileSignature` | a file name; call handle | U1 (no text at `rdx`) |
+  | `GetAPICallResult`, `IsAPICallCompleted`, `GetAPICallFailureReason` | a call handle; `bool` or enum | U3 under A1 |
+  | `GetCSERIPPort`, `GetEnteredGamepadTextInput` | output pointers; `bool` | U3 under A1 |
+  | `BOverlayNeedsPresent`, `InitFilterText`, `IsOverlayEnabled`, `IsRunningUnderProton`, `IsSteamChinaLauncher`, `IsSteamInBigPictureMode`, `IsSteamRunningInVR`, `IsSteamRunningOnSteamDeck`, `IsVRHeadsetStreamingEnabled` (`bool`); `GetConnectedUniverse`, `GetSteamHardwareDefaultConfig`, `IsRunningOnSteamHardware` (enum); `GetEnteredGamepadTextLength`, `GetIPCCallCount`, `GetSecondsSinceAppActive`, `GetSecondsSinceComputerActive`, `GetServerRealTime` (`uint32`) | no arguments; 32-bit or smaller result | U3 under A1; also U2 under A2 |
+  | `GetAppID`, `GetCurrentBatteryPower` | no arguments | confirmed at positions 9 and 14 (experiment 15) |
+  | `GetIPCountry`, `GetSteamUILanguage` (a text), `StartVRDashboard` (void) | no arguments | U2 under A2 only |
+
+- Dark Deception's second hook on the pipe-1 object fits the page: a hook
+  set later replaces the earlier one.
+
+### `SteamGameServer012` 0: candidate `InitGameServer`
+
+- **Recorded** (the same 19 logs): the first call on the
+  `SteamGameServer012` object, right after `SteamClient018`/`019` 7
+  (narrowed: `SetLocalIPBinding`, here with port 7778), 3
+  (`CreateLocalUser`), 6 (`GetISteamGameServer`) and `GetAppID` on the
+  pipe-2 `SteamUtils009` object: `rdx` 0, `r8` 0x1e61 (7777), `r9` 0x6987
+  (27015) in every run of both games; result 1, except 0 in Gravitas's
+  reference run `observe-496`. The only later call on the object is 7
+  (Dark Deception) or 8 (Gravitas) at close.
+- **Fit:** the page's `InitGameServer` takes an IP (`uint32`; the page
+  names `INADDR_ANY` for all local addresses), the game port, the query
+  port, server flags, the app ID of the game the server is for and a
+  version text, and returns true if the server could bind the given
+  address and ports. It is the only function on the page with more than
+  four parameters (the next largest, `GetNextOutgoingPacket`,
+  `HandleIncomingPacket` and `SendUserConnectAndAuthenticate`, have
+  four), so its fifth to seventh arguments (counting `rcx`) are on the
+  stack, which the recordings do not show yet.
+- **Every other function of the page:** `BUpdateUserData`,
+  `SendUserConnectAndAuthenticate`, `SetKeyValue` (a pointer in `r8`),
+  `GetNextOutgoingPacket` and `GetAuthSessionTicket` (a pointer in `r9`)
+  would have a value below 0x10000 where a pointer goes (the lowest 64 KiB
+  are never mapped, as the proxy already assumes for texts); `GetSteamID`
+  and `CreateUnauthenticatedUserConnection` return a `CSteamID`, which
+  under the x64 convention comes back through a hidden pointer in `rdx`
+  (here 0). For all 43, including `HandleIncomingPacket` (null data with
+  7777 bytes), `RequestUserGroupStatus`, `BeginAuthSession`,
+  `UserHasLicenseForApp`, the no-argument `BLoggedOn`, `BSecure`,
+  `WasRestartRequested` and `GetPublicIP`, and the void setters, stack
+  slots 5 to 7 are not arguments: G2 rules them out under A3.
+
+### Experiment 31 (planned 2026-11-22, before the runs)
+
+**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053), added on this
+plan's branch with two new read kinds:
+
+- `("SteamUtils009", 16, Read::Executable("rdx"))`: after the return the
+  proxy logs `after rdx: executable (outside steamclient64)` (or `in
+  steamclient64`, or `not executable`). Only the page protection is asked
+  for (`VirtualQuery`); no byte at the address is read. The candidate
+  passes a function pointer; no candidate passes a ticket, token, password
+  or account identifier.
+- `("SteamGameServer012", 0, Read::StackArguments)`: the proxy logs
+  `stack arguments 5=… 6=… 7=…`, the three stack slots as the call
+  started (argument values, like the registers every call line already
+  shows; 24 bytes), and `N->"…"` for a slot that points to a text (the
+  proxy's usual text rules). For the candidate they are server flags, the
+  app ID and a version text; no function of the page takes a ticket,
+  token or password in these slots (`BeginAuthSession` and
+  `SendUserConnectAndAuthenticate` take theirs in registers and have no
+  slots 5 to 7). Raw logs stay local; the script prints neither values nor
+  texts.
+
+**Assumptions:** A1, a `bool`, 8-, 16- or 32-bit argument or result
+arrives with the upper 32 bits of its register zero, a `bool` as 0 or 1 in
+the lowest byte (as in experiments 23 and 24; about the compiled code, not
+from the pages). A2, a register the game did not set for the call does not
+point into executable memory outside `steamclient64` at every call of
+every run. A3, stack slots that are not arguments of the call do not hold
+the game's app ID in slot 6 and a pointer to a text in slot 7 at the first
+call of every run of both games.
+
+**Predictions** (`tools/shim/experiments/031_hook_and_game_server.py`),
+per game:
+
+- U1: `SteamUtils009` 16 is called at least once; at every call `rdx` has
+  non-zero upper 32 bits and no text behind it.
+- U2: at every call the proxy logged `after rdx: executable (outside
+  steamclient64)`.
+- U3: every call returned, with non-zero upper 32 bits of `rax` and a
+  lowest byte other than 0 and 1.
+- G1: the first `SteamGameServer012` call is position 0, called exactly
+  once; `rdx` has low 32 bits 0, `r8` and `r9` lie in 1..=0xffff and
+  differ.
+- G2: slot 6 of its stack line has low 32 bits equal to the app ID
+  `run.sh` started (`starts.log`), and slot 7 points to a text.
+- G3: its result is 0 or 1.
+
+If U1 to U3 match in both games, `SteamUtils009` 16 is confirmed as
+`SetWarningMessageHook` (under A1 and A2); if G1 to G3 match in both,
+`SteamGameServer012` 0 is confirmed as `InitGameServer` (under A3). A
+mismatch leaves the candidate as it is, with the mismatch noted here; a
+mismatch of only U2 leaves "`SetWarningMessageHook`, `StartVRDashboard`,
+`GetIPCountry` or `GetSteamUILanguage`".
+
+Checked before the plan time on two earlier logs (Gravitas
+`observe-59640`, Dark Deception `observe-62168`, script with the plan
+time disabled): U1, U3, G1 and G3 match; U2 and G2 mismatch, as expected
+without the new reads.
+
+**Runs:** `tools/shim/run.sh 1067310` (Gravitas) and `tools/shim/run.sh
+332950` (Dark Deception), one run each with the default wait (40 s after
+Steam loaded, then the normal close request); both games closed normally
+in every earlier `run.sh` run. Both calls happen in the first 200 ms, so a
+longer run adds nothing. No input in the games is needed. The proxy must
+be rebuilt from this branch first (`cargo build -p reborn-shim-observe`).
+The script needs one log per game, started after the plan commit.

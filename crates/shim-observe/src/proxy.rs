@@ -55,7 +55,11 @@
 //! and only when the call is logged, the proxy also logs after the return
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
-//! started. Calls not on the list are logged as before.
+//! started, or whether that address is executable memory (only the
+//! protection, no byte), or the fifth to seventh arguments from the stack
+//! (counting `rcx`; 24 bytes, the same kind of values as the register
+//! arguments every call line shows) with the text each points to. Calls
+//! not on the list are logged as before.
 //!
 //! Step 4d (ADR 0050): at `rdx` the proxy reads 24 bytes instead of 16.
 //! If bytes 8 to 16 hold an address and bytes 16 to 20 a size of at most
@@ -163,7 +167,27 @@ enum Read {
     /// The first [`READ_BYTES`] at the address this argument register
     /// (`rdx`, `r8` or `r9`) held when the call started.
     OutputBytes(&'static str),
+    /// Whether Windows marks the memory at the address this argument
+    /// register held as executable, and whether it lies in
+    /// `steamclient64`. Only the protection is asked for; no byte there
+    /// is read.
+    Executable(&'static str),
+    /// The fifth to seventh arguments as the call started (counting the
+    /// object in `rcx` as the first; the three stack slots above the 32
+    /// bytes of shadow space, Microsoft's x64 calling convention), and the
+    /// text each points to, if any: argument values like the registers of
+    /// every call line, and at most one text per argument.
+    StackArguments,
 }
+
+/// Offset from the stack pointer at a stub's entry (where the return
+/// address is) to the fifth argument: the return address and the 32 bytes
+/// of shadow space lie below it (Microsoft's x64 calling convention,
+/// <https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>).
+const FIFTH_ARGUMENT: usize = 0x28;
+
+/// How many stack arguments [`Read::StackArguments`] logs.
+const STACK_ARGUMENTS: usize = 3;
 
 /// The calls ADR 0043 allows reads for: interface version text, position,
 /// what is read. An entry is added only with a candidate and an experiment
@@ -205,6 +229,14 @@ const READS: &[(&str, usize, Read)] = &[
     // data; ADR 0053).
     ("SteamClient018", 3, Read::OutputBytes("rdx")),
     ("SteamClient019", 3, Read::OutputBytes("rdx")),
+    // `docs/shim/meanings.md`, experiment 31: candidate
+    // `SetWarningMessageHook` takes a function of the game (whether the
+    // address is executable; no account data).
+    ("SteamUtils009", 16, Read::Executable("rdx")),
+    // `docs/shim/meanings.md`, experiment 31: candidate `InitGameServer`
+    // takes server flags, the game's app ID and a version text as its
+    // fifth to seventh arguments, counting the object (no account data).
+    ("SteamGameServer012", 0, Read::StackArguments),
 ];
 
 /// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).
@@ -624,6 +656,16 @@ enum After {
         register: &'static str,
         address: u64,
     },
+    /// The register's name and the address it held when the call started.
+    Executable {
+        register: &'static str,
+        address: u64,
+    },
+    /// The fifth to seventh arguments as the call started, `None` where
+    /// the stack slot was not readable.
+    Stack {
+        arguments: [Option<u64>; STACK_ARGUMENTS],
+    },
 }
 
 thread_local! {
@@ -918,7 +960,9 @@ extern "C" fn observe_method(
         let call = METHOD_CALLS[number].fetch_add(1, Ordering::Relaxed) + 1;
         let logged = should_log(call);
         // Step 4c: the registers as the call started, before any swap.
-        let after = logged.then(|| after_for(&info.name, slot, saved)).flatten();
+        let after = logged
+            .then(|| after_for(&info.name, slot, saved, entry_rsp))
+            .flatten();
         let shadow = logged.then(|| shadow_for(&info.name, slot)).flatten();
         let swapped = swap_stand_ins(saved, false);
         if logged {
@@ -1234,22 +1278,35 @@ fn hex_at(address: u64) -> String {
 
 /// Step 4c of ADR 0043: the read for a call at `slot` of the object asked
 /// for with `interface`, if [`READS`] lists it. Output addresses are taken
-/// from `saved` as the call started.
-fn after_for(interface: &str, slot: usize, saved: &Saved) -> Option<After> {
+/// from `saved` as the call started; stack arguments from above
+/// `entry_rsp`, the stack pointer at the stub's entry.
+fn after_for(interface: &str, slot: usize, saved: &Saved, entry_rsp: usize) -> Option<After> {
     let &(_, _, read) = READS
         .iter()
         .find(|&&(name, position, _)| name == interface && position == slot)?;
+    let register_value = |register: &str| match register {
+        "rdx" => Some(saved.rdx),
+        "r8" => Some(saved.r8),
+        "r9" => Some(saved.r9),
+        _ => None,
+    };
     match read {
         Read::ResultText => Some(After::ResultText),
-        Read::OutputBytes(register) => {
-            let address = match register {
-                "rdx" => saved.rdx,
-                "r8" => saved.r8,
-                "r9" => saved.r9,
-                _ => return None,
-            };
-            Some(After::Bytes { register, address })
-        }
+        Read::OutputBytes(register) => Some(After::Bytes {
+            register,
+            address: register_value(register)?,
+        }),
+        Read::Executable(register) => Some(After::Executable {
+            register,
+            address: register_value(register)?,
+        }),
+        Read::StackArguments => Some(After::Stack {
+            arguments: core::array::from_fn(|index| {
+                entry_rsp
+                    .checked_add(FIFTH_ARGUMENT + 8 * index)
+                    .and_then(read_u64)
+            }),
+        }),
     }
 }
 
@@ -1324,6 +1381,43 @@ fn describe_after(rax: u64, after: After) -> String {
         },
         After::Bytes { register, address } => {
             format!("after {register}->{}", hex_at(address))
+        }
+        After::Executable { register, address } => {
+            let executable = usize::try_from(address).is_ok_and(is_executable);
+            let place = match MODULE.get() {
+                Some(&(base, end)) if executable => {
+                    if usize::try_from(address).is_ok_and(|at| (base..end).contains(&at)) {
+                        " (in steamclient64)"
+                    } else {
+                        " (outside steamclient64)"
+                    }
+                }
+                _ => "",
+            };
+            let verdict = if executable {
+                "executable"
+            } else {
+                "not executable"
+            };
+            format!("after {register}: {verdict}{place}")
+        }
+        After::Stack { arguments } => {
+            let mut text = "stack arguments".to_owned();
+            for (index, argument) in arguments.into_iter().enumerate() {
+                let number = index + 5;
+                match argument {
+                    Some(value) => {
+                        let _ = write!(text, " {number}=0x{value:x}");
+                        if let Some(pointed) = ascii_at(value) {
+                            let _ = write!(text, " {number}->\"{pointed}\"");
+                        }
+                    }
+                    None => {
+                        let _ = write!(text, " {number}=not readable");
+                    }
+                }
+            }
+            text
         }
     }
 }
@@ -1880,51 +1974,129 @@ mod tests {
     fn reads_only_for_listed_calls() {
         let registers = saved(0x1111_0000, 0x2222_0000, 0x3333_0000);
         assert_eq!(
-            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12, &registers),
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12, &registers, 0),
             Some(After::ResultText)
         );
         assert_eq!(
-            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 6, &registers),
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 6, &registers, 0),
             Some(After::Bytes {
                 register: "r8",
                 address: 0x2222_0000
             })
         );
         assert_eq!(
-            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 4, &registers),
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 4, &registers, 0),
             None,
             "another position"
         );
         assert_eq!(
-            after_for("STEAMUSERSTATS_INTERFACE_VERSION013", 12, &registers),
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION013", 12, &registers, 0),
             None,
             "another version"
         );
-        assert_eq!(after_for("SteamUser020", 2, &registers), None);
+        assert_eq!(after_for("SteamUser020", 2, &registers, 0), None);
         assert_eq!(
-            after_for("STEAMINVENTORY_INTERFACE_V003", 6, &registers),
+            after_for("STEAMINVENTORY_INTERFACE_V003", 6, &registers, 0),
             Some(After::Bytes {
                 register: "rdx",
                 address: 0x1111_0000
             })
         );
         assert_eq!(
-            after_for("STEAMINVENTORY_INTERFACE_V003", 1, &registers),
+            after_for("STEAMINVENTORY_INTERFACE_V003", 1, &registers, 0),
             Some(After::Bytes {
                 register: "r9",
                 address: 0x3333_0000
             })
         );
         assert_eq!(
-            after_for("STEAMINVENTORY_INTERFACE_V003", 2, &registers),
+            after_for("STEAMINVENTORY_INTERFACE_V003", 2, &registers, 0),
             None
         );
         for &(interface, position, _) in READS {
             assert!(
-                after_for(interface, position, &registers).is_some(),
+                after_for(interface, position, &registers, 0).is_some(),
                 "every entry names a known register"
             );
         }
+    }
+
+    #[test]
+    fn experiment_31_reads() {
+        let registers = saved(0x1111_0000, 0x2222_0000, 0x3333_0000);
+        assert_eq!(
+            after_for("SteamUtils009", 16, &registers, 0),
+            Some(After::Executable {
+                register: "rdx",
+                address: 0x1111_0000
+            })
+        );
+        assert_eq!(after_for("SteamUtils010", 16, &registers, 0), None);
+        // A made-up stack: the return address at entry, 32 bytes of shadow
+        // space, then the fifth to seventh arguments.
+        let version = c"1.0.0.0";
+        let stack: [u64; 8] = [0, 0, 0, 0, 0, 0, 1_067_310, version.as_ptr() as u64];
+        let entry_rsp = stack.as_ptr() as usize;
+        let after = after_for("SteamGameServer012", 0, &registers, entry_rsp);
+        assert_eq!(
+            after,
+            Some(After::Stack {
+                arguments: [Some(0), Some(1_067_310), Some(version.as_ptr() as u64)]
+            })
+        );
+        let line = describe_after(1, after.unwrap());
+        assert!(
+            line.starts_with("stack arguments 5=0x0 6=0x10492e 7=0x"),
+            "{line}"
+        );
+        assert!(line.ends_with(" 7->\"1.0.0.0\""), "{line}");
+        assert_eq!(
+            after_for("SteamGameServer012", 1, &registers, entry_rsp),
+            None
+        );
+        assert_eq!(
+            describe_after(
+                1,
+                After::Stack {
+                    arguments: [None, Some(3), None]
+                }
+            ),
+            "stack arguments 5=not readable 6=0x3 7=not readable"
+        );
+    }
+
+    #[test]
+    fn logs_whether_an_address_is_executable() {
+        let code = logs_whether_an_address_is_executable as *const () as usize as u64;
+        let line = describe_after(
+            0,
+            After::Executable {
+                register: "rdx",
+                address: code,
+            },
+        );
+        assert!(line.starts_with("after rdx: executable"), "{line}");
+        let data = [0u8; 16];
+        assert_eq!(
+            describe_after(
+                0,
+                After::Executable {
+                    register: "rdx",
+                    address: data.as_ptr() as u64
+                }
+            ),
+            "after rdx: not executable"
+        );
+        assert_eq!(
+            describe_after(
+                0,
+                After::Executable {
+                    register: "rdx",
+                    address: 0x1000
+                }
+            ),
+            "after rdx: not executable"
+        );
     }
 
     #[test]

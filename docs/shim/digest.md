@@ -16,6 +16,13 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: answer mode for `BIsSubscribed` in the shim (parallel
+  agent, no runs; maintainer OK in PR #34): `STEAMAPPS_INTERFACE_VERSION008`
+  object with position 0 answered by `rebornd`'s `AppOwnership` for the
+  session's app (1 or 0); `Unavailable` or a lost daemon stops the game.
+  The shim keeps its `Hello` connection, exchanges run under one lock with
+  their own ids, one reconnect per run. Every other position, 7 included,
+  stops. PR #35.
 - 2026-11-22: first live shadow run with real account data (ADR 0055):
   `BIsSubscribed` shadow **matched** in Dark Deception, A Park Full of
   Cats and An Arcade Full of Cats; `rebornd` and the official client were

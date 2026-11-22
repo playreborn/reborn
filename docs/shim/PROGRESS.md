@@ -6,7 +6,7 @@ saves on a computer where the official Steam client was never
 installed. Written for people, not for tools; the detailed records are
 linked at the end.
 
-**Last updated:** 2026-11-22 (first live shadow run with real data).
+**Last updated:** 2026-11-22 (`BIsSubscribed` answered via `rebornd` in shim mode).
 
 ## In one sentence
 
@@ -21,7 +21,7 @@ but no game runs fully without Steam yet: **M4 is about 15 to 20 % done**
 | Steam functions whose meaning is confirmed | 130 of the 205 positions our 20 games call | **63 %** |
 | Of those, answered by the shim itself | connecting to Steam, handing out the interfaces, cleaning up at exit, the app ID, the battery level | **about 40 %** of all positions |
 | Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing), and the shim has that delivery machinery (a queue per handle, handing over and freeing); no callback content is in the shim yet, so it delivers nothing to games; 3 of 15 recorded message types have a confirmed meaning ("stats received", "stats stored", "call completed") | **about 25 %** |
-| Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | ADR 0055 accepted; stage 0 started: `rebornd` answers `AppOwnership` over the shim channel for the game and the DLC its depots name (strict, other apps refused), from the account's licence list loaded at a shim-mode launch; it also answers `RequestStats` for the run's own app (`Accepted`, then the event `StatsReceived` with Valve's result and English achievement names, from `Session::user_stats`, one `ClientGetUserStats` per run, no writes); read-only shadow sessions: `reborn-observe arm --app` registers the game with a signed-in `rebornd`, the proxy claims it and compares `BIsSubscribed` with Reborn's answer (match or mismatch only; any logoff stops it) — first live run matched in 3 of 3 games; the shim does not ask yet, so no game gets real data; stores and cloud still to come | **about 10 %** (estimate; shadow-verified ownership; no game answered by Reborn yet) |
+| Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | ADR 0055 accepted; stage 0 started: `rebornd` answers `AppOwnership` over the shim channel for the game and the DLC its depots name (strict, other apps refused), from the account's licence list loaded at a shim-mode launch; it also answers `RequestStats` for the run's own app (`Accepted`, then the event `StatsReceived` with Valve's result and English achievement names, from `Session::user_stats`, one `ClientGetUserStats` per run, no writes); read-only shadow sessions: `reborn-observe arm --app` registers the game with a signed-in `rebornd`, the proxy claims it and compares `BIsSubscribed` with Reborn's answer (match or mismatch only; any logoff stops it) — first live run matched in 3 of 3 games; in shim mode the shim now answers `BIsSubscribed` (`STEAMAPPS_INTERFACE_VERSION008` 0) with `rebornd`'s `AppOwnership` for the game itself (maintainer OK; no answer from `rebornd` stops the game); DLC (position 7), stats, stores and cloud still to come, so no game runs on it yet | **about 10 %** (estimate; one ownership call answered by Reborn in the shim, not yet run in a game) |
 | Games that run with no Steam installed | not tested on a clean computer yet | **0 of 20** |
 | **M4 overall** (estimate) | | **about 15–20 %** |
 
@@ -46,12 +46,16 @@ first two rows are counts from [`coverage.md`](coverage.md).
   - `SteamClient020`, `021`, `023`: the connection to Steam, handing out
     the other interfaces, cleaning up when the game closes;
   - `SteamUtils009`, `010`: the app ID and the battery level;
+  - `STEAMAPPS_INTERFACE_VERSION008` position 0 (`BIsSubscribed`): whether
+    the account owns the game, asked from `rebornd` per call (ADR 0055;
+    the first real account data in the shim); every other position of
+    that object, DLC included, still stops the game;
   - callback delivery: `Steam_BGetCallback` and `Steam_FreeLastCallback`
     hand over and free queued callbacks as experiment 19 confirmed;
     nothing fills the queue yet (callback contents must come from
     `rebornd`).
 - **Confirmed but not in the shim yet** (they need real data from Valve):
-  - whether the game and its DLC are owned;
+  - whether the game's DLC are owned;
   - cloud saves: write, read, file size;
   - stats: request at start, store at close; achievement display data;
   - reading images, starting controller input, an inventory

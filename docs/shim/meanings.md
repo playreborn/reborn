@@ -1523,6 +1523,38 @@ from Valve's servers through `rebornd`.
 - Scripts from now on also reject logs recorded before their plan
   commit (`LOOP.md`).
 
+**Shadow mode** (ADR 0046 as amended by ADR 0055, stage 1:
+`RequestCurrentStats` "compared by 0x44d's size and a hash of its
+confirmed fields"; added 2026-11-22, **planned, not run yet**): when
+`Steam_BGetCallback` returns 1 with a 0x44d header, the proxy reads the
+payload size and only payload bytes 0..12, and hands them to its shadow
+worker thread (the bounded queue of the `BIsSubscribed` shadow; never on
+the game's thread). The worker sends `RequestStats` on the read-only
+shadow session `reborn-observe arm --app` registered and waits up to
+30 s for `rebornd`'s `StatsReceived`. **Match** means: size 24, bytes
+0..4 equal to the app given to `arm` (the session's own app, the only
+one `RequestStats` answers), and bytes 8..12 equal to the `EResult` of
+`StatsReceived`. The fields are compared directly rather than by a
+hash; only the verdict is logged, so the effect is the same. The log
+line says only `shadow match`, `shadow mismatch` (not which field), or
+`shadow: no Reborn answer (<reason>)`, never the values. The game always
+gets the official callback unchanged.
+
+Left out on purpose:
+
+- bytes 12..20 (read as the user's Steam ID): not read and not compared
+  until the experiment from the review findings above has compared them
+  with the account's own Steam ID (ADR 0055, stage 0);
+- bytes 4..8 (never checked) and 20..24 (unexplained);
+- achievement names: 0x44d carries none; ADR 0055 shadows them
+  separately, through `GetAchievementDisplayAttribute`.
+
+A limit to keep in mind for the run: a 0x44d that answers a
+`RequestUserStats` for another user (experiment 22) would be compared
+with the account's own stats and may show a mismatch. The three
+`…VERSION011` games, Cave Crawlers, Gravitas and Dark Deception, got
+exactly one 0x44d per run in experiments 20 and 21.
+
 ## Callback delivery: `Steam_BGetCallback`, `Steam_FreeLastCallback`, `Steam_GetAPICallResult` (loop iteration 9b)
 
 Pages read 2026-11-22, both opened without signing in:

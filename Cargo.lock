@@ -3842,6 +3842,14 @@ name = "reborn-proto"
 version = "0.2.0"
 
 [[package]]
+name = "reborn-shim"
+version = "0.2.0"
+dependencies = [
+ "interprocess",
+ "reborn-shim-protocol",
+]
+
+[[package]]
 name = "reborn-shim-observe"
 version = "0.2.0"
 dependencies = [

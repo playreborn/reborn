@@ -277,5 +277,19 @@
       "candidate",
       "GetPersonaName"
     ]
+  },
+  "STEAMINVENTORY_INTERFACE_V003": {
+    "6": [
+      "candidate",
+      "GetAllItems"
+    ],
+    "1": [
+      "candidate",
+      "GetResultItems"
+    ],
+    "3": [
+      "candidate",
+      "GetResultTimestamp"
+    ]
   }
 }

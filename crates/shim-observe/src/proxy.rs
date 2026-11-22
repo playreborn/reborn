@@ -155,6 +155,12 @@ const READS: &[(&str, usize, Read)] = &[
         6,
         Read::OutputBytes("r8"),
     ),
+    // `docs/shim/meanings.md`, experiment 14: candidate `GetAllItems`
+    // writes a result handle at the address in `rdx`.
+    ("STEAMINVENTORY_INTERFACE_V003", 6, Read::OutputBytes("rdx")),
+    // `docs/shim/meanings.md`, experiment 14: candidate `GetResultItems`
+    // writes a number of items at the address in `r9`.
+    ("STEAMINVENTORY_INTERFACE_V003", 1, Read::OutputBytes("r9")),
 ];
 
 /// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).
@@ -1545,6 +1551,24 @@ mod tests {
             "another version"
         );
         assert_eq!(after_for("SteamUser020", 2, &registers), None);
+        assert_eq!(
+            after_for("STEAMINVENTORY_INTERFACE_V003", 6, &registers),
+            Some(After::Bytes {
+                register: "rdx",
+                address: 0x1111_0000
+            })
+        );
+        assert_eq!(
+            after_for("STEAMINVENTORY_INTERFACE_V003", 1, &registers),
+            Some(After::Bytes {
+                register: "r9",
+                address: 0x3333_0000
+            })
+        );
+        assert_eq!(
+            after_for("STEAMINVENTORY_INTERFACE_V003", 2, &registers),
+            None
+        );
         for &(interface, position, _) in READS {
             assert!(
                 after_for(interface, position, &registers).is_some(),

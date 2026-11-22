@@ -1162,3 +1162,47 @@ that. Under ADR 0051, positions 0 and 10 of
 as `Init`. Not in the shim yet: neither interface has an object there, and
 an honest answer to `RequestCurrentStats` needs the stats from Valve's
 servers and the callbacks (ADR 0050).
+
+## `STEAMINVENTORY_INTERFACE_V003`: result handles (loop iteration 6)
+
+Page read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamInventory>.
+
+- **Recorded** (reference runs of Cave Crawlers and Bongo Cat):
+  - Position 6: `rdx` an address on the stack, result 1 (Cave Crawlers 7
+    calls, Bongo Cat 1). In Cave Crawlers three calls in a row were
+    followed by position 1 calls whose `rdx` held 2, 3 and 4.
+  - Position 1: `rdx` a small number in its low 32 bits (0 to 7), `r8` 0 or
+    an address, `r9` an address, result 1. Bongo Cat called it twice for
+    the same number, first with `r8` 0, then with an address.
+  - Position 3 (Bongo Cat): `rdx` the same kind of small number, the
+    result's low 32 bits a number that read as a Unix time is the day of
+    the reference run.
+- **Fit:** the page documents `GetAllItems(SteamInventoryResult_t
+  *pResultHandle)`, which returns true and "a new result handle" through
+  the pointer; `GetResultItems(resultHandle, pOutItemsArray,
+  punOutItemsArraySize)`, where a NULL array returns "the number of
+  elements the array needs to hold"; and `GetResultTimestamp(resultHandle)`,
+  which returns "Unix epoch time". `GetItemsByID` also writes a handle, but
+  takes a count as its third argument, and `r9` held an address in Cave
+  Crawlers. Candidates: 6 `GetAllItems`, 1 `GetResultItems`, 3
+  `GetResultTimestamp`.
+
+### Experiment 14 (planned 2026-11-22, before the runs)
+
+The proxy now reads, after the call returns (ADR 0043), the first 16
+bytes at `rdx` for position 6 and at `r9` for position 1. Agent runs of
+Cave Crawlers and Bongo Cat, each closed by a close request.
+
+**Predictions** (`tools/shim/experiments/014_inventory_handles.py`):
+
+- A (both games): position 6 is called at least once; every logged call
+  returns true, and the first four bytes at `rdx` after it are a handle
+  below 0x10000 that a later position 1 call has in the low 32 bits of
+  `rdx`.
+- B (Bongo Cat): position 3 is called at least once; each result's low
+  32 bits are a Unix time within one day of the log's last write, and its
+  `rdx` is a handle also given to position 1.
+
+Position 1 is recorded, not predicted (the item count it writes is read
+but not part of a prediction). Each log must be recorded by `run.sh` for
+its game in `starts.log`, one log per game.

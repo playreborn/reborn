@@ -12,8 +12,6 @@ Positions recorded: 205; confirmed: 97; open: 108.
 | not known | 3 | `SteamClient020` | 22 |  |
 | not known | 3 | `SteamClient021` | 22 |  |
 | not known | 3 | `SteamUtils010` | 34 |  |
-| not known | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 |  |
-| not known | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 |  |
 | not known | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 |  |
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 |  |
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 5 |  |
@@ -25,7 +23,6 @@ Positions recorded: 205; confirmed: 97; open: 108.
 | not known | 2 | `SteamUser020` | 12 |  |
 | not known | 2 | `SteamUtils009` | 16 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 2 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 3 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 5 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 11 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 13 |  |
@@ -112,7 +109,10 @@ Positions recorded: 205; confirmed: 97; open: 108.
 | candidate | 3 | `SteamInput006` | 6 | GetConnectedControllers |
 | candidate | 3 | `SteamUser021` | 2 | GetSteamID |
 | candidate | 2 | `STEAMAPPS_INTERFACE_VERSION008` | 4 | GetCurrentGameLanguage or GetAvailableGameLanguages |
+| candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 | GetResultItems |
+| candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 | GetAllItems |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 3 | GetResultTimestamp |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |

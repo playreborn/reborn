@@ -4065,3 +4065,14 @@ experiment 31: match
 As fixed beforehand: `SteamUtils009` 16 is confirmed as
 "`SetWarningMessageHook` (experiment 31, under A1 and A2)" and
 `SteamGameServer012` 0 as "`InitGameServer` (experiment 31, under A3)".
+
+Now in the shim (`crates/shim/src/objects.rs`, `set_warning_message_hook`):
+`SteamUtils009` 16 accepts the hook and returns nothing, as this
+experiment confirmed (the game reads no result, U3). Not calling the hook
+and not storing it is Reborn's choice, not a recorded behaviour: the shim
+has no warning messages to pass on, and no recording shows what a hook
+call would carry. No shadow-mode entry: there is no result to compare.
+`SteamUtils010` 16 was never recorded and stays a stop.
+`SteamGameServer012` 0 is not in the shim: the shim has no
+`SteamGameServer…` object and no objects for the game server pipe
+(experiment 24).

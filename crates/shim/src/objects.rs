@@ -370,11 +370,32 @@ fn add_utils(table: &mut [usize; SLOTS]) {
     table[14] = get_current_battery_power as *const () as usize;
 }
 
+/// `SetWarningMessageHook`, `SteamUtils009` position 16, confirmed
+/// "(experiment 31, under A1 and A2)" (`meanings.md`, "`SteamUtils009` 16:
+/// candidate `SetWarningMessageHook`" and experiment 31): the game passes
+/// one of its own functions in `rdx` (an executable address outside
+/// `steamclient64`, U1 and U2) and reads no result (`rax` was leftover at
+/// every call, U3). The meaning is from Valve's public `ISteamUtils` page
+/// (<https://partner.steamgames.com/doc/api/ISteamUtils>), as read for
+/// that experiment: a function pointer, void (the table in `meanings.md`).
+///
+/// Reborn's choice, not a recording: the hook is accepted and **never
+/// called**, and nothing is stored. The shim has no warning messages of
+/// its own to pass on, and calling into a game function whose arguments
+/// no recording shows would be a guess. A later hook replacing an earlier
+/// one (Dark Deception sets it twice on one object) needs nothing either.
+/// The address is never read or logged. No shadow-mode entry: there is no
+/// result to compare (LOOP.md step 7 asks for one only where Reborn
+/// computes an answer). Only 009: `SteamUtils010` position 16 was never
+/// recorded, so it stays a stop.
+extern "C" fn set_warning_message_hook(_this: *const Object, _hook: *const c_void) {}
+
 fn utils_009() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
         let mut table = stubs!("SteamUtils009");
         add_utils(&mut table);
+        table[16] = set_warning_message_hook as *const () as usize;
         Built::new(table)
     })
 }
@@ -688,6 +709,39 @@ mod tests {
                 unsafe { std::mem::transmute(slot_of(version, 14)) };
             let value = power(object(version).cast());
             assert!(value == 255 || value <= 100, "{version}: {value}");
+        }
+    }
+
+    #[test]
+    fn utils_009_accepts_the_warning_hook_and_never_calls_it() {
+        static CALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        extern "C" fn hook(_severity: i32, _text: *const c_char) {
+            CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        assert_eq!(
+            slot_of("SteamUtils009", 16),
+            set_warning_message_hook as *const () as usize
+        );
+        // SAFETY: position 16 of 009 holds `set_warning_message_hook`,
+        // with this signature.
+        let set: extern "C" fn(*const Object, *const c_void) =
+            unsafe { std::mem::transmute(slot_of("SteamUtils009", 16)) };
+        let utils = object("SteamUtils009").cast::<Object>().cast_const();
+        // Twice, as Dark Deception does, then a null hook.
+        set(utils, hook as *const () as *const c_void);
+        set(utils, hook as *const () as *const c_void);
+        set(utils, std::ptr::null());
+        assert!(!CALLED.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn warning_hook_is_only_at_009_position_16() {
+        let hook = set_warning_message_hook as *const () as usize;
+        for position in 0..SLOTS {
+            assert_ne!(slot_of("SteamUtils010", position), hook, "010 {position}");
+        }
+        for position in (0..SLOTS).filter(|&p| p != 16) {
+            assert_ne!(slot_of("SteamUtils009", position), hook, "009 {position}");
         }
     }
 

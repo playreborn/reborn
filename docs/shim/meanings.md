@@ -3995,3 +3995,28 @@ in every earlier `run.sh` run. Both calls happen in the first 200 ms, so a
 longer run adds nothing. No input in the games is needed. The proxy must
 be rebuilt from this branch first (`cargo build -p reborn-shim-observe`).
 The script needs one log per game, started after the plan commit.
+
+**Result of experiment 31** (agent runs by the main session after the
+plan time 20:53:50, proxy built from the plan branch; logs recorded by
+`run.sh`: `observe-59048` Gravitas, `observe-64816` Dark Deception; both
+closed normally): **match**, checked by the script.
+
+```text
+observe-59048.log (Gravitas) U1: 2 calls of position 16, 0 with a small, missing or text rdx -> match
+observe-59048.log (Gravitas) U2: 0 calls without the line 'after rdx: executable (outside steamclient64)' -> match
+observe-59048.log (Gravitas) U3: 0 calls without a result of the leftover shape -> match
+observe-59048.log (Gravitas) G1: 2 SteamGameServer012 calls, first is position 0: True, 1 calls of position 0 -> match
+observe-59048.log (Gravitas) G2: slot 6 is the app ID: True, slot 7 points to a text: True -> match
+observe-59048.log (Gravitas) G3: result 1 -> match
+observe-64816.log (Dark Deception) U1: 3 calls of position 16, 0 with a small, missing or text rdx -> match
+observe-64816.log (Dark Deception) U2: 0 calls without the line 'after rdx: executable (outside steamclient64)' -> match
+observe-64816.log (Dark Deception) U3: 0 calls without a result of the leftover shape -> match
+observe-64816.log (Dark Deception) G1: 2 SteamGameServer012 calls, first is position 0: True, 1 calls of position 0 -> match
+observe-64816.log (Dark Deception) G2: slot 6 is the app ID: True, slot 7 points to a text: True -> match
+observe-64816.log (Dark Deception) G3: result 1 -> match
+experiment 31: match
+```
+
+As fixed beforehand: `SteamUtils009` 16 is confirmed as
+"`SetWarningMessageHook` (experiment 31, under A1 and A2)" and
+`SteamGameServer012` 0 as "`InitGameServer` (experiment 31, under A3)".

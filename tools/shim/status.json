@@ -240,8 +240,8 @@
       "GetCurrentBatteryPower"
     ],
     "16": [
-      "candidate",
-      "SetWarningMessageHook (experiment 31)"
+      "confirmed",
+      "SetWarningMessageHook (experiment 31, under A1 and A2)"
     ]
   },
   "SteamUtils010": {
@@ -542,8 +542,8 @@
   },
   "SteamGameServer012": {
     "0": [
-      "candidate",
-      "InitGameServer (experiment 31)"
+      "confirmed",
+      "InitGameServer (experiment 31, under A3)"
     ]
   }
 }

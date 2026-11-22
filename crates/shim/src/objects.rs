@@ -69,7 +69,7 @@ macro_rules! stubs {
 /// every recorded run; their meaning is only that later calls pass them
 /// back (experiment 7).
 const PIPE: i32 = 1;
-const USER: i32 = 1;
+pub(crate) const USER: i32 = 1;
 
 /// `CreateSteamPipe` confirmed in experiment 7.
 extern "C" fn create_steam_pipe(_this: *const Object) -> i32 {

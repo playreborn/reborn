@@ -19,8 +19,18 @@
 //! - `SteamUtils009` and `SteamUtils010` position 9, `GetAppID`
 //!   (`meanings.md`, experiments 3 to 5 and 15, confirmed), and position
 //!   14, `GetCurrentBatteryPower` (experiments 10 and 15, confirmed).
+//! - `Steam_BGetCallback` and `Steam_FreeLastCallback`: handing over and
+//!   freeing queued callbacks (`meanings.md`, experiment 19, confirmed
+//!   for the header's number, address and size and the poll and free
+//!   order; bytes 0..4 and 20..24 written as recorded, candidates). The
+//!   queue (`callbacks`) has no source of callbacks yet: no callback
+//!   content is confirmed for the shim, so nothing is delivered to a game
+//!   today.
+//! - `Steam_GetAPICallResult` and `Steam_ReleaseThreadLocalMemory`: not
+//!   answered (no confirmed meaning).
 #![allow(unsafe_code)]
 
+mod callbacks;
 mod objects;
 mod power;
 mod session;
@@ -125,26 +135,136 @@ pub unsafe extern "C" fn CreateInterface(version: *const c_char) -> *mut c_void 
     result.unwrap_or_else(|_| std::process::abort())
 }
 
-/// `Steam_BGetCallback`: meaning not confirmed yet (`entry-points.md`).
+/// `Steam_BGetCallback`: hands the game the next callback queued for the
+/// handle in `rcx` (`crate::callbacks`).
+///
+/// Provenance: `docs/shim/meanings.md`, "Callback delivery …" (loop
+/// iteration 9b), result of experiment 19, and `docs/shim/entry-points.md`
+/// (stage 2 part 3, steps 4b and 4d):
+///
+/// - `rcx` is a handle (1 or 2 in the recordings, compared on its low 32
+///   bits), read here as `i32`; whether it is the pipe or the user handle
+///   stays a candidate, the queue is keyed by it either way.
+/// - `rdx` points to the 24 bytes the game gets: written as experiment 19
+///   confirmed (see `crate::callbacks`).
+/// - `r8` held another stack address near `rdx`, but the 16 bytes there
+///   showed no shared pattern and whether the client writes them is not
+///   known (step 4b). Its meaning is not established, so the shim does not
+///   take or touch it.
+/// - The result: 1 when a callback was handed over (confirmed, D). 0 when
+///   nothing was handed over is the observed reading: in every recording
+///   the lowest byte was only 0 or 1, with a free after every 1 and never
+///   after a 0 (D). Only the lowest byte is returned; the upper bits of
+///   `rax` held leftovers in the recordings (`0xffffff00`).
+///
+/// A null `rdx`, or a poll while the last callback is not freed yet, was
+/// never recorded and has no confirmed answer: logged, and the process
+/// ends.
+///
+/// # Safety
+///
+/// `header` must be null or point to 24 writable bytes, as the recorded
+/// calls pass a stack address there.
 #[unsafe(no_mangle)]
-pub extern "C" fn Steam_BGetCallback() -> u8 {
-    not_implemented("Steam_BGetCallback")
+pub unsafe extern "C" fn Steam_BGetCallback(pipe: i32, header: *mut u8) -> u8 {
+    let result = std::panic::catch_unwind(|| {
+        if header.is_null() {
+            not_implemented("Steam_BGetCallback with a null header pointer");
+        }
+        match callbacks::fetch(pipe) {
+            callbacks::Fetch::Empty => 0,
+            callbacks::Fetch::Delivered(bytes) => {
+                // SAFETY: `header` is not null and points to 24 writable
+                // bytes (the function's safety section); `bytes` is a
+                // local array, so the ranges do not overlap. A byte copy
+                // needs no alignment.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), header, callbacks::HEADER_SIZE)
+                };
+                1
+            }
+            callbacks::Fetch::StillHeld => {
+                not_implemented("Steam_BGetCallback before the last callback was freed")
+            }
+        }
+    });
+    result.unwrap_or_else(|_| std::process::abort())
 }
 
-/// `Steam_FreeLastCallback`: meaning not confirmed yet.
+/// `Steam_FreeLastCallback`: releases the callback last handed over for
+/// the handle in `rcx`; its data stays valid until then.
+///
+/// Provenance: `docs/shim/meanings.md`, experiment 19 (D, A2: exactly one
+/// free per header, on the same `rcx`, before the next poll, never
+/// without a header). The result: `rax` was 0 in every recorded call
+/// (`docs/shim/entry-points.md`, stage 2 part 3), so the whole register
+/// is 0 here. `rdx`, `r8` and `r9` held leftovers (`r8` the payload size
+/// in Dark Deception, an address in Bongo Cat; `meanings.md`, loop
+/// iteration 9b) and are not taken.
+///
+/// A free with nothing held was never recorded and has no confirmed
+/// answer: logged, and the process ends.
 #[unsafe(no_mangle)]
-pub extern "C" fn Steam_FreeLastCallback() -> u8 {
-    not_implemented("Steam_FreeLastCallback")
+pub extern "C" fn Steam_FreeLastCallback(pipe: i32) -> u64 {
+    let result = std::panic::catch_unwind(|| match callbacks::free_last(pipe) {
+        callbacks::Free::Freed => 0,
+        callbacks::Free::NothingHeld => {
+            not_implemented("Steam_FreeLastCallback without a held callback")
+        }
+    });
+    result.unwrap_or_else(|_| std::process::abort())
 }
 
-/// `Steam_GetAPICallResult`: meaning not confirmed yet.
+/// `Steam_GetAPICallResult`: not answered. Experiment 19 confirmed only
+/// when games call it (inside a 703 callback, once per 703); what 703
+/// holds and which function the export is stays open until F is checked
+/// (`docs/shim/meanings.md`, loop iteration 9b).
 #[unsafe(no_mangle)]
 pub extern "C" fn Steam_GetAPICallResult() -> u8 {
     not_implemented("Steam_GetAPICallResult")
 }
 
-/// `Steam_ReleaseThreadLocalMemory`: meaning not confirmed yet.
+/// `Steam_ReleaseThreadLocalMemory`: meaning not confirmed yet (Dark
+/// Deception calls it, `docs/shim/meanings.md`, loop iteration 9b; no
+/// experiment has tested a meaning).
 #[unsafe(no_mangle)]
 pub extern "C" fn Steam_ReleaseThreadLocalMemory() {
     not_implemented("Steam_ReleaseThreadLocalMemory")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Handles not used by the tests of `callbacks`.
+
+    #[test]
+    fn poll_with_an_empty_queue_returns_0_and_writes_nothing() {
+        let mut header = [0xeeu8; callbacks::HEADER_SIZE];
+        // SAFETY: `header` is 24 writable bytes.
+        let result = unsafe { Steam_BGetCallback(200, header.as_mut_ptr()) };
+        assert_eq!(result, 0);
+        assert_eq!(header, [0xee; callbacks::HEADER_SIZE]);
+    }
+
+    #[test]
+    fn poll_writes_the_header_and_free_returns_0() {
+        callbacks::enqueue(201, 1101, &[5; 24]).unwrap();
+        let mut header = [0xeeu8; callbacks::HEADER_SIZE];
+        // SAFETY: `header` is 24 writable bytes.
+        let result = unsafe { Steam_BGetCallback(201, header.as_mut_ptr()) };
+        assert_eq!(result, 1);
+        assert_eq!(header[0..8], [1, 0, 0, 0, 0x4d, 0x04, 0, 0]);
+        assert_eq!(header[16..24], [24, 0, 0, 0, 0, 0, 0, 0]);
+        let mut address = [0u8; 8];
+        address.copy_from_slice(&header[8..16]);
+        let address = u64::from_le_bytes(address) as usize as *const u8;
+        // SAFETY: the callback is held until the free below.
+        let data = unsafe { std::slice::from_raw_parts(address, 24) };
+        assert_eq!(data, &[5; 24]);
+        assert_eq!(Steam_FreeLastCallback(201), 0);
+        // SAFETY: as above.
+        let result = unsafe { Steam_BGetCallback(201, header.as_mut_ptr()) };
+        assert_eq!(result, 0, "drained");
+    }
 }

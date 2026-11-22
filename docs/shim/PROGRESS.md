@@ -6,7 +6,8 @@ saves on a computer where the official Steam client was never
 installed. Written for people, not for tools; the detailed records are
 linked at the end.
 
-**Last updated:** 2026-11-22 (after loop iteration 10a).
+**Last updated:** 2026-11-22 (after loop iteration 10a and callback
+delivery in the shim).
 
 ## In one sentence
 
@@ -20,7 +21,7 @@ but no game runs fully without Steam yet: **M4 is about 15 to 20 % done**
 | --- | --- | --- |
 | Steam functions whose meaning is confirmed | 109 of the 205 positions our 20 games call | **53 %** |
 | Of those, answered by the shim itself | connecting to Steam, handing out the interfaces, cleaning up at exit, the app ID, the battery level | **about 40 %** of all positions |
-| Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing); 3 of 15 recorded message types have a confirmed meaning ("stats received", "stats stored", "call completed") | **about 25 %** |
+| Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing), and the shim has that delivery machinery (a queue per handle, handing over and freeing); no callback content is in the shim yet, so it delivers nothing to games; 3 of 15 recorded message types have a confirmed meaning ("stats received", "stats stored", "call completed") | **about 25 %** |
 | Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | some meanings known, nothing connected to `rebornd` yet | **0 %** |
 | Games that run with no Steam installed | not tested on a clean computer yet | **0 of 20** |
 | **M4 overall** (estimate) | | **about 15–20 %** |
@@ -45,7 +46,11 @@ first two rows are counts from [`coverage.md`](coverage.md).
 - **In the shim** (`crates/shim`):
   - `SteamClient020`, `021`, `023`: the connection to Steam, handing out
     the other interfaces, cleaning up when the game closes;
-  - `SteamUtils009`, `010`: the app ID and the battery level.
+  - `SteamUtils009`, `010`: the app ID and the battery level;
+  - callback delivery: `Steam_BGetCallback` and `Steam_FreeLastCallback`
+    hand over and free queued callbacks as experiment 19 confirmed;
+    nothing fills the queue yet (callback contents must come from
+    `rebornd`).
 - **Confirmed but not in the shim yet** (they need real data from Valve):
   - whether the game and its DLC are owned;
   - cloud saves: write, read, file size;

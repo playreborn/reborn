@@ -16,6 +16,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: callback delivery in the shim (parallel agent, no runs):
+  `Steam_BGetCallback` and `Steam_FreeLastCallback` work on a queue per
+  handle with the header experiment 19 confirmed (bytes 0..4 and 20..24
+  written as recorded, still candidates); nothing fills the queue yet.
+  `Steam_GetAPICallResult` and `Steam_ReleaseThreadLocalMemory` still
+  stop the process. PR #24.
 - 2026-11-22: loop iteration 10a (planned by a parallel agent, run by the
   main session): experiments 22 and 23 **matched** (6 games). Callback 703
   is `SteamAPICallCompleted_t`, `Steam_GetAPICallResult` is

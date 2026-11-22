@@ -58,3 +58,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0050](0050-reading-callback-payloads.md) | Reading what a callback carries (step 4d) | Accepted |
 | [0051](0051-autonomous-development.md) | Autonomous development of the shim | Accepted |
 | [0052](0052-no-daily-start-cap.md) | No daily start cap, 1 minute between starts, 50 free games a day | Accepted |
+| [0053](0053-agent-adds-reads.md) | The agent adds proxy reads itself | Accepted |

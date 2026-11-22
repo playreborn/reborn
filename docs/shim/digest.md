@@ -9,6 +9,13 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0052 (maintainer): no daily start cap, 1 minute between
+  starts, 50 free games a day. PR #15.
+- 2026-11-22: loop iteration 6: `STEAMINVENTORY_INTERFACE_V003`: the proxy
+  reads the handle position 6 writes; experiment 14 matched as scripted
+  (Cave Crawlers, Bongo Cat), but the review found other functions with
+  the same shape: only 3 `GetResultTimestamp` confirmed; 6 (writes a
+  result handle) and 1 stay candidates. PR #16.
 - 2026-11-22: loop iteration 5: `SteamClient020`/`021` position 22 and
   `SteamClient023` position 21 (one call early, the same result value in
   all eight games, so probably the same function): **no candidate**, no

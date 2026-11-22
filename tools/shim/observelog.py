@@ -80,6 +80,31 @@ def calls(path) -> list:
     return out
 
 
+def after_u32(call, register):
+    """The first four bytes the proxy read at `register` after `call`
+    returned (`after <register>->[...]`, ADR 0043), as a little-endian
+    number, or None."""
+    for extra in call.extra:
+        m = re.search(r"after " + register + r"->\[([0-9a-f]{8})", extra)
+        if m:
+            return int.from_bytes(bytes.fromhex(m.group(1)), "little")
+    return None
+
+
+def app_of(path):
+    """The app ID `run.sh` recorded for this log in `starts.log`, or None."""
+    name = Path(path).name
+    try:
+        lines = open(log_dir() / "starts.log", encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 5 and parts[2] == "log" and parts[4] == name:
+            return int(parts[3])
+    return None
+
+
 def first_steam_client(path) -> str:
     """The `SteamClient…` version (other than 017) the game asked for."""
     for raw in open(path, encoding="utf-8", errors="replace"):

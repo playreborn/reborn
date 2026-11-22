@@ -277,5 +277,19 @@
       "candidate",
       "GetPersonaName"
     ]
+  },
+  "STEAMINVENTORY_INTERFACE_V003": {
+    "6": [
+      "candidate",
+      "GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle)"
+    ],
+    "1": [
+      "candidate",
+      "GetResultItems or SerializeResult"
+    ],
+    "3": [
+      "confirmed",
+      "GetResultTimestamp"
+    ]
   }
 }

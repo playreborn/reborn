@@ -682,3 +682,50 @@ and is closed by a close request.
 
 A single call that breaks 1 to 4, or a call at close that breaks 5, is a
 mismatch for that position.
+
+**Result of experiment 7** (agent runs after the plan was committed at
+02:02:33; checked with a small script over the raw logs):
+
+- Plant Therapy (020), Outcore (020), Chronigma (021), Cartapli (023):
+  points 1 to 4 **match** in all four, without a single mismatch. Point
+  5 **matches** in both `SteamClient020` games: each called positions 4,
+  1 and 23 at close, in that order, with the predicted handles.
+- Outcore first waited in the official client's launch-option window;
+  the agent chose the default option and clicked Play (ADR 0049).
+- **Limit:** in all four games both handles were 1 (`P` = `U` = 1), so
+  the runs cannot tell the pipe handle from the user handle; points 2 to
+  5 would also have matched with the two swapped. Telling them apart
+  needs a run in which the two differ, which has not been seen.
+
+```text
+observe-50924.log SteamClient020: P=1 U=1 | 1: match | 2: match | 3: 1 calls | 4: 31 calls | mismatches: 0
+    5: close calls [4, 1, 23] -> match
+observe-47724.log SteamClient020: P=1 U=1 | 1: match | 2: match | 3: 0 calls | 4: 26 calls | mismatches: 0
+    5: close calls [4, 1, 23] -> match
+observe-11304.log SteamClient021: P=1 U=1 | 1: match | 2: match | 3: 1 calls | 4: 31 calls | mismatches: 0
+observe-34580.log SteamClient023: P=1 U=1 | 1: match | 2: match | 3: 1 calls | 4: 29 calls | mismatches: 0
+```
+
+Evidence (Plant Therapy; floating-point registers and the `rcx` note
+left out):
+
+```text
+16 ms ThreadId(1) SteamClient020#0 call 1 rcx=0x7ffceac307f0 rdx=0x0 r8=0x252f5714bc0 r9=0xe
+55 ms ThreadId(1) SteamClient020#0 return 1 rax=0x1
+55 ms ThreadId(1) SteamClient020#2 call 1 rcx=0x7ffceac307f0 rdx=0x1 r8=0x7ffdb1f1efc0 r9=0x1c
+56 ms ThreadId(1) SteamClient020#2 return 1 rax=0x1
+90305 ms ThreadId(1) SteamClient020#4 call 1 rcx=0x7ffceac307f0 rdx=0x1 r8=0x1 r9=0x255618547b0
+90327 ms ThreadId(1) SteamClient020#4 return 1 rax=0x19
+90327 ms ThreadId(1) SteamClient020#1 call 1 rcx=0x7ffceac307f0 rdx=0x1 r8=0x252f5711bc0 r9=0x1c
+90327 ms ThreadId(1) SteamClient020#1 return 1 rax=0xffffff01
+90327 ms ThreadId(1) SteamClient020#23 call 1 rcx=0x7ffceac307f0 rdx=0x0 r8=0x252f5711bc0 r9=0x1c
+90327 ms ThreadId(1) SteamClient020#23 return 1 rax=0x1
+```
+
+Status: positions 0 (`CreateSteamPipe`), 2 (`ConnectToGlobalUser`), 9
+(`GetISteamUtils`), 12 (`GetISteamGenericInterface`) and the
+per-interface `GetISteam…` positions for `SteamClient020`, `021` and
+`023`, and positions 4, 1, 23 (`ReleaseUser`, `BReleaseSteamPipe`,
+`BShutdownIfAllPipesClosed`) for `SteamClient020`, matched experiment 7
+and wait for the maintainer's OK (ADR 0044). Which handle is the pipe
+and which the user stays open (limit above).

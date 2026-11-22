@@ -1362,3 +1362,16 @@ process ID, and Gravitas was started a second time (the first log,
 as for 010) and to shadow mode; a shadow run of Dark Deception
 (`observe-53604`) matched in all 68 logged calls (5 at position 9, 63 at
 position 14).
+
+**Corrections from the review (before merge):** the plan said the two
+hardware enums have no values on the page; it does list them
+(`ESteamHardwareType` 0 to 3, `ESteamHardwareDefaultConfig` 0 to 7), so
+255 rules out `IsRunningOnSteamHardware` and
+`GetSteamHardwareDefaultConfig` too, and the caveat for position 14 does
+not apply. The counters and times (`GetIPCCallCount`,
+`GetSecondsSince…`, `GetServerRealTime`) are ruled out because their
+lowest byte would not stay 255 over 52 to 63 calls in three games, the
+text results because they are addresses, `StartVRDashboard` because a
+void function in every frame of three games does not fit, and the
+true/false ones because they return 0 or 1. The second Gravitas run used
+the changed `run.sh`.

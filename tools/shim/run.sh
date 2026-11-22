@@ -24,6 +24,7 @@ if [ -n "$LAST" ]; then
   if [ "$GAP" -lt 65 ]; then echo "waiting $((65 - GAP))s for the 1-minute gap"; sleep $((65 - GAP)); fi
 fi
 echo "$(date '+%F %T') start $APP" >> "$STARTS"
+MARK="$D/run-start.mark"; touch "$MARK"
 cd "$ROOT" || exit 1
 ARGS=(arm --proxy "$(pwd -W 2>/dev/null || pwd)/target/debug/reborn_shim_observe.dll")
 [ -z "${NOAPP:-}" ] && ARGS+=(--app "$APP")
@@ -38,7 +39,8 @@ if [ -z "$PID_" ]; then
   powershell -NoProfile -ExecutionPolicy Bypass -File "$HERE/shot.ps1" -Out "$D/nosapi-$APP.png" >/dev/null
   PIDS=$(powershell -NoProfile -Command "Get-Process | Where-Object { \$_.Path -like '*\\steamapps\\common\\$DIR\\*' } | ForEach-Object { \$_.Id }" | tr -d '\r')
   echo "processes of the game: ${PIDS:-none}"
-  for p in $PIDS; do [ -f "$D/observe-$p.log" ] && { echo "log observe-$p.log"; echo "$(date '+%F %T') log $APP observe-$p.log" >> "$STARTS"; }; done
+  # Only a log written during this run (process IDs are reused).
+  for p in $PIDS; do [ "$D/observe-$p.log" -nt "$MARK" ] && { echo "log observe-$p.log"; echo "$(date '+%F %T') log $APP observe-$p.log" >> "$STARTS"; }; done
   for p in $PIDS; do taskkill //PID "$p" >/dev/null 2>&1; done
   sleep 10
   for p in $PIDS; do tasklist //FI "PID eq $p" //NH | grep -q "$p" && echo "pid $p STILL RUNNING; left as it is"; done

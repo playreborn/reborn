@@ -1,11 +1,45 @@
-# M4 game list (draft)
+# M4 game list
 
 M4 is done when "a list of at least 20 widespread single-player games,
 fixed in advance, reaches level 3 on a system without the official
 client installed" (`docs/plan.md`, M4; levels in § 8.5: level 3 = starts
 without the official client, single-player playable, plus achievements
-and cloud). This file is that list while it is being fixed. It is a
-**draft**: the maintainer fixes the final list.
+and cloud). The list was fixed by the maintainer on 2026-11-22 (below).
+
+## The fixed list (decided by the maintainer, 2026-11-22)
+
+These 20 games are M4's list. All are 64-bit Windows games owned by the
+test account, recorded with the observation proxy (`coverage.md`), with
+single-player listed on their store pages and no anti-cheat named.
+
+1. Cave Crawlers (2143030)
+2. Bongo Cat (3419430)
+3. Coin Maker Simulator Demo (5191630)
+4. Linsips (4301370)
+5. Baldi's Basics Classic Remastered (1712830)
+6. Paper Lily - Chapter 1 (2220360)
+7. Please, Touch The Artwork 2 (2600140)
+8. An Arcade Full of Cats (2368470)
+9. Gravitas (1067310)
+10. Outcore: Desktop Adventure (1275670)
+11. Plant Therapy (2505120)
+12. Chronigma (4051150)
+13. The Thief, the Witch, the Toad, and the Mushroom. (2233770)
+14. One's Own Exile (3086720)
+15. Fallout Shelter (588430)
+16. HoloCure - Save the Fans! (2420510)
+17. Dark Deception (332950)
+18. UNBEATABLE [white label] (1290490)
+19. A Park Full of Cats (2610090)
+20. Cartapli : Fold Quest (4314560)
+
+Not on it: How Fish Is Made (uses no Steam calls up to its menu, so it
+does not test the shim), and the 32-bit games, which belong to M5. All
+are free games; widely played paid games could join later through
+Steam Families, which the maintainer has not set up.
+
+The candidate table below stays as the record of how the list was
+found.
 
 ## Criteria
 
@@ -40,17 +74,20 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 4301370 | Linsips | yes | yes | yes | 4 MB | recorded (stage 3, agent) |
 | 3419430 | Bongo Cat | yes | yes | not listed | 100 MB | recorded (stage 3) |
 | 5191630 | Coin Maker Simulator Demo | yes | not listed | yes | 3 GB | recorded (stage 3) |
-| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | loads Steam only after a language screen; a run needs a person |
+| 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | reached its main menu with the proxy armed but loaded no Steam library at all (agent run, 2026-11-22); whether it uses Steam later needs playing |
 | 1712830 | Baldi's Basics Classic Remastered | added | yes | yes | 600 MB | recorded (stage 3, agent) |
-| 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | first start asks for administrator rights (Windows dialog for the official client's install step); left for the maintainer |
-| 897330 | Coloring Pixels | added | yes | yes | 500 MB | shows its own settings window with a Play button before loading Steam; a run needs a person |
-| 588430 | Fallout Shelter | free | yes | yes | 2 GB | EULA |
-| 319630 | Life is Strange - Episode 1 | free | yes | yes | 5 GB | EULA |
-| 2420510 | HoloCure - Save the Fans! | free | yes | yes | 250 MB | EULA |
+| 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | recorded (stage 3, agent; `SteamClient019`) after the maintainer answered the first-start Windows prompt |
+| 1290490 | UNBEATABLE [white label] | added | yes | yes | 2 GB | recorded (stage 3, agent) |
+| 2610090 | A Park Full of Cats | added | yes | yes | 600 MB | recorded (stage 3, agent); its very first start after installing ended by itself after about 0.1 s of Steam calls, three later runs (one without, two with `GetAppID` answered by Reborn) ran normally; cause not known |
+| 4314560 | Cartapli : Fold Quest | added | yes | yes | 1 GB | recorded (stage 3, agent) |
+| 897330 | Coloring Pixels | added | yes | yes | 500 MB | 32-bit (`steam_api.dll`), so for M5; its settings window was clicked through by the agent (ADR 0049) |
+| 588430 | Fallout Shelter | added | yes | yes | 2 GB | EULA accepted by the maintainer; recorded (stage 3, agent) |
+| 319630 | Life is Strange - Episode 1 | added | yes | yes | 5 GB | EULA accepted by the maintainer; 32-bit, so for M5 |
+| 2420510 | HoloCure - Save the Fans! | added | yes | yes | 250 MB | EULA accepted by the maintainer; recorded (stage 3, agent) |
 | 2220360 | Paper Lily - Chapter 1 | added | yes | yes | 350 MB | recorded (stage 3, agent) |
 | 2600140 | Please, Touch The Artwork 2 | added | yes | yes | 3 GB | recorded (stage 3, agent) |
 | 2368470 | An Arcade Full of Cats | added | yes | yes | 350 MB | recorded (stage 3, agent) |
-| 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | asks for a language before loading Steam; a run needs a person |
+| 310360 | Higurashi When They Cry Hou - Ch.1 | added | yes | yes | 500 MB | 32-bit (`steam_api.dll`), so for M5 |
 | 1067310 | Gravitas | added | yes | yes | 8 GB (6.9 GB download) | recorded (stage 3, agent); a launcher process starts the game process, and the game printed no `[S_API]` line |
 | 1275670 | Outcore: Desktop Adventure | added | yes | yes | 2 GB | recorded (stage 3, agent) |
 | 2505120 | Plant Therapy | added | yes | yes | 900 MB | recorded (stage 3, agent) |
@@ -64,7 +101,7 @@ owned; online PvP, no single-player listed). Added and installed, but
 (2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
 (909080).
 
-With these, 21 candidates are listed: 14 recorded by now, four that need a person for a run, and three that need the maintainer to accept an EULA. The maintainer picks the final 20. Free games are a practical start for agent
+With these, 21 candidates are listed: 20 recorded by now; How Fish Is Made uses no Steam calls up to its menu; Coloring Pixels, Life is Strange and Higurashi are 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

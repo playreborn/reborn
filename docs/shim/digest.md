@@ -16,6 +16,9 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0056 (maintainer): the proxy may read call results
+  (`SteamUtils010` 13), `rebornd` may compare the persona name (match or
+  mismatch only), and recordings of non-M4 games count in coverage.
 - 2026-11-22: ADR 0055 stage 1, stats shadow (parallel agent, no runs):
   when `Steam_BGetCallback` hands the game a 0x44d, the proxy reads only
   its size and payload bytes 0..12 and, on the shadow worker thread

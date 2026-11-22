@@ -1,6 +1,6 @@
 # 0045: Higher limits for agent-run observation runs
 
-- **Status:** Accepted
+- **Status:** Accepted; the daily cap of 50 starts is removed by ADR 0052
 - **Date:** 2026-11-21
 - **Amends:** ADR 0044
 

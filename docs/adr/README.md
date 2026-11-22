@@ -50,10 +50,11 @@ it is accepted; a new ADR supersedes it instead.
 | [0042](0042-meanings-and-callbacks.md) | How recorded calls get a meaning, and observing callbacks (stage 4) | Accepted |
 | [0043](0043-reading-results-for-experiments.md) | Reading result texts and output bytes for planned experiments (step 4c) | Accepted |
 | [0044](0044-agent-run-observation-runs.md) | Observation runs carried out by an AI agent | Accepted |
-| [0045](0045-higher-limits-for-agent-runs.md) | Higher limits for agent-run observation runs | Accepted |
+| [0045](0045-higher-limits-for-agent-runs.md) | Higher limits for agent-run observation runs | Accepted, amended by 0052 |
 | [0046](0046-shadow-and-answer-mode.md) | Shadow and answer mode, the first step from proxy to shim (stage 5) | Accepted |
 | [0047](0047-shim-daemon-connection.md) | How the shim talks to rebornd | Accepted |
 | [0048](0048-loading-the-shim.md) | How games find the shim when Reborn starts them | Accepted |
 | [0049](0049-agent-input-in-games.md) | Input in games during agent runs | Accepted |
 | [0050](0050-reading-callback-payloads.md) | Reading what a callback carries (step 4d) | Accepted |
 | [0051](0051-autonomous-development.md) | Autonomous development of the shim | Accepted |
+| [0052](0052-no-daily-start-cap.md) | No daily start cap, 1 minute between starts, 50 free games a day | Accepted |

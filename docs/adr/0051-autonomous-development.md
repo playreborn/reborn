@@ -63,8 +63,8 @@ change.
 - **Reporting.** `docs/shim/digest.md` gets one short entry per
   iteration (what was tried, what matched, what was merged), so the
   maintainer can read a day's work in a minute and stop anything.
-- **Limits** of ADR 0044, 0045 and 0049 stay: at most 50 game starts a
-  day, at least 2 minutes apart, no input for rewards, stop at EULAs,
+- **Limits** of ADR 0044, 0045 and 0049 stay (ADR 0052 removed the cap of 50 starts a
+  day, and set 1 minute between starts), no input for rewards, stop at EULAs,
   purchases, sign-ins and administrator prompts.
 
 ### The maintainer's role

@@ -67,9 +67,10 @@
 //! and only when the call is logged, the proxy compares the official
 //! client's result with Reborn's own answer and logs match or mismatch.
 //! The game always gets the official client's result. For account data
-//! (ADR 0055: today `BIsSubscribed`) Reborn's answer comes from `rebornd`'s
-//! read-only shadow session, asked on a worker thread after the call
-//! returned, and the log says only match or mismatch.
+//! (ADR 0055: today `BIsSubscribed`, and the stats result in callback
+//! 0x44d) Reborn's answer comes from `rebornd`'s read-only shadow session,
+//! asked on a worker thread after the call returned, and the log says only
+//! match or mismatch.
 //!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
@@ -268,12 +269,32 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
     }
 }
 
-/// A `BIsSubscribed` comparison waiting for `rebornd`'s answer: the start
-/// of its log line and the official client's result.
+/// A comparison waiting for `rebornd`'s answer: the start of its log line
+/// and what the official client gave the game.
 struct Ask {
     prefix: String,
-    rax: u64,
+    official: Official,
 }
+
+/// What the official client gave the game, for one comparison.
+enum Official {
+    /// `BIsSubscribed`: its result.
+    Subscribed(u64),
+    /// Callback 0x44d (`UserStatsReceived_t`): its compared fields.
+    StatsReceived(crate::daemon::OfficialStats),
+}
+
+/// Callback number of `UserStatsReceived_t` (`docs/shim/meanings.md`,
+/// experiment 21).
+const STATS_RECEIVED: u32 = 0x44d;
+
+/// How long the worker waits for `rebornd`'s `StatsReceived` after
+/// `RequestStats` was accepted. The official 0x44d came 250 to 310 ms
+/// after the game's request (experiments 20, 21); `rebornd`'s own fetch
+/// backs off for up to 15 s over its five tries (ADR 0055, "Rate limits").
+/// A longer wait is logged as no Reborn answer; meanwhile other
+/// comparisons queue up (at most [`MAX_ASKS`]).
+const STATS_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Comparisons that may wait at once; more are logged as skipped.
 const MAX_ASKS: usize = 16;
@@ -282,8 +303,9 @@ const MAX_ASKS: usize = 16;
 /// it could not be started.
 static ASKS: OnceLock<Option<std::sync::mpsc::SyncSender<Ask>>> = OnceLock::new();
 
-/// Hands a `BIsSubscribed` comparison to the worker thread (ADR 0055).
-fn ask_subscribed(prefix: String, rax: u64) {
+/// Hands a comparison with `rebornd`'s answer to the worker thread
+/// (ADR 0055); never waits.
+fn ask(prefix: String, official: Official) {
     let sender = ASKS.get_or_init(|| {
         let (sender, asks) = std::sync::mpsc::sync_channel(MAX_ASKS);
         std::thread::Builder::new()
@@ -292,7 +314,7 @@ fn ask_subscribed(prefix: String, rax: u64) {
             .ok()
             .map(|_| sender)
     });
-    let ask = Ask { prefix, rax };
+    let ask = Ask { prefix, official };
     match sender {
         Some(sender) => {
             if let Err(error) = sender.try_send(ask) {
@@ -307,20 +329,53 @@ fn ask_subscribed(prefix: String, rax: u64) {
     }
 }
 
-/// The worker: one shadow session with `rebornd` for this process, one
-/// `AppOwnership` per comparison, for the app given to `arm` only.
+/// The worker: one shadow session with `rebornd` for this process, for the
+/// app given to `arm` only; one `AppOwnership` per `BIsSubscribed`, one
+/// `RequestStats` per 0x44d.
 fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
+    use crate::daemon::{compare_stats_received, compare_subscribed, connect_with_waits};
     let mut link = crate::daemon::ShadowLink::default();
+    let pid = std::process::id();
     for ask in asks {
-        let note = match given_app_id() {
-            Some(app_id) => crate::daemon::compare_subscribed(
-                ask.rax,
-                link.subscribed(std::process::id(), app_id, crate::daemon::connect),
+        let note = match (given_app_id(), ask.official) {
+            (None, _) => "shadow: no app ID given".to_owned(),
+            (Some(app_id), Official::Subscribed(rax)) => {
+                compare_subscribed(rax, link.subscribed(pid, app_id, connect_with_waits))
+            }
+            (Some(app_id), Official::StatsReceived(official)) => compare_stats_received(
+                official,
+                app_id,
+                link.stats_result(pid, app_id, connect_with_waits, STATS_WAIT),
             ),
-            None => "shadow: no app ID given".to_owned(),
         };
         log(&format!("{} {note}", ask.prefix));
     }
+}
+
+/// The compared fields of callback 0x44d, if the callback `Steam_BGetCallback`
+/// wrote at `rdx` is one (`rax` 1): its header (step 4d, ADR 0050) names
+/// 0x44d and a readable payload of 1 to [`MAX_PAYLOAD`] bytes. Only the
+/// first [`crate::daemon::STATS_READ`] payload bytes are read: the
+/// comparison does not read bytes 12..20 (the Steam ID). The step-4b line
+/// still logs the 0x44d payload locally (ADR 0050, 0054).
+fn stats_received_at(rax: u64, rdx: u64) -> Option<crate::daemon::OfficialStats> {
+    if rax & 0xff != 1 {
+        return None;
+    }
+    let header = bytes_in(rdx, CALLBACK_HEADER)?;
+    let word = |at: usize| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    if word(4) != STATS_RECEIVED {
+        return None;
+    }
+    let address = u64::from(word(8)) | (u64::from(word(12)) << 32);
+    let size = word(16) as usize;
+    if size == 0 || size > MAX_PAYLOAD {
+        return None;
+    }
+    let first = bytes_in(address, size.min(crate::daemon::STATS_READ))?;
+    crate::daemon::OfficialStats::new(size, &first)
 }
 
 /// Most table entries counted in step 3a (ADR 0040).
@@ -620,6 +675,17 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 elapsed_ms(),
                 call.call
             ));
+            // ADR 0055, stage 1: compare a stats callback with what
+            // `rebornd` would report, off the game's thread; the game keeps
+            // the official callback unchanged.
+            if let Some(official) = stats_received_at(rax, outputs[0]) {
+                let prefix = format!(
+                    "{} ms {thread:?} {name} return {} callback 0x44d",
+                    elapsed_ms(),
+                    call.call
+                );
+                ask(prefix, Official::StatsReceived(official));
+            }
         }
         // Step 4c: listed calls, only when they are logged.
         if let Some(after) = call.after {
@@ -637,7 +703,7 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
             match shadow {
                 // ADR 0055: Reborn's answer comes from `rebornd`, asked
                 // off the game's thread.
-                Shadow::Subscribed => ask_subscribed(prefix, rax),
+                Shadow::Subscribed => ask(prefix, Official::Subscribed(rax)),
                 _ => log(&format!(
                     "{prefix} {}",
                     describe_shadow(rax, shadow, given_app_id())
@@ -1555,6 +1621,44 @@ mod tests {
         header[8..16].copy_from_slice(&address.to_le_bytes());
         header[16..20].copy_from_slice(&size.to_le_bytes());
         header
+    }
+
+    #[test]
+    fn reads_only_the_compared_fields_of_a_stats_callback() {
+        use crate::daemon::OfficialStats;
+        // A 0x44d as recorded (experiment 21): app ID, game ID rest,
+        // result, then 12 bytes the comparison never reads.
+        let mut payload = [0xee_u8; 24];
+        payload[..4].copy_from_slice(&2_143_030_u32.to_le_bytes());
+        payload[4..8].fill(0);
+        payload[8..12].copy_from_slice(&1_u32.to_le_bytes());
+        let address = payload.as_ptr() as u64;
+        let at = |header: &[u8; CALLBACK_HEADER]| header.as_ptr() as u64;
+        let expected = OfficialStats::new(24, &payload[..12]);
+        assert!(expected.is_some());
+        assert_eq!(
+            stats_received_at(1, at(&header(0x44d, address, 24))),
+            expected
+        );
+        assert_eq!(
+            stats_received_at(0xffff_ff01, at(&header(0x44d, address, 24))),
+            expected,
+            "only the lowest byte of rax"
+        );
+        assert_eq!(stats_received_at(0, at(&header(0x44d, address, 24))), None);
+        assert_eq!(stats_received_at(1, at(&header(0x44e, address, 24))), None);
+        assert_eq!(stats_received_at(1, at(&header(0x44d, address, 0))), None);
+        assert_eq!(
+            stats_received_at(1, at(&header(0x44d, address, 4097))),
+            None
+        );
+        // Shorter than the compared fields.
+        assert_eq!(stats_received_at(1, at(&header(0x44d, address, 8))), None);
+        assert_eq!(
+            stats_received_at(1, at(&header(0x44d, 0x7fff_ffff_0000, 24))),
+            None
+        );
+        assert_eq!(stats_received_at(1, 0x10), None, "header not readable");
     }
 
     #[test]

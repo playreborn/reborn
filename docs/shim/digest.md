@@ -16,6 +16,17 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0055 stage 1, stats shadow (parallel agent, no runs):
+  when `Steam_BGetCallback` hands the game a 0x44d, the proxy reads only
+  its size and payload bytes 0..12 and, on the shadow worker thread
+  (bounded queue, shared with `BIsSubscribed`), sends `RequestStats` on
+  the shadow session and waits up to 30 s for `StatsReceived`; match
+  needs size 24, app ID (bytes 0..4) = the app given to `arm`, and the
+  same `EResult` (bytes 8..12). Logs only match, mismatch or no answer.
+  Not compared: bytes 12..20 (Steam ID, the review's experiment first),
+  4..8, 20..24, achievement names (`GetAchievementDisplayAttribute` is a
+  separate stage-1 shadow). The shadow link reads lines on its own
+  thread so the wait can end. `rebornd` unchanged.
 - 2026-11-22: `SteamClient018` and `019` in the shim with the positions
   experiment 24 confirmed (0, 1, 2, 3, 4, 5, 6, 9, 12, 23, 26);
   `CreateLocalUser` writes pipe 2 and returns user 1 as recorded, 23 is

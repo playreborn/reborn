@@ -2671,7 +2671,7 @@ The script rejects a log given twice, maps each log to its game through
 rejects a log whose start (`observelog.start_of`) is earlier than the
 plan commit (`PLAN_COMMITTED`, the local committer time of the commit on
 `loop/plan-11a` that holds this text and the final script, set in a
-follow-up commit: 2026-11-22 14:34:22, commit `e21b039`; the first plan
+follow-up commit: 2026-11-22 14:34:22, commit `e21b039` (rebased as `f51ab72`); the first plan
 time 14:24:36, commit `79db875` before the rebase, is superseded). It
 prints only positions, small handle values, counts and match/MISMATCH.
 

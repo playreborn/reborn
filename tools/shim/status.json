@@ -1,5 +1,121 @@
 {
   "_comment": "Status of each recorded interface position, as docs/shim/meanings.md records it. Keys: interface version text, then position. Values: [status, meaning]. Status is confirmed, candidate or objects (hands out objects, docs/shim/objects.md). Positions not listed are not known. coverage.py builds the coverage table and the gap list from this.",
+  "SteamClient018": {
+    "0": [
+      "confirmed",
+      "CreateSteamPipe"
+    ],
+    "2": [
+      "confirmed",
+      "ConnectToGlobalUser"
+    ],
+    "3": [
+      "confirmed",
+      "CreateLocalUser"
+    ],
+    "7": [
+      "candidate",
+      "narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24)"
+    ],
+    "9": [
+      "confirmed",
+      "GetISteamUtils"
+    ],
+    "12": [
+      "confirmed",
+      "GetISteamGenericInterface"
+    ],
+    "5": [
+      "confirmed",
+      "GetISteamUser"
+    ],
+    "6": [
+      "confirmed",
+      "GetISteamGameServer"
+    ],
+    "26": [
+      "confirmed",
+      "GetISteamController"
+    ],
+    "38": [
+      "objects",
+      "SteamInput001 objects; no page function"
+    ],
+    "4": [
+      "confirmed",
+      "ReleaseUser"
+    ],
+    "1": [
+      "confirmed",
+      "BReleaseSteamPipe"
+    ],
+    "23": [
+      "confirmed",
+      "BShutdownIfAllPipesClosed"
+    ],
+    "34": [
+      "candidate",
+      "SetWarningMessageHook"
+    ]
+  },
+  "SteamClient019": {
+    "0": [
+      "confirmed",
+      "CreateSteamPipe"
+    ],
+    "2": [
+      "confirmed",
+      "ConnectToGlobalUser"
+    ],
+    "3": [
+      "confirmed",
+      "CreateLocalUser"
+    ],
+    "7": [
+      "candidate",
+      "narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24)"
+    ],
+    "9": [
+      "confirmed",
+      "GetISteamUtils"
+    ],
+    "12": [
+      "confirmed",
+      "GetISteamGenericInterface"
+    ],
+    "5": [
+      "confirmed",
+      "GetISteamUser"
+    ],
+    "6": [
+      "confirmed",
+      "GetISteamGameServer"
+    ],
+    "26": [
+      "confirmed",
+      "GetISteamController"
+    ],
+    "38": [
+      "objects",
+      "SteamInput001 objects; no page function"
+    ],
+    "4": [
+      "confirmed",
+      "ReleaseUser"
+    ],
+    "1": [
+      "confirmed",
+      "BReleaseSteamPipe"
+    ],
+    "23": [
+      "confirmed",
+      "BShutdownIfAllPipesClosed"
+    ],
+    "34": [
+      "candidate",
+      "SetWarningMessageHook"
+    ]
+  },
   "SteamClient020": {
     "0": [
       "confirmed",

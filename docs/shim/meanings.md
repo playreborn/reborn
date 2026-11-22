@@ -2537,3 +2537,225 @@ As the plans fixed beforehand, under ADR 0051:
 
 Linsips again freed its 703 without `Steam_GetAPICallResult` (F: 0
 windows), as in the correction note of the 9b section.
+
+## `SteamClient018` and `SteamClient019`: two pipes (loop iteration 11a)
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamClient>, read
+  2026-11-22 (31 functions; no version constant, as noted for 020 to
+  023), and the `EAccountType` table of
+  <https://partner.steamgames.com/doc/api/steam_api> (3 is
+  `k_EAccountTypeGameServer`, "Persistent (not anonymous) game server
+  account").
+- **Recording:** the reference runs of `coverage.md` (`observe-496`
+  Gravitas, `SteamClient018`; `observe-44940` Dark Deception,
+  `SteamClient019`) and the ten runs of 2026-11-22 recorded by `run.sh`
+  (Gravitas `observe-22464`, `-31124`, `-47412`, `-12256`; Dark Deception
+  `observe-9812`, `-53604`, `-47852`, `-52328`, `-51204`, `-51828`).
+  Every run of the same game had the same sequence; the reference run of
+  Gravitas stops after 134 ms with one close sequence (pipe 1 only).
+- Both games make the same calls in the same order (low 32 bits; `P`,
+  `U` as in experiment 7):
+
+  | Position | Recorded (all runs) |
+  | --- | --- |
+  | 0 | first call; result 1 (`P`) |
+  | 2 | `rdx` 1 (`P`); result 1 (`U`) |
+  | 9 | `rdx` 1, later also 2, `r8` `SteamUtils009`; result with the step 3a shape |
+  | 34 | once, before 5; `rdx` an address in the module range; result 0 |
+  | 5 | `rdx` 1, `r8` 1, `r9` `SteamUser020`; object |
+  | 12 | `rdx` 1 or 0 (0 only with `SteamUtils009`), `r8` 1 or 2, `r9` any text; object |
+  | 7 | once, after the second `CreateInterface` call; `rdx` 0, `r8` 0x1e62, `r9` a stack address (the same as `r8` of position 2); `rax` an address in `steamclient64` |
+  | 3 | once, right after 7; `rdx` an address in the game's module range, `r8` 3; result 1 |
+  | 6 | right after 3; `rdx` 1, `r8` 2, `r9` `SteamGameServer012`; object |
+  | 26, 38 | `rdx` 1, `r8` 1, `r9` `SteamController007` and `SteamInput001`; objects (in Gravitas only in its runs of 2026-11-22, not in its reference run) |
+  | 4, 1, 23 | at close, twice: 4 with (`rdx`, `r8`) = (1, 1) and (2, 1), each directly followed by 1 with the same `rdx` (lowest result byte 1) and then 23; Dark Deception releases pipe 1 first, Gravitas pipe 2 first; the first 23 had lowest result byte 0, the second 1 |
+
+- The handle 2 is the result of no call; it first appears in `r8` of
+  position 6, right after position 3. With pipe 2, positions 9 and 12 gave
+  other objects (other stand-ins) for the same texts (`SteamUtils009`,
+  `SteamNetworking005`) than with pipe 1.
+
+Evidence (Gravitas, `observe-12256`; floating-point registers and the
+`rcx` note left out):
+
+```text
+77 ms ThreadId(1) SteamClient018#7 call 1 rcx=0x7ffceac307e0 rdx=0x0 r8=0x1e62 r9=0x7ffdcdb9efa8
+77 ms ThreadId(1) SteamClient018#3 call 1 rcx=0x7ffceac307e0 rdx=0x7ffe4d8737a8 r8=0x3 r9=0x1c
+128 ms ThreadId(1) SteamClient018#3 return 1 rax=0x1
+128 ms ThreadId(1) SteamClient018#6 call 1 rcx=0x7ffceac307e0 rdx=0x1 r8=0x2 r9=0x7ffe4d8567b8 r9->"SteamGameServer012"
+130 ms ThreadId(1) SteamClient018#9 call 2 rcx=0x7ffceac307e0 rdx=0x2 r8=0x7ffe4d856318 r9=0x7ffdcdb9efa8 r8->"SteamUtils009"
+89639 ms ThreadId(1) SteamClient018#4 call 1 rcx=0x7ffceac307e0 rdx=0x2 r8=0x1 r9=0x24
+89652 ms ThreadId(1) SteamClient018#1 call 1 rcx=0x7ffceac307e0 rdx=0x2 r8=0x17880a31500 r9=0x1c
+89653 ms ThreadId(1) SteamClient018#1 return 1 rax=0xffffff01
+89653 ms ThreadId(1) SteamClient018#23 return 1 rax=0x7ffcead24500
+89653 ms ThreadId(1) SteamClient018#4 call 2 rcx=0x7ffceac307e0 rdx=0x1 r8=0x1 r9=0x73e
+89653 ms ThreadId(1) SteamClient018#1 return 2 rax=0x1
+89724 ms ThreadId(1) SteamClient018#23 return 2 rax=0x1
+```
+
+### Every function of the page against the recorded shapes
+
+Argument registers follow the Microsoft x64 convention (`rcx` the
+object, then `rdx`, `r8`, `r9`), as in experiment 7.
+
+| Function (page) | Shape on the page | Fits |
+| --- | --- | --- |
+| `CreateSteamPipe` | no arguments; `HSteamPipe` | 0 (first call, result 1); experiment 7 for 020 to 023 |
+| `ConnectToGlobalUser` | pipe; `HSteamUser` | 2 (`rdx` = `P`) |
+| `CreateLocalUser` | `HSteamPipe *`, `EAccountType`; `HSteamUser`; "Only used by game servers" | 3: `rdx` an address (where the pipe would be written), `r8` 3 = `k_EAccountTypeGameServer`, result 1; position 6 then asks for `SteamGameServer012` with the new handle 2 in the pipe slot |
+| `SetLocalIPBinding` | `uint32` IP, `uint16` port; nothing; "This must be set before calling CreateLocalUser!" | 7: `rdx` 0 (IP), `r8` 0x1e62 (fits 16 bits), called right before 3; `rax` a leftover |
+| `SetWarningMessageHook` | a function pointer; nothing | 34 (an address in the module range, result 0); 7 also fits by shape (`rdx` 0, a null pointer) |
+| `ReleaseUser` | pipe, user; nothing | 4 (`rdx` the pipe, `r8` the user) |
+| `BReleaseSteamPipe` | pipe; `bool` | 1 |
+| `BShutdownIfAllPipesClosed` | none; `bool`; "Triggers global shutdown for the DLL if all pipes are closed." | 23: false after the first pipe is released, true after the second |
+| `GetIPCCallCount` | none; `uint32` | none: every position's result is a handle, an object, a `bool`, 0, or (7) has non-zero upper 32 bits, which a `uint32` result written to `eax` would clear (x64 zero-extends 32-bit register writes; an assumption about the compiled code, not from the page) |
+| `GetISteamUtils` | pipe, text; object | 9 (only `SteamUtils…` texts, in `r8`) |
+| `GetISteamGenericInterface` | user, pipe, text; object | 12 (every kind of text) |
+| `GetISteamUser`, `GetISteamGameServer`, `GetISteamController` | user, pipe, text; object | 5, 6, 26 by their texts; which documented getter belongs to which number follows only from the texts, as for 020 to 023 |
+| a `SteamInput` getter | not on the page | 38 takes `SteamInput001` and returns an object; no function of the page names it |
+| the other `GetISteam…` (Apps, Friends, GameServerStats, HTMLSurface, HTTP, Inventory, Matchmaking, MatchmakingServers, Music, MusicRemote, Networking, RemoteStorage, Screenshots, UGC, UnifiedMessages, UserStats, Video) | user, pipe, text; object | no position of their own is called: these games ask for them only at 12 |
+
+Candidates (for 018 and 019): 0 `CreateSteamPipe`, 2
+`ConnectToGlobalUser`, 3 `CreateLocalUser`, 7 `SetLocalIPBinding`, 9
+`GetISteamUtils`, 12 `GetISteamGenericInterface`, 5, 6 and 26
+per-interface getters, 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
+`BShutdownIfAllPipesClosed`, 34 `SetWarningMessageHook`; 38 hands out
+`SteamInput001` objects (no page function).
+
+### Experiment 24 (planned 2026-11-22, before the runs)
+
+**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053; added by the
+main session, not by this plan's branch): `("SteamClient018", 3,
+Read::OutputBytes("rdx"))` and `("SteamClient019", 3,
+Read::OutputBytes("rdx"))`, so the proxy logs `after rdx->[…]` (the
+first 16 bytes at the address `rdx` held) when position 3 returns. Per
+the page `CreateLocalUser` writes an `HSteamPipe` there: a pipe handle,
+not a ticket, token, password or account identifier. Without the entry H
+mismatches.
+
+**Predictions** (`tools/shim/experiments/024_two_pipes.py`, low 32 bits;
+`V` = result of 3, `Q` = the pipe slot of the first getter call (5, 6,
+9, 12, 26, 38) after 3 returned; "before 3 returned" means on a log line
+before the line of 3's return):
+
+- A: the first `SteamClient` call is 0 (result `P`), the next 2 with
+  `rdx` = `P` (result `U`).
+- B: 3 is called exactly once, with `r8` = 3, `rdx` at least 0x10000 (an
+  address, not a handle) and 0 < `V` < 0x10000; 7 exactly once, before
+  3, with `r8` at most 0xffff. A register missing from the log is a
+  mismatch.
+- C: `Q` is neither `P` nor 0; no call or entry point of any interface
+  that returned before 3 returned had `Q` as its result, and no
+  `SteamClient` call made before 3 returned has `Q` in `rdx` or `r8`.
+- D: every getter call passes a pipe in {`P`, `Q`}; with `P` the user
+  slot (`rdx`, none at 9) is `U` or 0, with `Q` it is `V` or 0; at least
+  one call of 9 passes `Q`.
+- E: every getter call passes a text of its position's kind (5
+  `SteamUser…`, 6 `SteamGameServer…` without `Stats`, 9 `SteamUtils…`,
+  26 `SteamController…`, 38 `SteamInput…`, 12 any), and its result has
+  the step 3a shape and gets a stand-in for that text; the same (text,
+  pipe) always gets the same stand-in; a text asked over both pipes gets
+  two different stand-ins, and at least one text is.
+- F: 4 is called exactly twice, with (`P`, `U`) and (`Q`, `V`); each is
+  directly followed by 1 with the same pipe (lowest result byte 1) and
+  that by 23, whose lowest result byte is 1 once both pipes are released
+  and 0 before.
+- G: 34 is called exactly once, before 3, with `rdx` at least
+  0x7ff000000000, result 0.
+- H: after 3 returned, the first four bytes at the address `rdx` held
+  (`observelog.after_u32(call, "rdx")`) equal `Q`, the pipe later passed
+  at 6, 9, 12 and 1.
+
+The script rejects a log given twice, maps each log to its game through
+`starts.log` (`observelog.app_of`), needs one log of each game and
+rejects a log whose start (`observelog.start_of`) is earlier than the
+plan commit (`PLAN_COMMITTED`, the local committer time of the commit on
+`loop/plan-11a` that holds this text and the final script, set in a
+follow-up commit: 2026-11-22 14:34:22, commit `e21b039` (rebased as `f51ab72`); the first plan
+time 14:24:36, commit `79db875` before the rebase, is superseded). It
+prints only positions, small handle values, counts and match/MISMATCH.
+
+**Games to run:** Gravitas (1067310) and Dark Deception (332950), each
+to its first screen and closed by a close request (F needs a normal
+close), after the READS entry above is in the proxy. No experiment 25 is
+needed.
+
+**What a full match confirms** (under ADR 0051, for `SteamClient018` and
+`019` only):
+
+- 0 `CreateSteamPipe`, 2 `ConnectToGlobalUser`, 9 `GetISteamUtils`, 12
+  `GetISteamGenericInterface`, 5, 6 and 26 the per-interface getters
+  (`GetISteamUser`, `GetISteamGameServer`, `GetISteamController` by
+  their texts), 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
+  `BShutdownIfAllPipesClosed`, as experiment 7 did for 020 to 023;
+- 3 `CreateLocalUser`: it writes the handle `Q` at the address it is
+  given (H), the handle the game then uses as a pipe (C, D, F), and takes
+  3 = `k_EAccountTypeGameServer` (B). Of the page's functions only
+  `CreateLocalUser` takes an address it writes a pipe to; the
+  no-argument functions are ruled out by H, in particular
+  `GetIPCCallCount`, which takes no argument and writes nothing, so it
+  cannot put `Q` at the address in `rdx`. (H reads the bytes only after
+  the call; that they already held `Q` before is not ruled out by a
+  reading, only by C: nothing before 3 returned produced `Q`.)
+- **pipe and user told apart** for these versions, from the positions
+  that take a pipe as their only handle (ADR 0042: no inference from
+  argument order alone): 9 (`GetISteamUtils`, pipe and text) is called
+  with `Q` (D) and 1 (`BReleaseSteamPipe`, a pipe only) with `Q` and
+  with `P` (F), while `Q` differs from `V`; so `Q` and `P` are pipes. 23
+  turning true only after both are released (F) fits. Experiment 7's open
+  point stays open for 020 to 023, where both handles were 1.
+
+**What stays a candidate:**
+
+- 7: "narrowed: `SetLocalIPBinding` or `SetWarningMessageHook` with a
+  null pointer (experiment 24)". Both return nothing and fit the
+  arguments; B's order before 3 fits the page's note on
+  `SetLocalIPBinding` but does not rule out the other.
+- 34 `SetWarningMessageHook`: the proxy does not check whether `rdx`
+  points to code; G only narrows.
+- 38: hands out `SteamInput001` objects; the page names no function for
+  it.
+- `U` and `V` were both 1 in every run, so which of the two users a call
+  passes is not told apart.
+
+**Already seen:** run with the plan time lifted on the ten runs of
+2026-11-22 listed above (the two reference runs have no `starts.log`
+line, so the script cannot take them), A to G match in each; H
+mismatches ("not logged"), since no READS entry existed for position 3.
+The predictions were written from these logs, so they are not the test;
+only fresh runs after the plan commit are.
+
+**Result of experiment 24** (agent runs by the main session after the
+plan time 14:34:22, with the two `READS` entries for position 3 committed
+at 14:37:02 before the runs; logs recorded by `run.sh` in `starts.log`:
+`observe-15876` Gravitas, `observe-31232` Dark Deception): **match**,
+checked by the script.
+
+```text
+observe-15876.log (Gravitas, SteamClient018) A: first calls [0, 2], P=1 U=1 -> match
+observe-15876.log (Gravitas, SteamClient018) B: 1 calls of 3 (r8 [3], V=1), 1 calls of 7, 7 before 3: True -> match
+observe-15876.log (Gravitas, SteamClient018) C: Q=2, a result or SteamClient argument before position 3 returned: False -> match
+observe-15876.log (Gravitas, SteamClient018) D: 24 getter calls, 0 with other handles, 1 calls of 9 with Q -> match
+observe-15876.log (Gravitas, SteamClient018) E: 0 getter calls without the text's shape and stand-in, 0 (text, pipe) with more than one stand-in, 2 texts over both pipes, 0 of them sharing a stand-in -> match
+observe-15876.log (Gravitas, SteamClient018) F: ReleaseUser (pipe, user) [(1, 1), (2, 1)], sequences [[4, 1, 23], [4, 1, 23]] -> match
+observe-15876.log (Gravitas, SteamClient018) G: 1 calls of 34 -> match
+observe-15876.log (Gravitas, SteamClient018) H: first four bytes at rdx after position 3: Q -> match
+observe-31232.log (Dark Deception, SteamClient019) A: first calls [0, 2], P=1 U=1 -> match
+observe-31232.log (Dark Deception, SteamClient019) B: 1 calls of 3 (r8 [3], V=1), 1 calls of 7, 7 before 3: True -> match
+observe-31232.log (Dark Deception, SteamClient019) C: Q=2, a result or SteamClient argument before position 3 returned: False -> match
+observe-31232.log (Dark Deception, SteamClient019) D: 27 getter calls, 0 with other handles, 1 calls of 9 with Q -> match
+observe-31232.log (Dark Deception, SteamClient019) E: 0 getter calls without the text's shape and stand-in, 0 (text, pipe) with more than one stand-in, 2 texts over both pipes, 0 of them sharing a stand-in -> match
+observe-31232.log (Dark Deception, SteamClient019) F: ReleaseUser (pipe, user) [(1, 1), (2, 1)], sequences [[4, 1, 23], [4, 1, 23]] -> match
+observe-31232.log (Dark Deception, SteamClient019) G: 1 calls of 34 -> match
+observe-31232.log (Dark Deception, SteamClient019) H: first four bytes at rdx after position 3: Q -> match
+experiment 24: match
+```
+
+As the plan fixed beforehand, under ADR 0051, for `SteamClient018` and
+`SteamClient019`: confirmed 0 `CreateSteamPipe`, 1 `BReleaseSteamPipe`,
+2 `ConnectToGlobalUser`, 3 `CreateLocalUser`, 4 `ReleaseUser`, 5/6/26
+the per-interface getters (`GetISteamUser`, `GetISteamGameServer`,
+`GetISteamController`, by their texts), 9 `GetISteamUtils`, 12
+`GetISteamGenericInterface`, 23 `BShutdownIfAllPipesClosed`; P and Q are
+pipes (positions 9 and 1). Position 7 stays narrowed, 34 a candidate, 38
+"objects". Not in the shim yet: it has no 018/019 objects.

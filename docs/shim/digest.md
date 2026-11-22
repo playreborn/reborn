@@ -16,6 +16,17 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 11a (planned by a parallel agent, run by the
+  main session): experiment 24 **matched** (Gravitas, Dark Deception):
+  `SteamClient018`/`019` positions 0, 1, 2, 3 (`CreateLocalUser`, read
+  through a new `READS` entry), 4, 5, 6, 9, 12, 23, 26 confirmed; the pipe and user argument
+  slots told apart for the first time (both users were 1). PR #27.
+- 2026-11-22: loop iteration 11a (planned by a parallel agent, no runs):
+  every recorded position of `SteamClient018` (Gravitas) and
+  `SteamClient019` (Dark Deception) has a candidate from the
+  `ISteamClient` page; the second pipe comes from position 3
+  (`CreateLocalUser`, account type 3). Experiment 24 planned (needs a
+  READS entry for position 3); games to run: Gravitas, Dark Deception.
 - 2026-11-22: callback delivery in the shim (parallel agent, no runs):
   `Steam_BGetCallback` and `Steam_FreeLastCallback` work on a queue per
   handle with the header experiment 19 confirmed (bytes 0..4 and 20..24

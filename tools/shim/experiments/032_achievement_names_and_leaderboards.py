@@ -115,7 +115,7 @@ GAMES = {
 COMPLETED = 703
 STATS_RECEIVED = 0x44D  # UserStatsReceived_t, experiments 21 and 22
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
-PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
+PLAN_COMMITTED = datetime(2026, 11, 22, 21, 44, 12)  # commit fa474dc on loop/plan-16a (final plan, after review)
 # Enum values on the ISteamUserStats page.
 SORT_METHODS = {0, 1, 2}  # ELeaderboardSortMethod
 DATA_REQUESTS = {0, 1, 2, 3}  # ELeaderboardDataRequest

@@ -33,7 +33,7 @@ registry is virtualized) repeats it until stopped. Every rule of
    writes to `starts.log`). Commit and
    push the plan on a branch **before** any run.
 5. **Run:** `tools/shim/run.sh <app id>` for the games the plan names
-   (limits of ADR 0045 apply; input in games under ADR 0049).
+   (limits of ADR 0045 and 0052 apply: 2 minutes between starts, no daily cap; input in games under ADR 0049).
 6. **Evaluate:** run the experiment script on the new logs; record the
    result in `meanings.md` with an evidence excerpt (no account data, no
    floating-point registers). Update `tools/shim/status.json`, then run

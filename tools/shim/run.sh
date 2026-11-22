@@ -7,7 +7,7 @@
 # Environment: NOAPP=1 arms without --app (no shadow or answer mode);
 #              PIDARG=<pid> passes --pid (experiment 6 only).
 #
-# Limits (ADR 0045): at most 50 starts a day, at least 2 minutes apart;
+# Limits (ADR 0045, 0052): at least 2 minutes between starts, no daily cap;
 # the start log is shim-observe/starts.log in Reborn's data folder.
 # Must run outside the Claude desktop app (its registry is virtualized,
 # see docs/shim/tools/README.md).
@@ -18,9 +18,6 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$LOCALAPPDATA/Reborn/data/shim-observe"
 STARTS="$D/starts.log"
 mkdir -p "$D"
-TODAY=$(date +%F)
-COUNT=$(grep -c "^$TODAY .* start " "$STARTS" 2>/dev/null || true)
-if [ "${COUNT:-0}" -ge 50 ]; then echo "daily limit of 50 starts reached; not starting"; exit 2; fi
 LAST=$(tail -1 "$STARTS" 2>/dev/null | cut -c1-19)
 if [ -n "$LAST" ]; then
   GAP=$(( $(date +%s) - $(date -d "$LAST" +%s) ))

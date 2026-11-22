@@ -3847,6 +3847,7 @@ version = "0.2.0"
 dependencies = [
  "interprocess",
  "reborn-shim-protocol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

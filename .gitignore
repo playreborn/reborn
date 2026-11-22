@@ -19,3 +19,6 @@ Thumbs.db
 
 # Agent worktrees of Claude Code sessions.
 /.claude/worktrees/
+
+# Python bytecode of tools/
+__pycache__/

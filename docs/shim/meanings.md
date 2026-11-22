@@ -889,3 +889,54 @@ out):
 2055 ms ThreadId(1) SteamUtils010#6 call 1 rcx=0x26739b502e0 rdx=0x3 r8=0x26738c10020 r9=0x21100
 2056 ms ThreadId(1) SteamUtils010#6 return 1 rax=0x1
 ```
+
+## `SteamUtils009` and `SteamUtils010` position 14: candidate `GetCurrentBatteryPower`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUtils>, read
+  2026-11-22 (names `SteamUtils009`; candidate only for 010).
+- **Recorded:** 14 of the 20 games call position 14 of `SteamUtils010`,
+  four call it on `SteamUtils009`, about as often as frames are drawn.
+  The first call had an address in `r8`, later ones 1; the result was
+  `0xffffffff` every time, in every game, on the maintainer's desktop
+  computer.
+- **Fit:** of the functions without arguments on the page, one returns a
+  single byte: the battery level in percent, or 255 when the computer is
+  on AC power. The others return times and counts that change, an app
+  ID, small enum values, or true/false; none would give a lowest byte of
+  255 in every call of every game.
+
+### Experiment 10 (planned 2026-11-22, before the runs)
+
+Agent runs of Linsips, Chronigma and Cartapli (`SteamUtils010`) and of
+Outcore (`SteamUtils009`) to the first screen, on the same desktop
+computer, which runs on AC power.
+
+**Prediction:** every logged call of position 14 returns 255 in its
+lowest byte. Checked by `tools/shim/experiments/010_battery_power.py`.
+
+**Limit, known in advance:** a desktop on AC power cannot show the
+battery case (0 to 100); only a laptop on battery could.
+
+**Result of experiment 10** (agent runs after the plan was committed at
+04:03:12): Linsips, Chronigma and Cartapli **match**: every logged call of
+position 14 returned 255 in its lowest byte. Outcore was not run (its
+launch-option window was answered too late, the run timed out), so
+`SteamUtils009` position 14 stays a candidate. Under ADR 0051 position 14
+of `SteamUtils010` is confirmed as `GetCurrentBatteryPower`, with the
+known limit that only the AC-power case was observed. The review pass
+noted that this prediction repeats the observation that led to the
+candidate (it could only have failed if the behaviour changed); the
+meaning rests mainly on the elimination of the other functions on the
+page. A run on a laptop on battery would make it a real test.
+
+```text
+observe-46356.log: 108 logged calls, 0 not 255 -> match
+observe-18812.log: 64 logged calls, 0 not 255 -> match
+observe-34072.log: 66 logged calls, 0 not 255 -> match
+experiment 10: match
+```
+
+```text
+78 ms ThreadId(1) SteamUtils010#14 call 1 rcx=0x19f0f8f02e0 rdx=0x0 r8=0x19f0bee1500 r9=0x1a
+79 ms ThreadId(1) SteamUtils010#14 return 1 rax=0xffffffff
+```

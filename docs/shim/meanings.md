@@ -1068,3 +1068,40 @@ seconds.
   20 seconds later (at close), returning true.
 - B: position 0 of `SteamInput006` is the first `SteamInput006` call, is
   called once and returns true.
+
+**Result of experiment 12** (agent runs after the plan was committed;
+logs: `observe-33776` An Arcade Full of Cats, `observe-612` One's Own
+Exile, `observe-50224` A Park Full of Cats, `observe-46700` Baldi's
+Basics, `observe-43372` Chronigma, `observe-8424` HoloCure):
+
+```text
+observe-33776.log A: position 0 at [63] ms, position 10 at [88250] ms -> match
+observe-33776.log B: first SteamInput006 call is position 3, 0 position-0 calls -> MISMATCH
+observe-612.log A: position 0 at [63] ms, position 10 at [87666] ms -> match
+observe-50224.log A: position 0 at [63] ms, position 10 at [87886] ms -> match
+observe-50224.log B: first SteamInput006 call is position 3, 0 position-0 calls -> MISMATCH
+observe-46700.log A: position 0 at [144] ms, position 10 at [] ms -> MISMATCH
+observe-46700.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-43372.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-8424.log A: position 0 at [63] ms, position 10 at [] ms -> MISMATCH
+observe-8424.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+experiment 12: MISMATCH
+```
+
+The script as committed reports **MISMATCH**, so nothing is confirmed
+(ADR 0051 needs a script-checked match). Why, without changing the
+script afterwards:
+
+- In the games each prediction named, both matched: A in An Arcade Full
+  of Cats, One's Own Exile and A Park Full of Cats; B in Baldi's Basics,
+  Chronigma and HoloCure.
+- The script applied both predictions to every log. Outside the named
+  games: Baldi's Basics and HoloCure called position 0 of
+  `STEAMUSERSTATS_INTERFACE_VERSION012` but not position 10 at close (a
+  game that changed no stat may well not store them), and An Arcade Full
+  of Cats and A Park Full of Cats used `SteamInput006` without ever
+  calling position 0 (`Init` is not needed by every game, or happens
+  elsewhere).
+- Lesson for the loop: the check script must encode which games each
+  prediction is about. A new experiment with such a script is needed to
+  confirm these positions; until then they stay candidates.

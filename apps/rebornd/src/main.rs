@@ -11,6 +11,7 @@ mod daemon;
 mod server;
 mod shim_launch;
 mod shim_server;
+mod shim_shadow;
 mod shim_stats;
 
 use std::sync::Arc;

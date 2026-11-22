@@ -13,6 +13,15 @@
 //! of ADR 0055 (stores, cloud) follow in later stage-0 changes under the
 //! same version, before any release.
 //!
+//! Shadow sessions (ADR 0055, amending ADR 0047): `reborn-observe arm
+//! --app <id>` registers one app with [`Request::RegisterShadow`] (and
+//! `disarm` drops it with [`Request::CancelShadow`]); the observation
+//! proxy inside the game then says [`Request::ShadowHello`] with its
+//! process ID and that app, and its connection becomes a read-only shadow
+//! session for that one process. A shadow session gets only read answers;
+//! every write is refused with [`UnavailableReason::NotAllowed`]
+//! ([`Request::writes`]).
+//!
 //! This crate holds only message types and framing (MIT OR Apache-2.0), so
 //! the shim never depends on GPL crates (AGENTS.md section 3).
 #![forbid(unsafe_code)]
@@ -65,6 +74,55 @@ pub enum Request {
     /// [`Response::Accepted`] and later [`Event::StatsReceived`], or with
     /// [`Response::Unavailable`]. Only reads; nothing is written.
     RequestStats,
+    /// Sent by `reborn-observe arm --app <id>` (ADR 0055, stage 1): the
+    /// next process that says [`Request::ShadowHello`] for this app gets a
+    /// read-only shadow session. The game is not running yet when `arm`
+    /// runs, so the process is bound at its `ShadowHello`, once. Answered
+    /// with [`Response::Accepted`], or [`Response::Unavailable`]
+    /// (`NotSignedIn` without a Valve session, `Offline` while the daemon
+    /// reconnects or cannot load the licence list, `NotAllowed` on a
+    /// connection bound to a process). A new registration replaces an
+    /// unclaimed one.
+    RegisterShadow {
+        /// The app of the game about to run.
+        app_id: u32,
+    },
+    /// Sent by `reborn-observe disarm`: drops a registration nobody has
+    /// claimed. Answered with [`Response::Accepted`], or `NotAllowed` on a
+    /// connection bound to a process.
+    CancelShadow,
+    /// The observation proxy's first message (ADR 0055): like
+    /// [`Request::Hello`], for a process `rebornd` did not launch, which
+    /// asks for the shadow session registered for `app_id`. Answered with
+    /// [`Response::Session`], or [`Response::Refused`] with
+    /// [`RefusalReason::UnknownProcess`] when no such registration is
+    /// open.
+    ShadowHello {
+        /// The proxy's protocol version.
+        version: Version,
+        /// The game's process ID.
+        pid: u32,
+        /// The app `reborn-observe arm --app` was given.
+        app_id: u32,
+    },
+}
+
+impl Request {
+    /// Whether the request would write something (stats, achievements,
+    /// cloud files). A shadow session is refused every write (ADR 0055:
+    /// writes are never shadowed). No message of protocol 0.2 writes yet;
+    /// the match has no catch-all, so each new message must be decided
+    /// here.
+    pub fn writes(&self) -> bool {
+        match self {
+            Request::Hello { .. }
+            | Request::AppOwnership { .. }
+            | Request::RequestStats
+            | Request::RegisterShadow { .. }
+            | Request::CancelShadow
+            | Request::ShadowHello { .. } => false,
+        }
+    }
 }
 
 /// A line the daemon sends: a response to a request, or an event.
@@ -133,8 +191,10 @@ pub enum Response {
         /// Whether the app is owned.
         owned: bool,
     },
-    /// The request is taken; its result follows as an event (for
-    /// [`Request::RequestStats`]: [`Event::StatsReceived`]).
+    /// The request is taken; for [`Request::RequestStats`] its result
+    /// follows as the event [`Event::StatsReceived`]. For
+    /// [`Request::RegisterShadow`] and [`Request::CancelShadow`] nothing
+    /// follows.
     Accepted,
     /// The daemon cannot give the real answer to a request. The shim never
     /// makes one up (ADR 0055, "Honest failure").
@@ -175,7 +235,8 @@ pub struct Session {
 pub enum RefusalReason {
     /// The shim's major version differs from the daemon's.
     IncompatibleVersion,
-    /// The daemon did not launch this process.
+    /// The daemon did not launch this process (for
+    /// [`Request::ShadowHello`]: no open shadow registration for its app).
     UnknownProcess,
 }
 
@@ -393,6 +454,55 @@ mod tests {
         };
         assert_eq!(decode::<DaemonMessage>(&encode(&refused)?)?, refused);
         Ok(())
+    }
+
+    #[test]
+    fn shadow_messages_round_trip_as_one_line() -> Result<(), FrameError> {
+        for (request, text) in [
+            (
+                Request::RegisterShadow { app_id: 332_950 },
+                "{\"id\":6,\"request\":{\"type\":\"register_shadow\",\"app_id\":332950}}\n",
+            ),
+            (
+                Request::CancelShadow,
+                "{\"id\":6,\"request\":{\"type\":\"cancel_shadow\"}}\n",
+            ),
+            (
+                Request::ShadowHello {
+                    version: PROTOCOL_VERSION,
+                    pid: 4242,
+                    app_id: 332_950,
+                },
+                "{\"id\":6,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242,\"app_id\":332950}}\n",
+            ),
+        ] {
+            let message = ShimMessage { id: 6, request };
+            let line = encode(&message)?;
+            assert_eq!(line, text);
+            assert_eq!(decode::<ShimMessage>(&line)?, message);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn no_message_of_0_2_writes() {
+        for request in [
+            Request::Hello {
+                version: PROTOCOL_VERSION,
+                pid: 1,
+            },
+            Request::AppOwnership { app_id: 1 },
+            Request::RequestStats,
+            Request::RegisterShadow { app_id: 1 },
+            Request::CancelShadow,
+            Request::ShadowHello {
+                version: PROTOCOL_VERSION,
+                pid: 1,
+                app_id: 1,
+            },
+        ] {
+            assert!(!request.writes(), "{request:?}");
+        }
     }
 
     #[test]

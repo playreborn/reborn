@@ -66,7 +66,10 @@
 //! Shadow mode (ADR 0046): for confirmed meanings listed in `SHADOWS`,
 //! and only when the call is logged, the proxy compares the official
 //! client's result with Reborn's own answer and logs match or mismatch.
-//! The game always gets the official client's result.
+//! The game always gets the official client's result. For account data
+//! (ADR 0055: today `BIsSubscribed`) Reborn's answer comes from `rebornd`'s
+//! read-only shadow session, asked on a worker thread after the call
+//! returned, and the log says only match or mismatch.
 //!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
@@ -190,6 +193,12 @@ enum Shadow {
     /// `GetCurrentBatteryPower`: 255 on AC power, else the battery percent
     /// from `GetSystemPowerStatus`, compared with the lowest byte.
     BatteryPower,
+    /// `BIsSubscribed`: whether `rebornd` says the account owns the app
+    /// given by `reborn-observe arm --app` (ADR 0055: account data comes
+    /// from `rebornd`, not from `arm`), compared with the lowest byte.
+    /// Asked on a worker thread, so the game's call is not delayed; only
+    /// match or mismatch is logged.
+    Subscribed,
 }
 
 /// The calls ADR 0046 compares in shadow mode: interface version text,
@@ -206,6 +215,11 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     // `GetCurrentBatteryPower` for 009 (experiment 15).
     ("SteamUtils009", 9, Shadow::AppId),
     ("SteamUtils009", 14, Shadow::BatteryPower),
+    // `docs/shim/meanings.md`: confirmed `BIsSubscribed` (experiment 8);
+    // Reborn's answer from `rebornd`'s shadow session (ADR 0055, stage 1).
+    // Position 7 is not listed: it is narrowed to two meanings, not
+    // confirmed as one.
+    ("STEAMAPPS_INTERFACE_VERSION008", 0, Shadow::Subscribed),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -249,6 +263,63 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
         Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
         // Not in ANSWERS yet: shadow mode first (ADR 0046).
         Shadow::BatteryPower => None,
+        // Ownership is never answered by the proxy (ADR 0046, 0055).
+        Shadow::Subscribed => None,
+    }
+}
+
+/// A `BIsSubscribed` comparison waiting for `rebornd`'s answer: the start
+/// of its log line and the official client's result.
+struct Ask {
+    prefix: String,
+    rax: u64,
+}
+
+/// Comparisons that may wait at once; more are logged as skipped.
+const MAX_ASKS: usize = 16;
+
+/// The worker thread that asks `rebornd`, started on first use; `None` if
+/// it could not be started.
+static ASKS: OnceLock<Option<std::sync::mpsc::SyncSender<Ask>>> = OnceLock::new();
+
+/// Hands a `BIsSubscribed` comparison to the worker thread (ADR 0055).
+fn ask_subscribed(prefix: String, rax: u64) {
+    let sender = ASKS.get_or_init(|| {
+        let (sender, asks) = std::sync::mpsc::sync_channel(MAX_ASKS);
+        std::thread::Builder::new()
+            .name("reborn-shadow".to_owned())
+            .spawn(move || answer_asks(asks))
+            .ok()
+            .map(|_| sender)
+    });
+    let ask = Ask { prefix, rax };
+    match sender {
+        Some(sender) => {
+            if let Err(error) = sender.try_send(ask) {
+                let ask = match error {
+                    std::sync::mpsc::TrySendError::Full(ask)
+                    | std::sync::mpsc::TrySendError::Disconnected(ask) => ask,
+                };
+                log(&format!("{} shadow: skipped, worker busy", ask.prefix));
+            }
+        }
+        None => log(&format!("{} shadow: no worker thread", ask.prefix)),
+    }
+}
+
+/// The worker: one shadow session with `rebornd` for this process, one
+/// `AppOwnership` per comparison, for the app given to `arm` only.
+fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
+    let mut link = crate::daemon::ShadowLink::default();
+    for ask in asks {
+        let note = match given_app_id() {
+            Some(app_id) => crate::daemon::compare_subscribed(
+                ask.rax,
+                link.subscribed(std::process::id(), app_id, crate::daemon::connect),
+            ),
+            None => "shadow: no app ID given".to_owned(),
+        };
+        log(&format!("{} {note}", ask.prefix));
     }
 }
 
@@ -554,13 +625,16 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
         // ADR 0046: compare with Reborn's own answer; the game keeps the
         // official client's result.
         if let Some(shadow) = call.shadow {
-            let given = given_app_id();
-            log(&format!(
-                "{} ms {thread:?} {name} return {} {}",
-                elapsed_ms(),
-                call.call,
-                describe_shadow(rax, shadow, given)
-            ));
+            let prefix = format!("{} ms {thread:?} {name} return {}", elapsed_ms(), call.call);
+            match shadow {
+                // ADR 0055: Reborn's answer comes from `rebornd`, asked
+                // off the game's thread.
+                Shadow::Subscribed => ask_subscribed(prefix, rax),
+                _ => log(&format!(
+                    "{prefix} {}",
+                    describe_shadow(rax, shadow, given_app_id())
+                )),
+            }
         }
         // CreateInterface (step 3b), and calls through stand-ins that passed
         // a text (step 3c, ADR 0041).
@@ -1003,6 +1077,9 @@ fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
             };
             format!("shadow {verdict}: client {client}, Reborn {reborn}")
         }
+        // Needs `rebornd`'s answer: compared by the worker thread
+        // (`ask_subscribed`), never here.
+        Shadow::Subscribed => "shadow: asked rebornd".to_owned(),
     }
 }
 
@@ -1641,6 +1718,25 @@ mod tests {
             describe_shadow(480, Shadow::AppId, None),
             "shadow: no app ID given"
         );
+    }
+
+    #[test]
+    fn bis_subscribed_is_shadowed_and_never_answered() {
+        assert_eq!(
+            shadow_for("STEAMAPPS_INTERFACE_VERSION008", 0),
+            Some(Shadow::Subscribed)
+        );
+        // Position 7 is narrowed to two meanings, not confirmed; position
+        // 6 is a candidate.
+        assert_eq!(shadow_for("STEAMAPPS_INTERFACE_VERSION008", 7), None);
+        assert_eq!(shadow_for("STEAMAPPS_INTERFACE_VERSION008", 6), None);
+        // Ownership is never answered by the proxy (ADR 0046, 0055).
+        assert!(
+            ANSWERS
+                .iter()
+                .all(|&(_, _, answer)| answer != Shadow::Subscribed)
+        );
+        assert_eq!(answer_for("STEAMAPPS_INTERFACE_VERSION008", 0), None);
     }
 
     #[test]

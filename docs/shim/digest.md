@@ -16,6 +16,16 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0055 stage 0, shadow sessions (parallel agent, no
+  runs): shim protocol 0.2 gains `RegisterShadow`, `CancelShadow` and
+  `ShadowHello` and `Request::writes`; `reborn-observe arm --app`
+  registers the app with a signed-in `rebornd` (never signs in; owned set
+  from the cached licence list, no DLC), the proxy's `ShadowHello` claims
+  it once for its process, reads only (`AppOwnership` for the own app,
+  `RequestStats`), writes refused, dropped when the connection closes and
+  for all on any end of the Valve session. Proxy shadow for
+  `STEAMAPPS_INTERFACE_VERSION008` 0 (`BIsSubscribed`), asked on a worker
+  thread, logs only match or mismatch. Position 7 not shadowed.
 - 2026-11-22: ADR 0055 stage 0, stats read (parallel agent, no runs):
   shim protocol 0.2 gains `RequestStats`, `Accepted` and the first event,
   `StatsReceived { result, achievement_names }`; `reborn-cm` has a typed

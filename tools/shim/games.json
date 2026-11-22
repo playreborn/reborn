@@ -1,0 +1,25 @@
+{
+  "_comment": "The recorded games of docs/shim/coverage.md: code, name, app ID, the local proxy log of its reference run (stays on the recorder's computer), and who recorded it. coverage.py reads this.",
+  "games": [
+    ["CC", "Cave Crawlers", 2143030, "observe-21180.log", "maintainer"],
+    ["BC", "Bongo Cat", 3419430, "observe-38924.log", "maintainer"],
+    ["CM", "Coin Maker Simulator Demo", 5191630, "observe-14928.log", "maintainer"],
+    ["BB", "Baldi's Basics Classic Remastered", 1712830, "observe-49756.log", "agent"],
+    ["LS", "Linsips", 4301370, "observe-50868.log", "agent"],
+    ["PL", "Paper Lily - Chapter 1", 2220360, "observe-47332.log", "agent"],
+    ["PT", "Please, Touch The Artwork 2", 2600140, "observe-41156.log", "agent"],
+    ["AC", "An Arcade Full of Cats", 2368470, "observe-30456.log", "agent"],
+    ["GR", "Gravitas", 1067310, "observe-496.log", "agent"],
+    ["OC", "Outcore: Desktop Adventure", 1275670, "observe-49168.log", "agent"],
+    ["PY", "Plant Therapy", 2505120, "observe-51012.log", "agent"],
+    ["CH", "Chronigma", 4051150, "observe-47376.log", "agent"],
+    ["TW", "The Thief, the Witch, the Toad, and the Mushroom.", 2233770, "observe-30208.log", "agent"],
+    ["OE", "One's Own Exile", 3086720, "observe-51644.log", "agent"],
+    ["FS", "Fallout Shelter", 588430, "observe-43972.log", "agent"],
+    ["HC", "HoloCure - Save the Fans!", 2420510, "observe-11624.log", "agent"],
+    ["DD", "Dark Deception", 332950, "observe-44940.log", "agent"],
+    ["UB", "UNBEATABLE [white label]", 1290490, "observe-45720.log", "agent"],
+    ["PK", "A Park Full of Cats", 2610090, "observe-8248.log", "agent"],
+    ["CA", "Cartapli : Fold Quest", 4314560, "observe-48168.log", "agent"]
+  ]
+}

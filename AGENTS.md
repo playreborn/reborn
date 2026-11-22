@@ -126,6 +126,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo deny check   # if cargo-deny is installed
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # as CI runs it
 ```
 
 Report honestly what you ran and what failed. If something was not verified,
@@ -136,3 +137,15 @@ say so.
 Login and tokens, keyring access, anything that writes or deletes files,
 `unsafe` code, the shim, and anything that acts on the user's account
 (messages, friend requests, cloud uploads). Point these out explicitly in the PR.
+
+For the shim, the observation tools and `rebornd`'s shim parts, ADR 0051
+replaces the human review with green CI, no new CodeQL alerts and a
+separate review pass by an agent that did not write the change. Login,
+tokens, the keyring and actions on the account still need the maintainer.
+
+## 8. Autonomous loop (ADR 0051)
+
+Agents working on the shim take their next task from `docs/shim/gaps.md`
+and follow `docs/shim/LOOP.md`. Before starting, regenerate the gap list
+(`python tools/shim/coverage.py`); after each iteration, add a line to
+`docs/shim/digest.md`.

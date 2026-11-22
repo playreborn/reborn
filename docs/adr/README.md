@@ -56,3 +56,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0048](0048-loading-the-shim.md) | How games find the shim when Reborn starts them | Accepted |
 | [0049](0049-agent-input-in-games.md) | Input in games during agent runs | Accepted |
 | [0050](0050-reading-callback-payloads.md) | Reading what a callback carries (step 4d) | Accepted |
+| [0051](0051-autonomous-development.md) | Autonomous development of the shim | Accepted |

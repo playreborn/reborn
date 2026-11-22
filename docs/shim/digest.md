@@ -16,6 +16,18 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: experiment 30 **matched**: the stats shadow for callback
+  0x44d agreed with the official client in Cave Crawlers, Gravitas and
+  Dark Deception (size, app ID, result; Steam ID not compared). PR #39.
+- 2026-11-22: experiment 30 planned (loop iteration 14a, parallel agent,
+  no runs): first live run of the 0x44d stats shadow in Cave Crawlers,
+  Gravitas and Dark Deception; prediction: every step-4b 0x44d line gets
+  exactly one stats shadow line and each says `shadow match`. Script
+  `tools/shim/experiments/030_stats_shadow.py`. Runs need `rebornd`
+  signed in with the stored login next to the official client; stop on
+  Steam Guard or any logoff/kick. A match confirms size, app ID and
+  `EResult`; the Steam ID bytes, achievement names and answer mode stay
+  open.
 - 2026-11-22: loop iteration 13a results (PR #40): experiment 26 (VPet)
   matched: `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12, `SteamUtils010` 13
   and `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/19 confirmed; 18, 11, 77

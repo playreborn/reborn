@@ -51,6 +51,10 @@ const MAX_TRIES: u32 = 5;
 /// Longest wait between two tries (ADR 0055: at most 5 min).
 const MAX_DELAY: Duration = Duration::from_secs(300);
 
+/// Pause before trying again when a session exists but its lock was busy
+/// for a moment. Nothing was sent to Valve, so it is not a backoff.
+const LOCK_BUSY_PAUSE: Duration = Duration::from_millis(50);
+
 /// Wait before the next try after the n-th failed one: 1 s, doubling, at
 /// most 5 min (ADR 0055, "Rate limits").
 pub fn retry_delay(failed: u32) -> Duration {
@@ -322,11 +326,18 @@ async fn fetch_with_retries<B: StatsBackend>(
                 backend.sleep(retry_delay(tries - 1)).await;
             }
             Err(FetchError::NoSession) => {
-                if backend.link().await == Link::SignedOut {
-                    return Err(Stop::Failed(UnavailableReason::NotSignedIn));
+                match backend.link().await {
+                    Link::SignedOut => {
+                        return Err(Stop::Failed(UnavailableReason::NotSignedIn));
+                    }
+                    // The session is there, its lock was only busy: no
+                    // backoff, just a short pause.
+                    Link::Connected => backend.wait_for_session(LOCK_BUSY_PAUSE).await,
+                    Link::Offline => {
+                        backend.wait_for_session(retry_delay(waits)).await;
+                        waits += 1;
+                    }
                 }
-                backend.wait_for_session(retry_delay(waits)).await;
-                waits += 1;
             }
         }
     }
@@ -619,6 +630,30 @@ pub mod tests {
                 .unwrap_or_else(|p| p.into_inner())
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn a_busy_session_lock_is_not_backed_off() {
+        // Connected, but the lock was busy once: a short pause, no backoff.
+        let fake = Fake::new(
+            Link::Connected,
+            vec![Err(FetchError::NoSession), Ok(recorded())],
+        );
+        let stats = Arc::new(RunStats::default());
+        let (_, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
+        let receiver = receiver.unwrap_or_else(|| panic!("no receiver"));
+        assert!(event_when_received(receiver).await.is_some());
+        assert_eq!(
+            *fake.session_waits.lock().unwrap_or_else(|p| p.into_inner()),
+            [LOCK_BUSY_PAUSE]
+        );
+        assert!(
+            fake.sleeps
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty()
+        );
+        assert_eq!(fake.fetches(), 1);
     }
 
     #[tokio::test]

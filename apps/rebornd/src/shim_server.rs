@@ -149,7 +149,12 @@ where
             debug!("closing shim connection after a bad line");
             break;
         };
-        if reply.stats.is_some() {
+        // Only requests whose answer is still open count: one answered
+        // from the run's cache is sent at once.
+        let open = reply.stats.as_ref().is_some_and(|stats| {
+            matches!(*stats.borrow(), StatsState::Idle | StatsState::Fetching)
+        });
+        if open {
             waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
             if waiting.len() >= MAX_WAITING {
                 debug!("closing shim connection with too many open stats requests");

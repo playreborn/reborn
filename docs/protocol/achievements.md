@@ -91,8 +91,11 @@ Reborn never writes stats or achievements (red line 4).
   name and English display name (`FALLBACK_LANGUAGE`). No stat values or
   unlock state go to the shim while the readers are candidates.
 - **Rules:** a connection without a session, or a run not started in
-  shim mode, gets `NotAllowed`; no Valve session and no reconnect
-  running gets `NotSignedIn`. At most one `ClientGetUserStats` per run;
+  shim mode, gets `NotAllowed`; a daemon that is signed out for good
+  (the user signed out, Steam ended the session, or signing in again was
+  refused) gets `NotSignedIn`. A session only forgotten after an error
+  counts as offline, not signed out. This is tracked in the daemon, not
+  read from the keyring. At most one `ClientGetUserStats` per run;
   later requests are answered from the run's in-memory cache (dropped
   when the game exits). A request that has not reached Valve waits while
   `rebornd` reconnects (ADR 0025), also when the connection is already

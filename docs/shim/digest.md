@@ -16,6 +16,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: first live shadow run with real account data (ADR 0055):
+  `BIsSubscribed` shadow **matched** in Dark Deception, A Park Full of
+  Cats and An Arcade Full of Cats; `rebornd` and the official client were
+  signed in at once without kicks or Steam Guard. The maintainer allowed
+  answer mode for this one call (the game's own ownership); a game as a
+  whole qualifies only when all its account-data calls have matched. PR #34.
 - 2026-11-22: ADR 0055 stage 0, shadow sessions (parallel agent, no
   runs): shim protocol 0.2 gains `RegisterShadow`, `CancelShadow` and
   `ShadowHello` and `Request::writes`; `reborn-observe arm --app`

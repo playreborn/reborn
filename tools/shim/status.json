@@ -192,8 +192,8 @@
       "GetAchievement, GetStat or GetGlobalStat"
     ],
     "0": [
-      "candidate",
-      "RequestCurrentStats or StoreStats"
+      "confirmed",
+      "RequestCurrentStats"
     ]
   },
   "SteamController007": {

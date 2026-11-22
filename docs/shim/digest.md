@@ -9,6 +9,13 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 9: first callback meaning. Experiment 20
+  **mismatched** (the Steam ID sits at bytes 12 to 20, not 16 to 24);
+  experiment 21 with that layout **matched** (Cave Crawlers, Gravitas,
+  Dark Deception): callback 0x44d is `UserStatsReceived_t`,
+  UserStats011 0 is `RequestCurrentStats`. ADR 0054 (maintainer): the
+  agent lists callback numbers itself. Two parallel agents planned
+  experiments 16 to 19 (PRs #21, #22). PR #23.
 - 2026-11-22: loop iteration 8: experiment 15 matched (4 games):
   `SteamUtils009` 9 `GetAppID` and 14 `GetCurrentBatteryPower` confirmed;
   added to the shim and to shadow mode (live: 68 of 68 calls matched).

@@ -1454,3 +1454,33 @@ of the same three games (they are the only `…VERSION011` games).
 **Predictions** (`tools/shim/experiments/021_stats_received_layout.py`):
 A and C as in experiment 20; B: bytes 12 to 20 are the same in all three
 games and their upper four bytes are not zero.
+
+**Result of experiment 21** (agent runs after the plan was committed at
+12:15:06; logs recorded by `run.sh`: `observe-752` Cave Crawlers,
+`observe-47412` Gravitas, `observe-52328` Dark Deception): **match**,
+checked by the script.
+
+```text
+observe-752.log (Cave Crawlers) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-752.log (Cave Crawlers) C: callback 309 ms after the first position-0 call -> match
+observe-47412.log (Gravitas) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-47412.log (Gravitas) C: callback 290 ms after the first position-0 call -> match
+observe-52328.log (Dark Deception) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-52328.log (Dark Deception) C: callback 305 ms after the first position-0 call -> match
+B: bytes 12..20 the same in 3 logs -> match
+experiment 21: match
+```
+
+Under ADR 0051:
+
+- callback number **0x44d (1101)** is confirmed as `UserStatsReceived_t`:
+  24 bytes, the game ID in bytes 0 to 8 (its low 32 bits the app ID),
+  the result (`EResult`) in 8 to 12, the user's Steam ID in 12 to 20, 4
+  bytes of leftover at the end;
+- position 0 of `STEAMUSERSTATS_INTERFACE_VERSION011` is confirmed as
+  `RequestCurrentStats` (the page: its result arrives as
+  `UserStatsReceived_t`; `StoreStats` answers with `UserStatsStored_t`).
+
+Not in the shim yet: it does not deliver callbacks (experiment 19, loop
+iteration 9b, plans that protocol), and the stats themselves have to come
+from Valve's servers through `rebornd`.

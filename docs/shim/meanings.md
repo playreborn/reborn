@@ -1163,6 +1163,17 @@ as `Init`. Not in the shim yet: neither interface has an object there, and
 an honest answer to `RequestCurrentStats` needs the stats from Valve's
 servers and the callbacks (ADR 0050).
 
+**Correction (loop iteration 10a, after a review pass):** the plan listed
+two functions without arguments, but the `ISteamUserStats` page also
+documents `ResetAllStats` (one `bool`, returns `bool`, "automatically
+calls StoreStats"). Experiment 13 did not rule it out for position 10:
+it was called once at close and returned true, which `ResetAllStats`
+would do too, and `rdx` was 1 in all three games, which also fits a
+`bool` argument. Position 10 of `STEAMUSERSTATS_INTERFACE_VERSION012` is
+therefore **narrowed to `StoreStats` or `ResetAllStats`**, not confirmed
+(`status.json` changed accordingly). Position 0 (`RequestCurrentStats`)
+is not affected.
+
 ## `STEAMINVENTORY_INTERFACE_V003`: result handles (loop iteration 6)
 
 Page read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamInventory>.
@@ -1761,6 +1772,19 @@ candidate" stay candidates. Not in the shim yet: the shim's
 `Steam_BGetCallback` still aborts; delivering callbacks needs their
 contents, which come from `rebornd`.
 
+**Correction (loop iteration 10a, after a review pass):** a Linsips run
+(`observe-55108`, app 4301370) recorded after experiment 19 and outside
+its five games breaks two of its rules. D: the game called
+`Steam_FreeLastCallback` 11 times for 10 headers, once after a poll that
+returned 0, so "no free without an open header" is not a rule for every
+game. E: it freed its one 703 callback without calling
+`Steam_GetAPICallResult`, and the next callback was a 0x44d, so "exactly
+one `GetAPICallResult` per 703" is not a rule for every game either. The
+confirmation above stays scoped to the five games' builds. For the shim
+this means `Steam_FreeLastCallback` must be harmless when nothing is held.
+Whether Linsips ignored the 703 or received the result as an ordinary
+callback is open; one run does not tell.
+
 ## `SteamUser`, `SteamFriends`, `SteamController` and `SteamInput` (loop iteration 9a)
 
 Pages read 2026-11-22, each opened without signing in:
@@ -2183,3 +2207,327 @@ As the plan fixed beforehand, under ADR 0051:
 Not in the shim yet. `SetRichPresence`, `GetFriendCount` and
 `GetFriendByIndex` wait for the maintainer even then (account and friends
 data).
+
+## More callbacks: 703 and 0x44e (loop iteration 10a)
+
+Pages read 2026-11-22, both opened without signing in:
+<https://partner.steamgames.com/doc/api/ISteamUtils> (callback structs,
+`GetAPICallResult`, `IsAPICallCompleted`, `GetAPICallFailureReason`) and
+<https://partner.steamgames.com/doc/api/ISteamUserStats> (callback and call
+result structs; which functions trigger `UserStatsStored_t`; which
+functions return `SteamAPICall_t`). No page gives a callback's numeric
+identifier or a struct's packing.
+
+**Logs looked at** (step 4d logs recorded by `run.sh`, raw logs stay
+local): those of experiment 19 (`observe-51204`, `observe-12256`,
+`observe-51224`, `observe-25680`, `observe-52912`), the runs after it
+(`observe-51828` Dark Deception, `observe-55256` UNBEATABLE [white
+label], `observe-55108` Linsips, `observe-50768` Cartapli : Fold Quest,
+`observe-42892` Please, Touch The Artwork 2, `observe-29128` Fallout
+Shelter), and the experiment 20 and 21 logs of Cave Crawlers. Payload
+bytes were compared inside scripts only; nothing below quotes them.
+
+**Packing.** Experiment 21 found the fields of 0x44d 4-byte packed (the
+Steam ID at 12 to 20) and left the size 24 unexplained. Natural alignment
+is therefore not assumed: a size below rules a struct out only if the
+struct cannot fit in the recorded size under any packing. The predictions
+rest on content and timing.
+
+### 703 (0x2bf): candidate `SteamAPICallCompleted_t`
+
+- **Recorded:** 703 callbacks (size 16) in Bongo Cat (6), Coin Maker (12),
+  Fallout Shelter (29), Cartapli (4), Please, Touch The Artwork 2 (3) and
+  Linsips (1). In all but Linsips each 703 window held one
+  `Steam_GetAPICallResult` call. Its `r9` depended on where its `rdx`
+  came from: a handle returned earlier by
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 (candidate
+  `RequestUserStats`) came with `r9` 24 (Bongo Cat, Cartapli); one from
+  `…VERSION013` positions 22 and 37 and from `…VERSION012` position 23
+  with 16; one from `…VERSION012` position 29 with 24; one from
+  `STEAMINVENTORY_INTERFACE_V003` position 26 with 8. Handles with no
+  earlier source in the log came with 32 or 792.
+- **Linsips (`observe-55108`) breaks experiment 19's D and E** (see the
+  correction note at the end of the loop iteration 9b section): it freed
+  its one 703 callback without calling `Steam_GetAPICallResult` (the next
+  callback was a 0x44d), and it called `Steam_FreeLastCallback` 11 times
+  for 10 headers.
+- **Every callback on the `ISteamUtils` page** (LOOP step 3; fields as the
+  page lists them): `CheckFileSignature_t` (one enum),
+  `GamepadTextInputDismissed_t` (`bool`, `uint32`), `LowBatteryPower_t`
+  (`uint8`), and `FloatingGamepadTextInputDismissed_t`, `IPCountry_t`,
+  `AppResumingFromSuspend_t` and `SteamShutdown_t` (no fields): none
+  fills 16 bytes under any packing. `SteamAPICallCompleted_t`
+  (`m_hAsyncCall` `SteamAPICall_t`, `m_iCallback` `int`, `m_cubParam`
+  `uint32`) has 16 bytes with a 64-bit handle under 4-byte packing and
+  natural alignment alike (8 + 4 + 4, no padding either way; the 64 bits
+  are derived from the recorded `rdx` values, experiment 19, not read on
+  a page). Callbacks of other pages could also have 16 bytes; F rules out
+  every struct that does not hold, at 0..8, the handle the game then
+  passes to `Steam_GetAPICallResult` and, at 12..16, the size it passes.
+- **`Steam_GetAPICallResult` against the other `ISteamUtils` functions
+  that take a call handle:** `IsAPICallCompleted` (handle, failure flag)
+  and `GetAPICallFailureReason` (handle) take no size. Ruling them out is
+  an inference from F: if `r9` always equals the size of the finished
+  result, `r9` is read as an argument carrying that size, which only
+  `GetAPICallResult` takes; a leftover that always equals the size is not
+  strictly excluded.
+- **Every `SteamAPICall_t` function on the `ISteamUserStats` page** (G):
+  `RequestUserStats` (call result `UserStatsReceived_t`),
+  `RequestGlobalStats` (`GlobalStatsReceived_t`),
+  `RequestGlobalAchievementPercentages`
+  (`GlobalAchievementPercentagesReady_t`), `FindLeaderboard` and
+  `FindOrCreateLeaderboard` (`LeaderboardFindResult_t`),
+  `DownloadLeaderboardEntries` and `DownloadLeaderboardEntriesForUsers`
+  (`LeaderboardScoresDownloaded_t`), `UploadLeaderboardScore`
+  (`LeaderboardScoreUploaded_t`), `AttachLeaderboardUGC`
+  (`LeaderboardUGCSet_t`), `GetNumberOfCurrentPlayers`
+  (`NumberOfCurrentPlayers_t`). Only `RequestUserStats` finishes as
+  `UserStatsReceived_t` (1101, experiment 21).
+
+### 0x44e (1102): candidate `UserStatsStored_t`
+
+- **Recorded:** Cave Crawlers (`…VERSION011`) called position 10 three
+  times (about 1.2 and 2.4 seconds after start, the first right after
+  position 4, candidate `SetStat`); three 0x44e callbacks followed, 7,
+  139 and 137 ms after the call of the same rank. Bongo Cat
+  (`…VERSION013`) called position 9 five times (four within 2 ms at about
+  1.45 s, one at about 61 s); five 0x44e callbacks followed, 1 to 7 ms
+  after. All eight had size 16, bytes 0..4 the game's app ID, bytes 4..8
+  zero, bytes 8..12 equal to 1, bytes 12..16 zero. No 0x44e in any log
+  without those calls. Both trigger positions returned 1 and had no text
+  argument. The lowest byte of `rdx` was 15 in the first Cave Crawlers
+  call of every recording (later calls 0, 64 or 192) and 24 in every
+  Bongo Cat call. (`…VERSION012` position 10, narrowed to `StoreStats` or
+  `ResetAllStats` in experiment 13, see the correction there, was seen
+  only at close in logs from before step 4d; those games polled no
+  callback after it, so they cannot test 0x44e.)
+- **Every callback and call result struct on the `ISteamUserStats` page**
+  (LOOP step 3):
+  - `UserStatsStored_t` (`m_nGameID` `uint64`, `m_eResult`): fits the
+    content (game ID, then result). The page says `StoreStats` and
+    `IndicateAchievementProgress` trigger it, and that `ResetAllStats`
+    "automatically calls StoreStats"; all three return `bool`.
+  - `GlobalStatsReceived_t` and `GlobalAchievementPercentagesReady_t`
+    (the same two fields): fit the content too; the page names them as
+    call results of `RequestGlobalStats` and
+    `RequestGlobalAchievementPercentages`, which return `SteamAPICall_t`.
+    C rules them out: the trigger's result has lowest byte 1 and upper
+    32 bits zero, not a 64-bit handle (every recorded handle used the
+    upper 32 bits), and no 703 between trigger and callback announces a
+    finished result with number 1102.
+  - `UserStatsReceived_t`: is 0x44d (experiment 21).
+  - `UserAchievementStored_t` (`uint64`, `bool`, a name of
+    `k_cchStatNameMax` chars, two `uint32`): needs at least
+    8 + 1 + 1 + 4 + 4 = 18 bytes, more than 16 under any packing.
+  - `UserAchievementIconFetched_t` (`CGameID`, a name, `bool`, `int`):
+    bytes 8..12 would start the name; B (byte 8 is 1, bytes 9..12 zero)
+    leaves no name.
+  - `UserStatsUnloaded_t` (`m_steamIDUser` only): B (bytes 4..8 zero)
+    rules it out; the upper half of the Steam ID is not zero (experiment
+    21, B).
+  - `LeaderboardFindResult_t`, `LeaderboardScoresDownloaded_t`,
+    `LeaderboardScoreUploaded_t`, `LeaderboardUGCSet_t`,
+    `NumberOfCurrentPlayers_t`: call results of `SteamAPICall_t`
+    functions (C), and none starts with a game ID (B).
+  - Callbacks of other pages with a game ID and a result, triggered by the
+    same call, are not ruled out (as in experiment 20). The meaning below
+    is claimed only among the structs of the `ISteamUserStats` page.
+- **The trigger positions:** the page names three functions that lead to
+  `UserStatsStored_t`: `StoreStats` (no arguments),
+  `IndicateAchievementProgress` (an achievement name and two numbers) and
+  `ResetAllStats` (one `bool`, "automatically calls StoreStats"). D (no
+  text argument) rules out `IndicateAchievementProgress`. E tells
+  `StoreStats` from `ResetAllStats`: the Microsoft x64 calling convention
+  (<https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>)
+  passes the second integer argument of a call, the first after the
+  object in `rcx`, in `rdx`, "right-justified", so a `bool` argument
+  sits in the lowest byte of `rdx`. That a `bool` is passed as 0 or 1 is
+  **an assumption** (the page says only that the callee may ignore the
+  upper bits; the value of a `bool` is not on it). A lowest byte other
+  than 0 or 1 therefore rules out `ResetAllStats` under that assumption.
+  Candidates: `…VERSION011` position 10 and `…VERSION013` position 9
+  `StoreStats` or `ResetAllStats`.
+
+### The other recorded numbers
+
+304, 336, 1222, 1281, 4700, 4701, 4702, 1040011, 1040015, 1040044,
+1080000 and 1080001: **no candidate** in this iteration. No page gives
+numeric identifiers, and none of them follows a call whose meaning is
+confirmed closely enough to point at one struct (4700 to 4702 come near
+the stats calls of Cave Crawlers and Bongo Cat, 304 and 336 in pairs about
+2.5 s after start in Cave Crawlers, 1222 and 1281 only in games that also
+have 703). Their payloads are not asked for.
+
+### Experiment 22 (planned 2026-11-22, before the runs)
+
+**Needs `PAYLOAD_LISTED`:** 703 (0x2bf). Reason: F, G and H compare its
+payload bytes with the registers of `Steam_GetAPICallResult` and with
+results of earlier calls. Per the `ISteamUtils` page it carries a call
+handle, a callback number and a size: no Steam ID, name, ticket, token or
+password (ADR 0054). Added by the main session before the runs.
+
+**Predictions** (`tools/shim/experiments/022_api_call_completed.py`; a
+703 window is the time from a 703 header to the next
+`Steam_FreeLastCallback` call on the same thread, experiment 19):
+
+- P: every 703 callback has size 16 and its first payload bytes logged.
+- F: for every window with a `Steam_GetAPICallResult` call, payload bytes
+  0..8 equal its `rdx` (all 64 bits) and bytes 12..16 the low 32 bits of
+  its `r9`; at least 10 windows checked across all logs; a log with 50 or
+  more such calls (the proxy logs only the first 50) is a mismatch.
+- G: every 703 whose bytes 0..8 equal a result of a
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 call made before that
+  703 has bytes 8..12
+  = 1101 (0x44d, `UserStatsReceived_t`) and bytes 12..16 = 24; checked at
+  least once in each of Bongo Cat, Cartapli and Linsips (Linsips calls no
+  `GetAPICallResult`, so G links through position 15's result, not
+  `rdx`).
+- H: windows whose `GetAPICallResult` handle came from the same interface
+  position all carry one number in bytes 8..12 (the script prints only
+  how many numbers per position).
+
+**Games to run:** Bongo Cat (3419430), Coin Maker Simulator Demo
+(5191630), Fallout Shelter (588430), Cartapli : Fold Quest (4314560),
+Linsips (4301370); one fresh log each, all five needed, each run to its
+first screen and closed by a close request.
+
+**What a full match confirms:**
+
+- callback 703 is `SteamAPICallCompleted_t`: bytes 0..8 the call handle
+  and 12..16 the size of the finished result (F);
+- jointly, by G: bytes 8..12 are the callback number of the finished
+  result, and `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 is
+  `RequestUserStats` (its handle finishes with 1101 =
+  `UserStatsReceived_t`, and among the `SteamAPICall_t` functions of the
+  page listed above only `RequestUserStats` finishes as that struct). The
+  two readings rest on each other: G could not match if either were
+  wrong, but neither is shown without the other;
+- `Steam_GetAPICallResult` is `GetAPICallResult`, with `rdx` the call
+  handle and `r9` the buffer size (the inference from F above rules out
+  `IsAPICallCompleted` and `GetAPICallFailureReason`).
+
+**What stays a candidate:** the numbers in bytes 8..12 for the other
+source positions (H only shows one per position); the arguments on the
+stack (expected number, failure flag), which are not logged; experiment
+19's parameter order inference beyond `rdx` and `r9`; whether `rcx` is the
+pipe or the user handle.
+
+### Experiment 23 (planned 2026-11-22, before the runs)
+
+0x44e is already in `PAYLOAD_LISTED` (experiment 20); nothing new to list.
+
+**Predictions** (`tools/shim/experiments/023_stats_stored.py`; trigger:
+`…VERSION011` position 10 in Cave Crawlers, `…VERSION013` position 9 in
+Bongo Cat):
+
+- A: the trigger is called at least once and there are exactly as many
+  0x44e callbacks as trigger calls; paired in order, each callback comes
+  0 to 1000 ms after its call; none before the first call.
+- B: every 0x44e has size 16, bytes 0..4 the app ID, bytes 4..8 zero,
+  bytes 8..12 = 1 (`k_EResultOK`). Bytes 12..16 are not predicted.
+- C: every trigger call's result has lowest byte 1 and upper 32 bits zero
+  (a `bool` true, not a 64-bit call handle), and no 703 callback between
+  a trigger call and its 0x44e has 1102 in bytes 8..12 (703 is listed for
+  experiment 22; a 703 between them without logged payload bytes is a
+  mismatch).
+- D: no trigger call has a text argument.
+- E: in each game, at least one trigger call has a lowest `rdx` byte
+  other than 0 and 1.
+
+**Games to run:** Cave Crawlers (2143030) and Bongo Cat (3419430); one
+fresh log each, both needed (the Bongo Cat run of experiment 22 can serve
+both scripts). Risk: if Bongo Cat calls position 9 just before the close
+request and exits before polling again, A mismatches.
+
+**What a full match confirms:**
+
+- callback 0x44e (1102) is `UserStatsStored_t`, among the structs of the
+  `ISteamUserStats` page: 16 bytes, the app ID in 0..4 and zero in 4..8
+  (the game ID), the result in 8..12 (A to D rule out the other structs
+  of the page, as listed above);
+- `…VERSION011` position 10 and `…VERSION013` position 9 are `StoreStats`:
+  D rules out `IndicateAchievementProgress`, and E rules out
+  `ResetAllStats` **under the assumption above** (a `bool` argument
+  arrives as 0 or 1 in the lowest byte of `rdx`). The confirmation names
+  that assumption; if it is ever shown wrong, the two positions fall back
+  to "narrowed: `StoreStats` or `ResetAllStats`".
+
+**What stays a candidate:** bytes 12..16 (zero in every recording, not
+explained, like the last four bytes of 0x44d); whether 0x44e ever carries
+another result code; a struct of another page with the same content and
+trigger.
+
+**Freshness (both scripts):** a log whose `start` line in `starts.log` is
+earlier than `PLAN_COMMITTED` is rejected; both scripts hold the commit
+time of the final plan on `loop/plan-10a` (local time, as `run.sh` writes
+`starts.log`): 2026-11-22 13:39:41 (commit `3185f1f`). The first plan time (13:26:55) is superseded by this revised plan.
+
+**Already seen:** run on the existing logs with the plan time lifted,
+experiment 23 gives "match" on `observe-52912` and `observe-51224` and
+experiment 22 "MISMATCH" (703 payload bytes not logged yet). In an older
+Bongo Cat log (`observe-47280`) three 703 callbacks fell between a
+trigger call and its 0x44e; C checks those through their payload bytes. The predictions were written from these logs, so
+they are not the test; only fresh runs after the plan commit are.
+
+**Results of experiments 22 and 23** (agent runs by the main session after
+the plan time 13:39:41, with 703 listed in `PAYLOAD_LISTED`; logs recorded
+by `run.sh` in `starts.log`: `observe-42296` Bongo Cat (used for both),
+`observe-11744` Coin Maker Simulator Demo, `observe-12404` Fallout
+Shelter, `observe-22200` Cartapli : Fold Quest, `observe-45668` Linsips,
+`observe-20708` Cave Crawlers): both **match**, checked by the scripts.
+
+```text
+observe-42296.log (Bongo Cat) P: 6 callbacks 703, 6 with payload bytes -> match
+observe-42296.log (Bongo Cat) F: 6 windows with GetAPICallResult checked, 6 equal, 6 calls logged -> match
+observe-42296.log (Bongo Cat) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+observe-11744.log (Coin Maker Simulator Demo) P: 13 callbacks 703, 13 with payload bytes -> match
+observe-11744.log (Coin Maker Simulator Demo) F: 13 windows with GetAPICallResult checked, 13 equal, 13 calls logged -> match
+observe-11744.log (Coin Maker Simulator Demo) G: 0 callbacks 703 for a position-15 handle, 0 with number 1101 and size 24 -> match
+observe-12404.log (Fallout Shelter) P: 29 callbacks 703, 29 with payload bytes -> match
+observe-12404.log (Fallout Shelter) F: 29 windows with GetAPICallResult checked, 29 equal, 29 calls logged -> match
+observe-12404.log (Fallout Shelter) G: 0 callbacks 703 for a position-15 handle, 0 with number 1101 and size 24 -> match
+observe-22200.log (Cartapli : Fold Quest) P: 4 callbacks 703, 4 with payload bytes -> match
+observe-22200.log (Cartapli : Fold Quest) F: 4 windows with GetAPICallResult checked, 4 equal, 4 calls logged -> match
+observe-22200.log (Cartapli : Fold Quest) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+observe-45668.log (Linsips) P: 1 callbacks 703, 1 with payload bytes -> match
+observe-45668.log (Linsips) F: 0 windows with GetAPICallResult checked, 0 equal, 0 calls logged -> match
+observe-45668.log (Linsips) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+F across all logs: 52 windows checked (at least 10) -> match
+    H: STEAMINVENTORY_INTERFACE_V003 position 26: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION012 position 23: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION012 position 29: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 15: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 22: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 37: 1 number(s)
+H: 6 source positions, one number each -> match
+experiment 22: match
+```
+
+```text
+observe-20708.log (Cave Crawlers) A: 3 calls of position 10, 3 callbacks 0x44e, gaps [4, 126, 124] ms -> match
+observe-20708.log (Cave Crawlers) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-20708.log (Cave Crawlers) C: 3 of 3 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-20708.log (Cave Crawlers) D: 0 trigger calls with a text argument -> match
+observe-20708.log (Cave Crawlers) E: 3 of 3 trigger calls with a lowest rdx byte other than 0 and 1 -> match
+observe-42296.log (Bongo Cat) A: 7 calls of position 9, 7 callbacks 0x44e, gaps [6, 7, 7, 7, 0, 1, 0] ms -> match
+observe-42296.log (Bongo Cat) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-42296.log (Bongo Cat) C: 7 of 7 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-42296.log (Bongo Cat) D: 0 trigger calls with a text argument -> match
+observe-42296.log (Bongo Cat) E: 7 of 7 trigger calls with a lowest rdx byte other than 0 and 1 -> match
+experiment 23: match
+```
+
+As the plans fixed beforehand, under ADR 0051:
+
+- confirmed: callback 703 is `SteamAPICallCompleted_t` (handle in 0..8,
+  callback number in 8..12, size in 12..16); `Steam_GetAPICallResult` is
+  `GetAPICallResult` (`rdx` the handle, `r9` the buffer size);
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 is `RequestUserStats`;
+- confirmed: callback 0x44e (1102) is `UserStatsStored_t` (among the
+  structs of the `ISteamUserStats` page); `…VERSION011` position 10 and
+  `…VERSION013` position 9 are `StoreStats`, under the stated assumption
+  that a `bool` argument arrives as 0 or 1 in the lowest byte of `rdx`;
+- the "What stays a candidate" items above stay candidates.
+
+Linsips again freed its 703 without `Steam_GetAPICallResult` (F: 0
+windows), as in the correction note of the 9b section.

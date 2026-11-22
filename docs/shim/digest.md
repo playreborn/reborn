@@ -16,6 +16,21 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 10a (planned by a parallel agent, run by the
+  main session): experiments 22 and 23 **matched** (6 games). Callback 703
+  is `SteamAPICallCompleted_t`, `Steam_GetAPICallResult` is
+  `GetAPICallResult`, UserStats013 15 is `RequestUserStats`; callback 1102
+  is `UserStatsStored_t`, UserStats011 10 and 013 9 are `StoreStats`
+  (assuming a `bool` arrives as 0 or 1). 703 listed in `PAYLOAD_LISTED`.
+  PR #25.
+- 2026-11-22: loop iteration 10a (plan, parallel agent): experiments 22
+  (703 = `SteamAPICallCompleted_t`) and 23 (0x44e = `UserStatsStored_t`,
+  the trigger positions `StoreStats`) planned, not run yet. Correction
+  found by the review pass: UserStats012 position 10 goes back from
+  confirmed `StoreStats` to "narrowed: `StoreStats` or `ResetAllStats`"
+  (experiment 13 did not rule out `ResetAllStats`); a Linsips log breaks
+  experiment 19's D and E outside its five games (notes in
+  `meanings.md`). PR #25.
 - 2026-11-22: loop iteration 9a (planned by a parallel agent, run by the
   main session): experiments 16, 17, 18 **matched** (8 games). Confirmed:
   `RunFrame` (SteamController007/008 2, SteamInput006 3),

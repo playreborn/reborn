@@ -9,6 +9,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 8: experiment 15 matched (4 games):
+  `SteamUtils009` 9 `GetAppID` and 14 `GetCurrentBatteryPower` confirmed;
+  added to the shim and to shadow mode (live: 68 of 68 calls matched).
+  `run.sh` now finds a game's log by process ID when the game prints no
+  `[S_API]` line. PR #18.
 - 2026-11-22: loop iteration 7: candidates only, no runs:
   `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 13 (a function taking only a
   file name; nine on the page fit), UserStats012 6 and UserStats013 5

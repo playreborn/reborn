@@ -184,6 +184,10 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     // `docs/shim/meanings.md`: confirmed `GetCurrentBatteryPower`
     // (experiment 10).
     ("SteamUtils010", 14, Shadow::BatteryPower),
+    // `docs/shim/meanings.md`: confirmed `GetAppID` and
+    // `GetCurrentBatteryPower` for 009 (experiment 15).
+    ("SteamUtils009", 9, Shadow::AppId),
+    ("SteamUtils009", 14, Shadow::BatteryPower),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -1592,13 +1596,16 @@ mod tests {
     #[test]
     fn shadow_mode_compares_only_listed_calls() {
         assert_eq!(shadow_for("SteamUtils010", 9), Some(Shadow::AppId));
+        assert_eq!(shadow_for("SteamUtils009", 9), Some(Shadow::AppId));
         assert_eq!(
-            shadow_for("SteamUtils009", 9),
+            shadow_for("SteamUtils008", 9),
             None,
             "only confirmed versions"
         );
         assert_eq!(shadow_for("SteamUtils010", 14), Some(Shadow::BatteryPower));
         assert_eq!(shadow_for("SteamUtils010", 15), None);
+        assert_eq!(shadow_for("SteamUtils009", 14), Some(Shadow::BatteryPower));
+        assert_eq!(shadow_for("SteamUtils009", 16), None);
         assert_eq!(
             describe_shadow(0x20_b336, Shadow::AppId, Some(2_143_030)),
             "shadow match: client 2143030, Reborn 2143030"

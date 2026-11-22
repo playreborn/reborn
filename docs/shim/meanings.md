@@ -1335,3 +1335,30 @@ only `SteamUtils010`, so `SteamUtils009` calls reach the official client.
   the game's app ID.
 - B (Cave Crawlers, Dark Deception, UNBEATABLE): position 14 is called,
   and every result's lowest byte is 255.
+
+**Result of experiment 15** (agent runs after the plan was committed at
+11:14:42; logs recorded by `run.sh` in `starts.log`: `observe-48520`
+Cave Crawlers, `observe-22464` Gravitas, `observe-9812` Dark Deception,
+`observe-54100` UNBEATABLE [white label]): **match**, checked by the
+script.
+
+```text
+observe-48520.log (Cave Crawlers) A: 2 calls, results [2143030] -> match
+observe-48520.log (Cave Crawlers) B: 52 calls, lowest bytes [255] -> match
+observe-22464.log (Gravitas) A: 5 calls, results [1067310] -> match
+observe-9812.log (Dark Deception) A: 5 calls, results [332950] -> match
+observe-9812.log (Dark Deception) B: 63 calls, lowest bytes [255] -> match
+observe-54100.log (UNBEATABLE [white label]) A: 2 calls, results [1290490] -> match
+observe-54100.log (UNBEATABLE [white label]) B: 61 calls, lowest bytes [255] -> match
+experiment 15: match
+```
+
+Gravitas wrote no `[S_API]` debug line, so the first run's log was not
+recorded in `starts.log`; `run.sh` now also records a log by the game's
+process ID, and Gravitas was started a second time (the first log,
+`observe-50860`, is not used). Under ADR 0051, positions 9 and 14 of
+`SteamUtils009` are confirmed as `GetAppID` and `GetCurrentBatteryPower`
+(for 14 with the caveat written above). Added to the shim (same answers
+as for 010) and to shadow mode; a shadow run of Dark Deception
+(`observe-53604`) matched in all 68 logged calls (5 at position 9, 63 at
+position 14).

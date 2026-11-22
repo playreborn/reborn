@@ -76,7 +76,7 @@ Positions are listed in the order of their numbers.
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | candidate: 0 RequestCurrentStats or StoreStats, 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat; confirmed: 12 GetAchievementDisplayAttribute |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats, 10 StoreStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 15 RequestUserStats |
-| `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | candidate: 9 GetAppID, 14 GetCurrentBatteryPower |
+| `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower |
 | `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower |
 
 Beyond these, the exported entry points (`entry-points.md`) and the

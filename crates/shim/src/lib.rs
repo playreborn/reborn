@@ -16,9 +16,9 @@
 //! - `SteamClient020`, `021`, `023`: positions 0, 2, 9, 12 and the
 //!   per-interface positions (`meanings.md`, experiment 7), and the calls
 //!   at close: 4, 1 and 23 (020, 021) or 22 (023) (experiments 7, 11).
-//! - `SteamUtils010` position 9, `GetAppID` (`meanings.md`, experiments 3
-//!   to 5, confirmed), and position 14, `GetCurrentBatteryPower`
-//!   (experiment 10, confirmed).
+//! - `SteamUtils009` and `SteamUtils010` position 9, `GetAppID`
+//!   (`meanings.md`, experiments 3 to 5 and 15, confirmed), and position
+//!   14, `GetCurrentBatteryPower` (experiments 10 and 15, confirmed).
 #![allow(unsafe_code)]
 
 mod objects;

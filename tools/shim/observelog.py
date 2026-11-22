@@ -114,3 +114,88 @@ def first_steam_client(path) -> str:
         if m and m.group(1) != "SteamClient017":
             return m.group(1)
     return "?"
+
+
+EXPORT = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (Steam_\w+) (call|return) (\d+) (.*)$")
+HEADER = re.compile(r"wrote rdx->\[([0-9a-f ]+)\]")
+PAYLOAD_SIZE = re.compile(r"payload: size (\d+) sha256 [0-9a-f]{64}(?: first \[([0-9a-f ]+)\])?")
+
+
+@dataclass
+class Export:
+    """One line of a `Steam_…` entry point (`call`, `return` or, after a
+    `Steam_BGetCallback` that returned 1, the `wrote` note of step 4b/4d).
+    Only call numbers up to 50 (and every 10000th) are logged; `wrote`
+    notes are logged for every such call (`crates/shim-observe`)."""
+
+    ms: int
+    thread: int
+    name: str
+    kind: str  # "call", "return" or "wrote"
+    number: int
+    rest: str
+
+    def reg(self, name):
+        return register(name, self.rest)
+
+
+def exports(path) -> list:
+    """All `Steam_…` entry point lines of a log, in order."""
+    out = []
+    for raw in open(path, encoding="utf-8", errors="replace"):
+        m = EXPORT.match(clean(raw))
+        if not m:
+            continue
+        ms, thread, name, kind, number, rest = m.groups()
+        if kind == "return" and rest.startswith("wrote "):
+            kind = "wrote"
+        out.append(Export(int(ms), int(thread), name, kind, int(number), rest))
+    return out
+
+
+@dataclass
+class Header:
+    """The bytes at `rdx` after `Steam_BGetCallback` returned 1, as words
+    (little endian), and the payload note of step 4d (ADR 0050)."""
+
+    raw: bytes
+    payload_size: int | None  # size from the `payload: size N sha256` note
+    payload_first: bytes | None  # first bytes, only for listed numbers
+
+    def u32(self, at):
+        return int.from_bytes(self.raw[at:at + 4], "little") if len(self.raw) >= at + 4 else None
+
+    def u64(self, at):
+        return int.from_bytes(self.raw[at:at + 8], "little") if len(self.raw) >= at + 8 else None
+
+
+def header(export):
+    """The callback header of a `wrote` line, or None."""
+    m = HEADER.search(export.rest)
+    if not m:
+        return None
+    p = PAYLOAD_SIZE.search(export.rest)
+    first = bytes.fromhex(p.group(2).replace(" ", "")) if p and p.group(2) else None
+    return Header(bytes.fromhex(m.group(1).replace(" ", "")),
+                  int(p.group(1)) if p else None, first)
+
+
+def start_of(path):
+    """When `run.sh` started the game of this log: the time of the last
+    `start` line for the same app before the log's `log` line in
+    `starts.log` (local time, as written), or None."""
+    from datetime import datetime
+    name = Path(path).name
+    try:
+        lines = open(log_dir() / "starts.log", encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    for at in range(len(lines) - 1, -1, -1):
+        parts = lines[at].split()
+        if len(parts) == 5 and parts[2] == "log" and parts[4] == name:
+            for earlier in reversed(lines[:at]):
+                p = earlier.split()
+                if len(p) == 4 and p[2] == "start" and p[3] == parts[3]:
+                    return datetime.strptime(p[0] + " " + p[1], "%Y-%m-%d %H:%M:%S")
+            return None
+    return None

@@ -156,7 +156,9 @@ read.
     Simulator; `Steam_FreeLastCallback` was called exactly as often in
     each game.
   - At `rdx`, in every one of them: first a four-byte value 1 (the same
-    as the lowest four bytes of `rcx` of the call), then a four-byte
+    as the lowest four bytes of `rcx` of the call in these three games;
+    not in general: Dark Deception and Gravitas poll with `rcx` 2 and
+    still get 1, see `meanings.md`, loop iteration 9b), then a four-byte
     number, then eight bytes that look like an address in the game's
     process. Bytes are little endian; the numbers seen, with how often:
 

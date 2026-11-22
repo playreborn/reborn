@@ -1498,3 +1498,265 @@ from Valve's servers through `rebornd`.
   match or mismatch).
 - Scripts from now on also reject logs recorded before their plan
   commit (`LOOP.md`).
+
+## Callback delivery: `Steam_BGetCallback`, `Steam_FreeLastCallback`, `Steam_GetAPICallResult` (loop iteration 9b)
+
+Pages read 2026-11-22, both opened without signing in:
+<https://partner.steamgames.com/doc/sdk/api> (callbacks, call results,
+manual dispatch) and <https://partner.steamgames.com/doc/api/ISteamUtils>
+(`GetAPICallResult`, `SteamAPICallCompleted_t`).
+
+- **What the pages say, in Reborn's words:** a callback is a struct with a
+  unique identifier and a small amount of data. Besides the automatic
+  dispatch, there is a manual one that works like a window message loop:
+  the game fetches the next available callback in a loop and dispatches it
+  itself; the details are only in `steam_api.h`, which is excluded (red
+  line 6), so the pages say nothing about a header, a size, freeing a
+  callback or the order of calls. Call results go to one listener; a game
+  can also ask `ISteamUtils` whether a call has finished and get its
+  result. `GetAPICallResult` takes a call handle, a buffer, the buffer's
+  size, the callback identifier the game expects and a pointer to a
+  failure flag, and returns true if the handle is valid and the call is
+  finished. `SteamAPICallCompleted_t` holds a call handle
+  (`SteamAPICall_t`), a callback identifier (`int`) and the size of the
+  finished result (`uint32`). The page does not give the width of
+  `SteamAPICall_t`. That it is 64 bits, and so that the struct has 16
+  bytes, is derived from the recorded `rdx` values of
+  `Steam_GetAPICallResult`, which use all 64 bits; it is not read on a
+  page. No page gives a callback's numeric identifier.
+- **The flat export is on no public page.** The pages describe the
+  `ISteamUtils` method `GetAPICallResult`, not the entry point
+  `Steam_GetAPICallResult`, and not `Steam_BGetCallback` or
+  `Steam_FreeLastCallback`. Linking the export to the method rests on the
+  name and the recorded shape only. That the export takes one extra
+  leading argument (`rcx`, a handle) before the method's parameters in
+  their documented order is an **unverified inference** (ADR 0042: names
+  and the order on a page are not sources for positions or registers).
+- **Every `ISteamUtils` function that takes a call handle** (LOOP step 3):
+  - `GetAPICallResult` (handle, buffer, buffer size, expected number,
+    failure flag; true or false): fits `rdx` a 64-bit handle, `r8` a heap
+    address, `r9` a size-like 8 to 792, result 0 or 1.
+  - `IsAPICallCompleted` (handle, failure flag; true or false): fits if
+    `r8` were the flag pointer and `r9` a leftover. Not ruled out by the
+    registers alone.
+  - `GetAPICallFailureReason` (handle only; an enum result): fits if `r8`
+    and `r9` were leftovers and the value were 0 or 1. Not ruled out by the
+    registers alone.
+  - Only F tells them apart: if bytes 12..16 of the 703 payload (the size
+    of the finished result) equal `r9` in every call, `r9` is an argument
+    carrying that size, which only `GetAPICallResult` takes. Until F is
+    checked, the meaning of `Steam_GetAPICallResult` stays a candidate.
+- **Recorded** (logs with the step 4d `payload:` notes, recorded by
+  `run.sh`: `observe-31272` and `observe-48520` Cave Crawlers,
+  `observe-47280` Bongo Cat, `observe-9812` and `observe-53604` Dark
+  Deception, `observe-54100` UNBEATABLE [white label], `observe-22464`
+  Gravitas; raw logs stay local):
+  - 119 headers; in every one bytes 0..4 were 1, bytes 16..20 a size of 1
+    to 784 that made a readable range with the address in bytes 8..16, and
+    bytes 20..24 were 0. The same number (bytes 4..8) always came with the
+    same size, in all seven logs: 15 numbers, for example 703 with 16, 1101
+    with 24, 1040044 with 784, 1080000 with 628.
+  - After every header, exactly one `Steam_FreeLastCallback` call came on
+    the same thread before that thread's next logged `Steam_BGetCallback`
+    line; there were exactly as many frees as headers (14, 14, 26, 23, 21,
+    2 and 19, in the order the logs are listed above).
+  - `Steam_GetAPICallResult` (only Bongo Cat, 6 calls) came only after a
+    header with the number 703 and before its free, exactly once after each
+    of the six; `rcx` low 32 bits 1, `rdx` a 64-bit value, `r8` an address,
+    `r9` 8 to 792. Three of the six `rdx` values were, earlier in the log,
+    the result of a call through `STEAMUSERSTATS_INTERFACE_VERSION013`
+    (positions 15 and 37) or `STEAMINVENTORY_INTERFACE_V003` (position 26);
+    the other three appear nowhere else in the log.
+  - **New:** Dark Deception (`SteamClient019`) and Gravitas
+    (`SteamClient018`) poll from a second thread and alternate
+    `Steam_BGetCallback` calls with `rcx` 1 and `rcx` 2, each with its own
+    `rdx`/`r8` addresses. The handle 2 is the one these games pass to
+    `SteamClient` positions 4 and 1 at close and in `r8` to position 6 with
+    a `SteamGameServer012` text: in both games position 4 was called with
+    `rdx` 2, `r8` 1 and position 6 with `rdx` 1, `r8` 2. So, in the
+    `SteamClient` shapes of 018 and 019 (not confirmed for those
+    versions), the user on pipe 2 is also handle 1. Headers from polls
+    with `rcx` 2 still had bytes 0..4 = 1, and their numbers (1080000, 1080001) were never seen
+    from polls with `rcx` 1. The frees after them had `rcx` 2.
+  - The result of `Steam_BGetCallback` had lowest byte 0 or 1 every time
+    (upper bits sometimes leftovers, such as `0xffffff00`).
+  - `r8` of `Steam_FreeLastCallback` held the payload size in Dark
+    Deception and an address in Bongo Cat: a leftover, not an argument.
+
+Evidence (Dark Deception, thread 2; hashes, `r8` bytes and floating-point
+registers left out):
+
+```text
+168 ms ThreadId(2) Steam_BGetCallback call 2 rcx=0x1 rdx=0xca29a7fd10 r8=0xca29a7fd50 r9=0x16
+168 ms ThreadId(2) Steam_BGetCallback return 2 wrote rdx->[01000000 50010000 10001dc6 b0020000 0c000000 00000000] r8->[…] payload: size 12 sha256 …
+169 ms ThreadId(2) Steam_FreeLastCallback call 2 rcx=0x1 rdx=0x0 r8=0xc r9=0x7ffe4c8fc100
+169 ms ThreadId(2) Steam_BGetCallback call 5 rcx=0x2 rdx=0xca29a7fd70 r8=0xca29a7fdb0 r9=0x12
+169 ms ThreadId(2) Steam_BGetCallback return 5 wrote rdx->[01000000 c17a1000 0000fdc6 b0020000 04000000 00000000] r8->[…] payload: size 4 sha256 …
+169 ms ThreadId(2) Steam_FreeLastCallback call 4 rcx=0x2 rdx=0x0 r8=0x4 r9=0x7ffe4c8fc104
+```
+
+### Readings and their alternatives
+
+| Part | Reading | Alternatives | Ruled out by |
+| --- | --- | --- | --- |
+| `rcx` of all three entry points | the handle of the pipe the game polls | the user handle; a constant | A2 (a pipe-2 poll freed with `rcx` 2) rules out a constant; pipe vs. user only via the `SteamClient` positions (2 is the handle released at close), not by this experiment |
+| header bytes 0..4 | the user handle `U` | a copy of `rcx`; the pipe handle; a constant 1; a count; the user on that pipe | A rules out a copy of `rcx` (pipe-2 polls with bytes 0..4 = 1). It rules out the pipe handle provided `rcx` is the pipe, which comes from the 018/019 `SteamClient` shapes and is not confirmed for those versions. A constant 1 and "the user on that pipe" are **not** ruled out: `U` was 1 in every game, and in Dark Deception and Gravitas the user on pipe 2 is also 1 (position 4 with `rdx` 2, `r8` 1; position 6 with `rdx` 1, `r8` 2) |
+| bytes 4..8 | the callback identifier | a sequence counter; a tag shared by several structs | C (same number, same size in five games) and E (`GetAPICallResult` only after 703) rule out a counter; a tag shared by structs of one size is not ruled out |
+| bytes 8..16 | the address of the callback's data | another readable address | B only shows it is readable together with the size |
+| bytes 16..20 | the size of the data | a count of items; flags | C rules out per-call values; a fixed per-type count is not ruled out |
+| bytes 20..24 | padding (always 0) | the upper half of a 64-bit size | not distinguishable while sizes stay small |
+| result of `Steam_BGetCallback` | true when a callback was handed over | a count of waiting callbacks | D (lowest byte only 0 or 1, one free per header) |
+| `Steam_FreeLastCallback` | releases the callback just fetched, on that pipe | called on a timer; frees several at once | D (exactly one per header, before the next poll, never without a header) |
+| `Steam_GetAPICallResult` | `GetAPICallResult`: fetches the result a 703 callback announced (`rcx` pipe, `rdx` call handle, `r8` buffer, `r9` its size; expected number and failure flag would be on the stack, not logged; the parameter order is the unverified inference above) | polling independent of callbacks; `IsAPICallCompleted`; `GetAPICallFailureReason` | E rules out independent polling (only in a 703 window, exactly one per 703); the other two functions only F |
+| number 703 | `SteamAPICallCompleted_t` (16 bytes: handle, number, size) | any other 16-byte callback | only F: bytes 0..8 equal `rdx` and bytes 12..16 `r9` of the following `GetAPICallResult`. Needs 703 in `PAYLOAD_LISTED` (ADR 0050); per the page the struct carries a call handle, a number and a size, no account identifier |
+
+### Experiment 19 (planned 2026-11-22, before the runs)
+
+**Predictions** (`tools/shim/experiments/019_callback_delivery.py`; registers
+compared on their low 32 bits):
+
+- A: every header's bytes 0..4 equal `U`, the first result of
+  `SteamClient` position 2 in the same log; across all logs, at least one
+  header comes from a logged poll whose `rcx` differs from its bytes 0..4.
+- A2: the free and any `GetAPICallResult` that belong to a header have the
+  same `rcx` as the logged poll that fetched it.
+- B: every header has 24 bytes, a `payload: size N sha256` note with `N` =
+  bytes 16..20, and bytes 20..24 = 0.
+- C: one size per number, in every log and across all logs.
+- D: per thread, exactly one free after each header before the next logged
+  poll, no free without an open header, and the poll result's lowest byte
+  only 0 or 1.
+- E: every `GetAPICallResult` call lies in a 703 window on the same
+  thread, and every 703 window holds exactly one; at least one log has a
+  703 callback.
+- F (only once 703's first payload bytes are logged): bytes 0..8 = `rdx`
+  (all 64 bits, on purpose) and bytes 12..16 = the low 32 bits of `r9` of
+  that window's `GetAPICallResult`. Without them, F is reported as not
+  checked and does not count.
+
+Each log must be a different file recorded by `run.sh` in `starts.log`,
+with step 4d notes; at least three different games. Logs with more than 50
+frees or `GetAPICallResult` calls cannot be checked for D and E (the proxy
+logs only the first 50 calls of each entry point) and count as a mismatch.
+A2 must be checked at least once across all logs, and a `wrote` line
+without a readable header is a mismatch. **Freshness:** a log whose
+`start` line in `starts.log` (the last `start` of the same app before its
+`log` line) is earlier than the commit time of the final plan is rejected;
+the script holds that time as `PLAN_COMMITTED`, 2026-11-22 12:41:02 (commit
+`ea39f6e`; local time, as `run.sh`
+writes `starts.log`). `Steam_BGetCallback` call lines are logged only for calls 1 to 50 (and
+every 10000th), so A2 covers only headers from those polls, and "before
+the next poll" in D means the next *logged* poll line.
+
+**Games to run:** Dark Deception (332950) and Gravitas (1067310) for the
+two pipes (A, A2); Bongo Cat (3419430) and Coin Maker Simulator Demo
+(5191630) for 703 and `GetAPICallResult` (E, and F once 703 is listed);
+Cave Crawlers (2143030) as the plain case. Each runs to its first screen
+and is closed by a close request.
+
+**What a full match confirms** (for the recorded `SteamClient` versions
+and the five games' `steam_api` builds):
+
+- header bytes 4..8 are the callback number, bytes 8..16 the address of its
+  data, and bytes 16..20 the size of that data (B, C, E);
+- the poll and free order of D: a result with lowest byte 1 hands over one
+  callback, and the game frees it with exactly one `Steam_FreeLastCallback`
+  on the same `rcx` and thread before it polls again (D, A2);
+- E's window rule: `Steam_GetAPICallResult` is called only while a 703
+  callback is held, once per 703.
+
+**What stays a candidate even on a full match:**
+
+- header bytes 0..4: the user handle `U`, a constant 1, or the user on
+  that pipe (all 1 in every recording);
+- bytes 20..24: padding or the upper half of the size;
+- 703 = `SteamAPICallCompleted_t`, and `Steam_GetAPICallResult` =
+  `GetAPICallResult` rather than `IsAPICallCompleted` or
+  `GetAPICallFailureReason`: both need F;
+- whether `rcx` of the three entry points is the pipe or the user handle.
+
+**Already seen:** the seven existing logs above give "match" for A to E
+(F not checked). The predictions were written from these logs, so they
+are not the test; only fresh runs after this plan is committed are.
+
+**What the logs contradict in earlier notes:** `entry-points.md` (step 4b)
+says bytes 0..4 are the same as the lowest four bytes of `rcx` of the
+call (that entry now points here); with pipe-2 polls they are not (`rcx` 2, bytes 0..4 = 1). ADR 0042
+and stage 2 say `rcx` was 1 in every `Steam_BGetCallback` call and every
+call came from one thread; that held for Cave Crawlers, not for Dark
+Deception and Gravitas. Dark Deception also calls
+`Steam_ReleaseThreadLocalMemory` (at least 50 times, on both threads;
+the proxy logs only the first 50), which stage 2 did not see.
+
+**Result of experiment 19** (agent runs after the plan time 12:41:02;
+logs recorded by `run.sh`: `observe-51204` Dark Deception, `observe-12256`
+Gravitas, `observe-51224` Bongo Cat, `observe-25680` Coin Maker
+Simulator Demo, `observe-52912` Cave Crawlers): **match** for A to E, F
+not checked, checked by the script.
+
+```text
+observe-51204.log (app 332950) A: 21 headers, bytes 0..4 [1], P=1 U=1, 10 from a call whose rcx differs -> match
+observe-51204.log (app 332950) A2: 15 frees and GetAPICallResult calls with a logged poll -> match
+observe-51204.log (app 332950) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-51204.log (app 332950) C: 8 numbers, 0 with more than one size -> match
+observe-51204.log (app 332950) D: 21 frees for 21 headers, result lowest bytes [0, 1] -> match
+observe-51204.log (app 332950) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-51204.log (app 332950) F: 0 of 0 703 callbacks with payload bytes -> not checked
+observe-12256.log (app 1067310) A: 21 headers, bytes 0..4 [1], P=1 U=1, 10 from a call whose rcx differs -> match
+observe-12256.log (app 1067310) A2: 15 frees and GetAPICallResult calls with a logged poll -> match
+observe-12256.log (app 1067310) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-12256.log (app 1067310) C: 6 numbers, 0 with more than one size -> match
+observe-12256.log (app 1067310) D: 21 frees for 21 headers, result lowest bytes [0, 1] -> match
+observe-12256.log (app 1067310) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-12256.log (app 1067310) F: 0 of 0 703 callbacks with payload bytes -> not checked
+observe-51224.log (app 3419430) A: 26 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-51224.log (app 3419430) A2: 9 frees and GetAPICallResult calls with a logged poll -> match
+observe-51224.log (app 3419430) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-51224.log (app 3419430) C: 10 numbers, 0 with more than one size -> match
+observe-51224.log (app 3419430) D: 26 frees for 26 headers, result lowest bytes [0, 1] -> match
+observe-51224.log (app 3419430) E: 6 GetAPICallResult calls, 6 callbacks 703 -> match
+observe-51224.log (app 3419430) F: 0 of 6 703 callbacks with payload bytes -> not checked
+observe-25680.log (app 5191630) A: 20 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-25680.log (app 5191630) A2: 17 frees and GetAPICallResult calls with a logged poll -> match
+observe-25680.log (app 5191630) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-25680.log (app 5191630) C: 5 numbers, 0 with more than one size -> match
+observe-25680.log (app 5191630) D: 20 frees for 20 headers, result lowest bytes [0, 1] -> match
+observe-25680.log (app 5191630) E: 12 GetAPICallResult calls, 12 callbacks 703 -> match
+observe-25680.log (app 5191630) F: 0 of 12 703 callbacks with payload bytes -> not checked
+observe-52912.log (app 2143030) A: 14 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-52912.log (app 2143030) A2: 1 frees and GetAPICallResult calls with a logged poll -> match
+observe-52912.log (app 2143030) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-52912.log (app 2143030) C: 9 numbers, 0 with more than one size -> match
+observe-52912.log (app 2143030) D: 14 frees for 14 headers, result lowest bytes [0, 1] -> match
+observe-52912.log (app 2143030) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-52912.log (app 2143030) F: 0 of 0 703 callbacks with payload bytes -> not checked
+C across all logs: 15 numbers -> match
+    number 304 (0x130): size [16]
+    number 336 (0x150): size [12]
+    number 703 (0x2bf): size [16]
+    number 1101 (0x44d): size [24]
+    number 1102 (0x44e): size [16]
+    number 1222 (0x4c6): size [260]
+    number 1281 (0x501): size [272]
+    number 4700 (0x125c): size [8]
+    number 4701 (0x125d): size [4]
+    number 4702 (0x125e): size [1]
+    number 1040011 (0xfde8b): size [260]
+    number 1040015 (0xfde8f): size [20]
+    number 1040044 (0xfdeac): size [784]
+    number 1080000 (0x107ac0): size [628]
+    number 1080001 (0x107ac1): size [4]
+F not checked (703 payload bytes not logged)
+experiment 19: match
+```
+
+Under ADR 0051 (for the recorded `SteamClient` versions and the five
+games' `steam_api` builds) the readings listed above under "What a full match
+confirms" are confirmed: header bytes 4 to 8 the callback number, 8 to 16
+the address of its data, 16 to 20 its size; one callback per poll that
+returns 1, freed by exactly one `Steam_FreeLastCallback` on the same `rcx`
+and thread before the next poll; `Steam_GetAPICallResult` only while a
+703 callback is held, once per 703. The readings under "What stays a
+candidate" stay candidates. Not in the shim yet: the shim's
+`Steam_BGetCallback` still aborts; delivering callbacks needs their
+contents, which come from `rebornd`.

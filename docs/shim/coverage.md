@@ -73,7 +73,7 @@ Positions are listed in the order of their numbers.
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 2 GetSteamID |
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
 | `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn (or another no-argument bool), 2 GetSteamID |
-| `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | candidate: 0 RequestCurrentStats or StoreStats, 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat; confirmed: 12 GetAchievementDisplayAttribute |
+| `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | confirmed: 0 RequestCurrentStats, 12 GetAchievementDisplayAttribute; candidate: 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats, 10 StoreStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 15 RequestUserStats |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower |

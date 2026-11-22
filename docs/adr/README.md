@@ -59,3 +59,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0051](0051-autonomous-development.md) | Autonomous development of the shim | Accepted |
 | [0052](0052-no-daily-start-cap.md) | No daily start cap, 1 minute between starts, 50 free games a day | Accepted |
 | [0053](0053-agent-adds-reads.md) | The agent adds proxy reads itself | Accepted |
+| [0054](0054-agent-lists-callbacks.md) | The agent lists callback numbers itself | Accepted |

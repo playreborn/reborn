@@ -1375,3 +1375,126 @@ text results because they are addresses, `StartVRDashboard` because a
 void function in every frame of three games does not fit, and the
 true/false ones because they return 0 or 1. The second Gravitas run used
 the changed `run.sh`.
+
+## Callback 0x44d: stats received (loop iteration 9)
+
+Pages read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamUserStats>
+(callback structs, no numeric IDs on the page) and
+<https://partner.steamgames.com/doc/api/steam_api> (`k_EResultOK` = 1,
+`k_EResultFail` = 2; the layout of a game ID is not described).
+
+- **Recorded** (step 4d logs of 2026-11-22: Cave Crawlers, Gravitas, Dark
+  Deception, all `STEAMUSERSTATS_INTERFACE_VERSION011`): one callback
+  with number 0x44d per run, data size 24, 250 to 310 ms after the first
+  call of `STEAMUSERSTATS_INTERFACE_VERSION011` position 0 (candidate
+  `RequestCurrentStats` or `StoreStats`).
+- **Every callback on the page, by size** (fields as listed there,
+  `uint64` and `CSteamID` 8 bytes, `EResult` and `int` 4): 24 bytes fit
+  `UserStatsReceived_t` (`m_nGameID`, `m_eResult`, `m_steamIDUser`) and
+  `LeaderboardScoresDownloaded_t` (two handles and a count); 16 bytes fit
+  `UserStatsStored_t`, `GlobalStatsReceived_t` and
+  `GlobalAchievementPercentagesReady_t`; the others are larger or
+  smaller. Callbacks of other pages could also have 24 bytes; the
+  predictions below are about content, which rules those out unless they
+  also start with the app ID followed by a result code and the same
+  8-byte value in every game.
+- **Candidates:** 0x44d `UserStatsReceived_t`; position 0 of
+  `STEAMUSERSTATS_INTERFACE_VERSION011` `RequestCurrentStats` (the page:
+  its result arrives as `UserStatsReceived_t`).
+
+### Experiment 20 (planned 2026-11-22, before the runs)
+
+The proxy logs the first 64 bytes of callbacks 0x44d and 0x44e (ADR
+0050, 0054). 0x44d carries a Steam ID in bytes 16 to 24 if the candidate
+is right; that value stays in the local log, the script only compares
+it. 0x44e (16 bytes) is recorded, not predicted. Agent runs of Cave
+Crawlers, Gravitas and Dark Deception, each closed after about 30
+seconds.
+
+**Predictions** (`tools/shim/experiments/020_stats_received_callback.py`):
+
+- A: one 0x44d callback per game, size 24, bytes 0 to 4 the game's app
+  ID, bytes 8 to 12 equal to 1 or 2.
+- B: bytes 16 to 24 are the same in all three games.
+- C: the callback comes after the first call of
+  `STEAMUSERSTATS_INTERFACE_VERSION011` position 0, at most 5 seconds
+  later.
+
+**Result of experiment 20** (agent runs after the plan was committed at
+12:05:59; logs recorded by `run.sh`: `observe-42504` Cave Crawlers,
+`observe-31124` Gravitas, `observe-47852` Dark Deception): **mismatch**,
+as scripted.
+
+```text
+observe-42504.log (Cave Crawlers) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-42504.log (Cave Crawlers) C: callback 265 ms after the first position-0 call -> match
+observe-31124.log (Gravitas) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-31124.log (Gravitas) C: callback 268 ms after the first position-0 call -> match
+observe-47852.log (Dark Deception) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-47852.log (Dark Deception) C: callback 285 ms after the first position-0 call -> match
+B: bytes 16..24 the same in 3 logs -> MISMATCH
+experiment 20: MISMATCH
+```
+
+A and C matched (the result code was 1 in all three). B did not: the
+8 bytes at 16 to 24 differ between games. Looked at afterwards, without
+printing any value: bytes 12 to 20 are the same in all three games and
+only bytes 20 to 24 differ. That fits the user's Steam ID at 12 to 20
+(the fields packed on 4 bytes) and 4 bytes of leftover at the end, not
+the layout the plan assumed. Nothing is confirmed; 0x44d stays a
+candidate for `UserStatsReceived_t`, position 0 of
+`STEAMUSERSTATS_INTERFACE_VERSION011` a candidate for
+`RequestCurrentStats`.
+
+### Experiment 21 (planned 2026-11-22, before the runs)
+
+Experiment 20 again, with the layout its result suggested, on fresh runs
+of the same three games (they are the only `…VERSION011` games).
+
+**Predictions** (`tools/shim/experiments/021_stats_received_layout.py`):
+A and C as in experiment 20; B: bytes 12 to 20 are the same in all three
+games and their upper four bytes are not zero.
+
+**Result of experiment 21** (agent runs after the plan was committed at
+12:15:06; logs recorded by `run.sh`: `observe-752` Cave Crawlers,
+`observe-47412` Gravitas, `observe-52328` Dark Deception): **match**,
+checked by the script.
+
+```text
+observe-752.log (Cave Crawlers) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-752.log (Cave Crawlers) C: callback 309 ms after the first position-0 call -> match
+observe-47412.log (Gravitas) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-47412.log (Gravitas) C: callback 290 ms after the first position-0 call -> match
+observe-52328.log (Dark Deception) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-52328.log (Dark Deception) C: callback 305 ms after the first position-0 call -> match
+B: bytes 12..20 the same in 3 logs -> match
+experiment 21: match
+```
+
+Under ADR 0051:
+
+- callback number **0x44d (1101)** is confirmed as `UserStatsReceived_t`:
+  24 bytes, the app ID in bytes 0 to 4 (bytes 4 to 8, the rest of the
+  game ID, were not checked), the result (`EResult`) in 8 to 12, and in
+  12 to 20 the same 8 bytes in every game, read as the user's Steam ID;
+- position 0 of `STEAMUSERSTATS_INTERFACE_VERSION011` is confirmed as
+  `RequestCurrentStats` (the page: its result arrives as
+  `UserStatsReceived_t`; `StoreStats` answers with `UserStatsStored_t`).
+
+Not in the shim yet: it does not deliver callbacks (experiment 19, loop
+iteration 9b, plans that protocol), and the stats themselves have to come
+from Valve's servers through `rebornd`.
+
+**Review findings (before merge):**
+
+- The size list in the plan assumed natural alignment (8 + 4 + 4 padding
+  + 8 = 24). With the Steam ID at 12 to 20 the fields take 20 bytes; why
+  the size is 24 (4 bytes at the end that differ between games) is not
+  explained by the observation. The 16-byte candidates for 0x44e rest on
+  the same assumption and are only a guess until 0x44e is tested.
+- Prediction B only shows the same 8 bytes in three games. Before the
+  shim writes this field, an experiment compares bytes 12 to 20 with the
+  account's own Steam ID seen elsewhere in the same log (printing only
+  match or mismatch).
+- Scripts from now on also reject logs recorded before their plan
+  commit (`LOOP.md`).

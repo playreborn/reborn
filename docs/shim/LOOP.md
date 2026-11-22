@@ -32,7 +32,8 @@ registry is virtualized) repeats it until stopped. Every rule of
    `tools/shim/experiments/NNN_short_name.py` (reads logs given on the
    command line, prints match or mismatch per prediction; rejects a log given twice and
    checks which game each log came from with the `log` lines `run.sh`
-   writes to `starts.log`). Commit and
+   writes to `starts.log`, and rejects logs whose start in `starts.log`
+   is earlier than the plan commit). Commit and
    push the plan on a branch **before** any run.
 5. **Run:** `tools/shim/run.sh <app id>` for the games the plan names
    (limits of ADR 0045 and 0052 apply: 1 minute between starts, no daily cap; input in games under ADR 0049).

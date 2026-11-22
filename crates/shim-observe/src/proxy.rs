@@ -122,12 +122,21 @@ const PAYLOAD_SHOWN: usize = 64;
 
 /// Callback numbers whose first [`PAYLOAD_SHOWN`] payload bytes are logged
 /// (ADR 0050). A number is added only with a candidate and an experiment
-/// plan in `docs/shim/meanings.md` that names it.
+/// plan in `docs/shim/meanings.md` that names it (ADR 0054).
 ///
 /// A hash of a small payload (a few bytes, such as an account ID) can be
 /// reversed by trying every value, so payload hashes, like the raw logs,
 /// never go into `docs/shim/`.
-const PAYLOAD_LISTED: &[u32] = &[];
+const PAYLOAD_LISTED: &[u32] = &[
+    // `docs/shim/meanings.md`, experiment 20: candidate
+    // `UserStatsReceived_t` (carries the user's Steam ID, which stays in
+    // the local log).
+    0x44d,
+    // Experiment 20, recorded, not predicted: candidates
+    // `UserStatsStored_t`, `GlobalStatsReceived_t`,
+    // `GlobalAchievementPercentagesReady_t`.
+    0x44e,
+];
 
 /// What is read after a listed call returns (step 4c, ADR 0043).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

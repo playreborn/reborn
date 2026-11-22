@@ -27,6 +27,29 @@ How Reborn builds the library (`reborn-cm`, `src/session.rs`, `src/pics.rs`,
   with one added free game lists exactly that game after filtering).
   Expired licenses not yet seen live.
 
+### Ownership for the shim (ADR 0055)
+
+- **What:** `Session::licensed_app_ids` answers "does the account own
+  this app" for the shim. Unlike the library list it **keeps package 0**:
+  an app granted through the base package is owned, it is only not
+  listed. Expired licenses are dropped, as above. Only the package step
+  below runs (no access tokens, app infos or playtime). `rebornd` loads it
+  on the first shim-mode launch of a Valve session and keeps it for that
+  session; a new session after a reconnect or sign-in loads it again.
+- **Source:** node-steam-user `components/apps.js`: `ownsApp` looks the
+  app up in `getOwnedApps`, the `appids` of every package from
+  `getOwnedPackages`; that keeps package 0 unless the caller asks to
+  exclude free licenses ("sub 0 is covered by NoCost") and always drops
+  expired ones ("If expired, filter it out, regardless of the filter
+  options"). SteamKit2 `ELicenseFlags`. Checked 2026-11-22.
+- **Verified:** the request kinds are the library's (live 2026-11-19),
+  but the library leaves package 0 out, so a package-info request that
+  includes package 0 has not been seen live, and there is no recorded
+  package-info fixture yet (needed before stage 1). The ownership use
+  itself is not yet observed against the official client (ADR 0055
+  stage 1, shadow mode). A running game keeps the snapshot of its launch
+  after a sign-out or account switch.
+
 ### Package info
 
 - **What:** Which apps a package contains.

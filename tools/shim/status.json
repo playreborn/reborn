@@ -475,5 +475,11 @@
       "candidate",
       "RequestUserInformation, HasFriend or another (Steam ID, 0) call"
     ]
+  },
+  "STEAMSCREENSHOTS_INTERFACE_VERSION003": {
+    "3": [
+      "candidate",
+      "HookScreenshots(true) or TriggerScreenshot"
+    ]
   }
 }

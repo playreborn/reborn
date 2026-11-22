@@ -26,7 +26,6 @@ Positions recorded: 205; confirmed: 130; open: 75.
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 21 |  |
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 22 |  |
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 22 |  |
-| not known | 1 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 |  |
 | not known | 1 | `STEAMUGC_INTERFACE_VERSION016` | 67 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 14 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 15 |  |
@@ -69,6 +68,7 @@ Positions recorded: 205; confirmed: 130; open: 75.
 | candidate | 2 | `SteamUser020` | 12 | narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
+| candidate | 1 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 | HookScreenshots(true) or TriggerScreenshot |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |
 | candidate | 1 | `SteamClient018` | 7 | narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24) |

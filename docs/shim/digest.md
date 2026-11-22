@@ -13,8 +13,23 @@ first, so the maintainer can read a day's work quickly and stop anything.
   sign-in state.
 - Implementing `SetRichPresence`, `GetFriendCount`, `GetFriendByIndex` in
   the shim (account and friends data).
+- A `READS` entry for `SteamUtils010` position 13 (`GetAPICallResult`
+  candidate, first 16 bytes of a call result; any game's call results,
+  some name a user), optional for experiment 26.
+- `SteamFriends017` position 0 (`GetPersonaName` or `ClearRichPresence`):
+  only the result text tells them apart, and that is the persona name;
+  would a match-only comparison by `rebornd` (ADR 0055) be acceptable?
 
 ## Log
+
+- 2026-11-22: loop iteration 13a (parallel agent, plan only, no runs):
+  survey positions of experiment 25. Experiment 26 (VPet-Simulator, at
+  least 25 minutes) for `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77,
+  `SteamUtils010` 11/13, `SteamUser023` 12 and
+  `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/18/19 (needs three `READS`
+  entries); experiment 27 (HoloCure, Pixel Puzzles) for
+  `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3. No candidate:
+  `STEAMUGC_INTERFACE_VERSION020` 74; no experiment: `SteamFriends017` 0.
 
 - 2026-11-22: ADR 0055 stage 0, cloud reads (parallel agent, no runs):
   shim protocol 0.2 gains `CloudFileSize`, `CloudRead`, `FileSize` and

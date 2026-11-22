@@ -67,7 +67,7 @@ Positions are listed in the order of their numbers.
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 3 | 13 (BC, LS); 22 (CA) | candidate: 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
-| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 1 | 3 | not known |
+| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 1 | 3 | candidate: 3 HookScreenshots(true) or TriggerScreenshot |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
 | `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 1 BLoggedOn, another no-argument bool, GetHSteamUser or others (one call), 2 GetSteamID |

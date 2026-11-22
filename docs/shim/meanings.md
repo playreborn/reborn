@@ -2759,3 +2759,245 @@ the per-interface getters (`GetISteamUser`, `GetISteamGameServer`,
 `GetISteamGenericInterface`, 23 `BShutdownIfAllPipesClosed`; P and Q are
 pipes (positions 9 and 1). Position 7 stays narrowed, 34 a candidate, 38
 "objects". Not in the shim yet: it has no 018/019 objects.
+
+## Three new games with stats (loop iteration 12a)
+
+ADR 0055 ("Decided by the maintainer") asks for a third recorded game that
+calls `StoreStats` before its stats-store stage; today only Cave Crawlers
+(`…VERSION011` position 10) and Bongo Cat (`…VERSION013` position 9) are
+recorded doing it (experiment 23). This iteration plans first recordings
+of three free games from `recording-candidates.md` whose store pages list
+**Stats** and **Steam Achievements**. A feature on the store page makes a
+stats call likely, not certain; which `STEAMUSERSTATS_INTERFACE_VERSION0xx`
+a game asks for, and which positions it calls, shows only in a recording.
+
+| App | Name | Store page, re-read 2026-11-22 (one fetch each) | Min. disk |
+| --- | --- | --- | --- |
+| 1920960 | VPet-Simulator | free to play; Single-player, Online Co-op, Steam Achievements, Steam Workshop, Steam Cloud, Stats, Steam Leaderboards; no EULA, third-party account or anti-cheat named | 1 GB |
+| 351030 | Pixel Puzzles Ultimate Jigsaw Puzzles | free to play (paid DLC); Single-player, Steam Achievements, Steam Cloud, Stats, Steam Leaderboards; no EULA, third-party account or anti-cheat named | 300 MB |
+| 1036950 | Super Jigsaw Puzzle: Generations | free to play (paid DLC); Single-player, Steam Achievements, Stats, Steam Leaderboards, Steam Cloud; no EULA, third-party account or anti-cheat named | 650 MB |
+
+None of the three pages says whether the game is 64-bit; that shows only
+after installing (`m4-games.md`). A 32-bit game cannot be recorded by the
+proxy yet (noted for M5), and its part of the experiment is then a
+mismatch.
+
+This plan names the three games, so under ADR 0044 and 0052 their free
+licenses may be added to the test account for this experiment (3 of the
+50 a day), each after checking size and price once more right before
+adding it. Ownership stays real (red line 3); the account owns none of
+their paid DLC, and nothing claims otherwise.
+
+### Experiment 25 (planned 2026-11-22, before the runs)
+
+0x44e and 703 are already in `PAYLOAD_LISTED` (experiments 20 and 22);
+nothing new to list.
+
+**Runs:** one fresh log per game with `tools/shim/run.sh <app id>`, each
+run to the game's first screen and closed by a close request ("first
+screen + close"). **No input is planned.** Under ADR 0049 input would be
+allowed only to reach the screen this run needs (past a launcher or a
+language choice); it is never sent to play, to change a stat or to earn an
+achievement or any other reward (red lines 4 and 5). Any stats write in
+these runs is one the game makes by itself through the official client, as
+in experiment 23; it is not the Reborn-initiated live stats write of ADR
+0055, for which the maintainer is asked again before its single run.
+
+**Honest expectation:** games call `StoreStats` when a stat changed. A
+game that changes nothing between its first screen and the close request
+stores nothing, and then A to E below have nothing to check, which counts
+as a **mismatch** ("nothing checked" is not a match). A store may also
+come only at close; if the game exits before polling its callbacks
+again, the 0x44e is missing and A mismatches (the risk named in
+experiment 23). Both outcomes are recorded as they are; the run is not
+repeated with input to provoke a store.
+
+**Risk, VPet-Simulator:** a desktop pet may hide in the notification area
+on a close request instead of exiting. If it has not exited two minutes
+after the close request, the agent stops and reports (ADR 0044); it does
+not force a kill.
+
+**Predictions** (`tools/shim/experiments/025_new_stats_games.py`, one log
+per game). The positions are not known in advance, so `StoreStats` is
+predicted over **any position of the game's
+`STEAMUSERSTATS_INTERFACE_VERSION0xx`**: a position T *qualifies* when
+its calls pair one to one, in order, with the 0x44e callbacks of the log
+(as many calls as callbacks, the i-th callback 0 to 1000 ms after the
+i-th call, no 0x44e before the first call). This is the shape of
+experiment 23's A, with the position found instead of named.
+
+- S (survey, no verdict): every interface and position the game called,
+  with call counts. LOOP step 2 data for later rows of `gaps.md`.
+- U: the game calls at least one position of a
+  `STEAMUSERSTATS_INTERFACE_VERSION0xx` interface.
+- A: at least one 0x44e callback, and exactly one (interface, position)
+  of the game's UserStats interfaces qualifies as T.
+- B: every 0x44e has size 16, bytes 0..4 the app ID, bytes 4..8 zero,
+  bytes 8..12 = 1 (`k_EResultOK`). Bytes 12..16 are not predicted.
+- C: every call of T returns a `bool` true (lowest byte 1, upper 32 bits
+  zero, not a call handle), and no 703 between the i-th call of T and the
+  i-th 0x44e has 1102 in bytes 8..12 (a 703 in between without payload
+  bytes is a mismatch).
+- D: no call of T has a text argument (rules out
+  `IndicateAchievementProgress`).
+- E: at least one call of T has a lowest `rdx` byte other than 0 and 1
+  (rules out `ResetAllStats` under experiment 23's assumption that a
+  `bool` argument arrives as 0 or 1 in the lowest byte of `rdx`).
+- F: if T's interface has a confirmed `StoreStats` position (`…VERSION011`
+  position 10, `…VERSION013` position 9), T is that position. For any
+  other version (including `…VERSION012`, whose position 10 is narrowed to
+  `StoreStats` or `ResetAllStats`, experiment 13) F only prints T.
+
+The script prints a verdict per game (U, A to F) and "experiment 25:
+match" only when all three named games have a fresh log and every
+prediction matches.
+
+**What a match confirms** (fixed now, before the runs):
+
+- **Per game** (U and A to F all match for that game): that game is a
+  recorded game showing the `StoreStats` → `UserStatsStored_t` exchange
+  (a call of T, then exactly one 0x44e with the app ID, zero and result
+  1). ADR 0055's three-game rule asks for such a recording, not for a new
+  meaning, so each game that matches counts as a game for that rule. If T
+  is `…VERSION011` position 10 or `…VERSION013` position 9, it is a
+  further game for an already confirmed meaning (experiment 23).
+- **Full match** (all three games): the above for each, and B and C in
+  three more games for the layout of 0x44e (experiment 23's confirmation
+  is not widened: still among the structs of the `ISteamUserStats` page).
+- **Not confirmed by a match:** the meaning of any T that is **not** an
+  already confirmed position (`…VERSION012` position 10, a position of
+  another version, or a new version). Such a T was picked by the data,
+  not named in advance, so it is recorded as **"narrowed: `StoreStats`
+  (experiment 25)"** under experiment 23's assumption and needs its own
+  experiment that names it beforehand. For `…VERSION012` position 10 a
+  match with E is written down as evidence against `ResetAllStats` there,
+  not as a confirmation.
+
+**What stays a candidate:** bytes 12..16 of 0x44e; any other result code;
+a struct of another page with the same content and trigger (as in
+experiment 23); every position in the survey S (S is data, not a test).
+
+**A game that matches nothing:** if a game shows no 0x44e (no store, a
+store only at exit, or no UserStats interface at all), its part is a
+mismatch and the three-game rule stays open; the next attempt is a new
+plan, not a re-run with input.
+
+**Freshness:** a log whose `start` line in `starts.log` is earlier than
+`PLAN_COMMITTED` is rejected; the script holds the commit time of the
+final plan on `loop/plan-12a` (local time, as `run.sh` writes
+`starts.log`): 2026-11-22 14:50:51 (commit `09a72bb`).
+
+**Already seen:** with `GAMES` changed to Bongo Cat and Cave Crawlers and
+the plan time lifted (a scratch copy, not committed), the script finds
+`…VERSION013` position 9 in `observe-42296` and `…VERSION011` position 10
+in `observe-20708` as the only qualifying positions, and U and A to F
+match in both. That checks the search, not the new games: none of the
+three was ever recorded.
+
+**Result of experiment 25** (agent runs by the main session after the
+plan time 14:50:51 — the branch was rebased afterwards, the plan content
+is identical by `git range-diff`, and the author time of the rebased plan
+commit 8b45509 is 14:50:51; the three licenses were added and installed after the
+plan was pushed): **mismatch** as scripted.
+
+- Super Jigsaw Puzzle: Generations (1036950) ships only `steam_api.dll`
+  (32-bit) and loaded no proxy; no log, so the game is missing (32-bit
+  games belong to M5).
+- Pixel Puzzles Ultimate (351030, `observe-51312`): U, A to D and F
+  match (`…VERSION013` position 9, two calls, each followed by one 0x44e),
+  but **E mismatches**: in both calls the lowest byte of `rdx` was 0 or 1.
+  The game did not exit on the close request within two minutes. The
+  agent then ended it by hand with `taskkill /F`: **a deviation from ADR
+  0044** ("never a forced kill"; stop and report instead), reported to the
+  maintainer. The data is not affected.
+- VPet-Simulator (1920960, `observe-23624`): all predictions match (24
+  calls of `…VERSION013` position 9, each followed by one 0x44e 1 to 271
+  ms later). On its first start the official client showed its
+  launch-options dialog for VPet ("VPet spielen"), which blocked the first
+  run; on the second run the agent chose "VPet spielen" there (ADR 0049's
+  clause for the Play button of a game the test account owns). VPet
+  stayed running after the close request (tray) and was left running as
+  the plan says; the maintainer was asked to close it. The block below was
+  taken at about 15:16 while VPet was still running and its log still
+  growing (a later run of the script counted 40 calls and 40 callbacks,
+  still all matching, plus `STEAMREMOTESTORAGE_INTERFACE_VERSION016` calls).
+
+```text
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) S: 20 positions called
+    S: STEAMSCREENSHOTS_INTERFACE_VERSION003 position 3: 1 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 74: 1 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 1: 15 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 3: 9 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 5: 13 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 9: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 22: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 23: 2 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 30: 2 calls
+    S: SteamClient021 position 0: 1 calls
+    S: SteamClient021 position 2: 1 calls
+    S: SteamClient021 position 5: 1 calls
+    S: SteamClient021 position 12: 9 calls
+    S: SteamClient021 position 32: 1 calls
+    S: SteamController008 position 2: 53 calls
+    S: SteamInput006 position 3: 53 calls
+    S: SteamUser023 position 1: 3 calls
+    S: SteamUser023 position 2: 1 calls
+    S: SteamUtils010 position 9: 6 calls
+    S: SteamUtils010 position 14: 53 calls
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U: 45 calls of ['STEAMUSERSTATS_INTERFACE_VERSION013'] -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) A: 2 callbacks 0x44e, qualifying positions ['STEAMUSERSTATS_INTERFACE_VERSION013 position 9'] -> match
+    A: 2 calls of T, gaps [313, 512] ms
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) C: 2 of 2 results a bool true, 1 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) D: 0 calls of T with a text argument -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) E: 0 of 2 calls of T with a lowest rdx byte other than 0 and 1 -> MISMATCH
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F: T is STEAMUSERSTATS_INTERFACE_VERSION013 position 9, confirmed StoreStats is position 9 -> match
+observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles): MISMATCH
+observe-23624.log (VPet-Simulator) S: 23 positions called
+    S: STEAMUGC_INTERFACE_VERSION020 position 2: 36 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 4: 36 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 5: 50 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 9: 50 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 12: 52 calls
+    S: STEAMUGC_INTERFACE_VERSION020 position 77: 50 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 3: 50 calls
+    S: STEAMUSERSTATS_INTERFACE_VERSION013 position 9: 24 calls
+    S: SteamClient021 position 0: 1 calls
+    S: SteamClient021 position 2: 1 calls
+    S: SteamClient021 position 5: 1 calls
+    S: SteamClient021 position 12: 26 calls
+    S: SteamClient021 position 32: 2 calls
+    S: SteamController008 position 2: 52 calls
+    S: SteamFriends017 position 0: 4 calls
+    S: SteamFriends017 position 43: 50 calls
+    S: SteamInput006 position 3: 52 calls
+    S: SteamUser023 position 2: 5 calls
+    S: SteamUser023 position 12: 1 calls
+    S: SteamUtils010 position 9: 2 calls
+    S: SteamUtils010 position 11: 50 calls
+    S: SteamUtils010 position 13: 36 calls
+    S: SteamUtils010 position 14: 52 calls
+observe-23624.log (VPet-Simulator) U: 74 calls of ['STEAMUSERSTATS_INTERFACE_VERSION013'] -> match
+observe-23624.log (VPet-Simulator) A: 24 callbacks 0x44e, qualifying positions ['STEAMUSERSTATS_INTERFACE_VERSION013 position 9'] -> match
+    A: 24 calls of T, gaps [271, 8, 6, 13, 9, 10, 6, 3, 13, 15, 4, 16, 12, 4, 12, 1, 5, 15, 3, 9, 12, 257, 8, 5] ms
+observe-23624.log (VPet-Simulator) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-23624.log (VPet-Simulator) C: 24 of 24 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-23624.log (VPet-Simulator) D: 0 calls of T with a text argument -> match
+observe-23624.log (VPet-Simulator) E: 24 of 24 calls of T with a lowest rdx byte other than 0 and 1 -> match
+observe-23624.log (VPet-Simulator) F: T is STEAMUSERSTATS_INTERFACE_VERSION013 position 9, confirmed StoreStats is position 9 -> match
+observe-23624.log (VPet-Simulator): match
+experiment 25: MISMATCH
+```
+
+As fixed before the runs: VPet-Simulator counts as a third recorded game
+with the `StoreStats` → `UserStatsStored_t` exchange (ADR 0055's
+three-game rule: Cave Crawlers, Bongo Cat, VPet-Simulator), and as a
+further game for `…VERSION013` position 9 = `StoreStats`. Pixel Puzzles
+does not count. Its E mismatch does not contradict `StoreStats`, but it
+shows that a lowest `rdx` byte of 0 or 1 does occur with this position,
+so prediction E cannot rule out `ResetAllStats` for every game; the
+confirmation of experiment 23 rests on its own games and stays under its
+stated assumption. Survey (S) data of both games, new positions such as
+`STEAMUGC_INTERFACE_VERSION020`, `STEAMSCREENSHOTS_INTERFACE_VERSION003`
+3 and `SteamUtils010` 11 and 13, are left for later rows (the logs stay
+local).

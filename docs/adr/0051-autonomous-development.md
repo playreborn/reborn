@@ -64,7 +64,7 @@ change.
   iteration (what was tried, what matched, what was merged), so the
   maintainer can read a day's work in a minute and stop anything.
 - **Limits** of ADR 0044, 0045 and 0049 stay (ADR 0052 removed the cap of 50 starts a
-  day): at least 2 minutes between starts, no input for rewards, stop at EULAs,
+  day, and set 1 minute between starts), no input for rewards, stop at EULAs,
   purchases, sign-ins and administrator prompts.
 
 ### The maintainer's role

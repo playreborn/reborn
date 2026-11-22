@@ -7,7 +7,7 @@
 # Environment: NOAPP=1 arms without --app (no shadow or answer mode);
 #              PIDARG=<pid> passes --pid (experiment 6 only).
 #
-# Limits (ADR 0045, 0052): at least 2 minutes between starts, no daily cap;
+# Limits (ADR 0045, 0052): at least 1 minute between starts, no daily cap;
 # the start log is shim-observe/starts.log in Reborn's data folder.
 # Must run outside the Claude desktop app (its registry is virtualized,
 # see docs/shim/tools/README.md).
@@ -21,7 +21,7 @@ mkdir -p "$D"
 LAST=$(tail -1 "$STARTS" 2>/dev/null | cut -c1-19)
 if [ -n "$LAST" ]; then
   GAP=$(( $(date +%s) - $(date -d "$LAST" +%s) ))
-  if [ "$GAP" -lt 125 ]; then echo "waiting $((125 - GAP))s for the 2-minute gap"; sleep $((125 - GAP)); fi
+  if [ "$GAP" -lt 65 ]; then echo "waiting $((65 - GAP))s for the 1-minute gap"; sleep $((65 - GAP)); fi
 fi
 echo "$(date '+%F %T') start $APP" >> "$STARTS"
 cd "$ROOT" || exit 1

@@ -1,4 +1,4 @@
-# 0052: No daily cap on agent-run game starts; 50 free games a day
+# 0052: No daily start cap, 1 minute between starts, 50 free games a day
 
 - **Status:** Accepted (by the maintainer, 2026-11-22)
 - **Date:** 2026-11-22
@@ -13,29 +13,32 @@ wait for the next day although nothing about a run changed.
 
 ## Decision
 
-The daily cap of 50 game starts is removed, and the limit on free games
+The daily cap of 50 game starts is removed, the gap between starts drops
+to 1 minute, and the limit on free games
 added rises to 50 a day. The limits are now:
 
-- at least **2 minutes** between two starts (the gap in `run.sh`);
+- at least **1 minute** between two starts (the gap in `run.sh`; ADR
+  0045 had 2 minutes);
 - at most **50 free games added** to the test account a day (ADR 0045
   allowed 20);
 - each run at most 10 minutes (30 for a named experiment), only for a
   game on the M4 list or one a planned experiment needs, never for play
   time, trading cards or other rewards (ADR 0044, 0049).
 
-The gap alone bounds a day to at most 720 starts; in practice the loop's
+The gap alone bounds a day to at most 1440 starts; in practice the loop's
 plan, run, evaluate and review steps keep it far lower.
 
 ## Decided by the maintainer (2026-11-22)
 
 The maintainer asked for the cap to be removed ("Ich will bitte den cap
 entfernen von den 50 games") and allowed 50 free games a day ("Du darfst
-50 gratis speile pro tag zum account adden").
+50 gratis speile pro tag zum account adden") with 1 minute between
+starts ("und 2 minuten abstand auf eine inute runter").
 
 ## Consequences
 
 - The loop no longer stops for the day after about ten experiments.
 - More requests reach Valve's servers on busy days, still spread out by
-  the 2-minute gap and tied to a planned purpose (red lines 5 and 8).
+  the 1-minute gap and tied to a planned purpose (red lines 5 and 8).
   If a run ever shows a rate limit or a warning from Valve, the agent
   stops starting games and asks the maintainer.

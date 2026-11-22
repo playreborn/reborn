@@ -254,9 +254,9 @@ pub(crate) fn subscribed_answer(
 /// `BIsSubscribed`"). The answer is `rebornd`'s `AppOwnership` for the
 /// session's own app, from the account's licence list (ADR 0055). `rdx`
 /// and `r8` held a 1 and a value that is not an address in the recording;
-/// the function takes no arguments, so they are not read. Only the lowest
-/// byte of the result is set, as recorded. Whether the app is owned is
-/// account data: it is not logged.
+/// the function takes no arguments, so they are not read. The result is a
+/// `u8`: the game reads the lowest byte (experiment 8, prediction 2).
+/// Whether the app is owned is account data: it is not logged.
 extern "C" fn is_subscribed(_this: *const Object) -> u8 {
     let Some(app_id) = session::get().map(|session| session.app_id) else {
         not_implemented("STEAMAPPS_INTERFACE_VERSION008 position 0 without a session");
@@ -486,7 +486,11 @@ mod tests {
         }
         assert_eq!(subscribed_answer(&Ok(Response::Accepted)), None);
         assert_eq!(
-            subscribed_answer(&Err(session::RequestError::Unexpected)),
+            subscribed_answer(&Err(session::RequestError::OutOfStep("test"))),
+            None
+        );
+        assert_eq!(
+            subscribed_answer(&Err(session::RequestError::TimedOut)),
             None
         );
         assert_eq!(
@@ -518,21 +522,25 @@ mod tests {
         });
         let fake = Fake::new(|message| match message.request {
             Request::AppOwnership { app_id: 2_143_030 } => {
-                Reply::Response(Response::Ownership { owned: true })
+                Some(Reply::Response(Response::Ownership { owned: true }))
             }
-            _ => Reply::Broken,
+            Request::Hello { .. } => None,
+            _ => Some(Reply::Broken),
         });
-        let sent = fake.sent.clone();
-        session::set_transport_for_test(Box::new(fake));
+        let mut link = session::Link::new(fake.opener(), std::time::Duration::from_secs(30));
+        assert!(matches!(link.start(), Ok(Some(_))));
+        session::set_link_for_test(link);
         // SAFETY: position 0 holds `is_subscribed`, with this signature.
         let subscribed: extern "C" fn(*const Object) -> u8 =
             unsafe { std::mem::transmute(slot_of("STEAMAPPS_INTERFACE_VERSION008", 0)) };
         let apps = object("STEAMAPPS_INTERFACE_VERSION008");
         assert_eq!(subscribed(apps.cast()), 1);
-        let sent = sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(
-            *sent,
-            ["{\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":2143030}}\n"]
+            fake.requests(),
+            [[
+                "{\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":2143030}}
+"
+            ]]
         );
     }
 }

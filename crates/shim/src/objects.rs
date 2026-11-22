@@ -223,8 +223,11 @@ mod tests {
 
     /// The function at `position` of an object's table.
     fn slot(object: *mut c_void, position: usize) -> usize {
-        // SAFETY: `object` comes from `interface_for` and points to an
-        // `Object` whose table has `SLOTS` entries.
+        assert!(!object.is_null(), "no object");
+        assert!(position < SLOTS, "position beyond the table");
+        // SAFETY: `object` is not null, comes from `interface_for` and
+        // points to an `Object` whose table has `SLOTS` entries, and
+        // `position` is below `SLOTS`.
         unsafe {
             let object = &*(object as *const Object);
             *object.table.add(position)

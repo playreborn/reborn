@@ -16,6 +16,31 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: experiment 31 **matched** (Gravitas, Dark Deception; PR
+  #48): `SteamUtils009` 16 confirmed as `SetWarningMessageHook` (under
+  A1 and A2) and `SteamGameServer012` 0 as `InitGameServer` (under A3).
+  Two new proxy read kinds under ADR 0058 (maintainer, narrowed stack
+  read: slot 6 low 32 bits and "slot 7 text yes/no" only; an executable
+  check that reads no bytes). `…USERSTATS…013` 37 narrowed from recorded
+  call results. Now 140 of 220 positions confirmed (M4 games alone: 132
+  of 205, 64 %).
+- 2026-11-22: ADR 0055 stage 1, cloud reads shadow (PR #47, parallel
+  agent, no live run yet): `GetFileSize` (RemoteStorage014 15) and
+  `FileRead` (014 1) compared against a shadow folder that `rebornd`
+  fills once per arm (one fill at a time, at most one per minute, at most
+  64 MiB). The proxy keeps only size and SHA-1; file names and sizes are
+  hidden in the log. Next: a live run in Cave Crawlers.
+- 2026-11-22: persona name shadow for `SteamFriends017` 0 (PR #45, ADR
+  0056 decision 2): the proxy sends only a SHA-256 of the official text,
+  `rebornd` answers match or mismatch from the `CMsgClientAccountInfo`
+  Steam sends unasked at logon (login-path change approved by the
+  maintainer). Fixture `account_info.bin` recorded on the test account
+  (only "Player 1"). Shim protocol 0.3. Next: a live run.
+- 2026-11-22: cloud folder filled at a shim-mode launch (PR #44, ADR
+  0055): local/cloud/base rules with a base file; a real conflict stops
+  the launch until the user picks a version (IPC 1.13 `CloudConflict`,
+  GUI question, `reborn-cli daemon launch --cloud`); the local version is
+  always kept in a backup folder. No uploads yet.
 - 2026-11-22: experiment 30 **matched**: the stats shadow for callback
   0x44d agreed with the official client in Cave Crawlers, Gravitas and
   Dark Deception (size, app ID, result; Steam ID not compared). PR #39.
@@ -46,14 +71,6 @@ first, so the maintainer can read a day's work quickly and stop anything.
   code). VPet-Simulator and Pixel Puzzles added to `games.json` as extra
   entries (ADR 0056): 220 positions, 130 confirmed (M4 games alone 205,
   130).
-  survey positions of experiment 25. Experiment 26 (VPet-Simulator, at
-  least 25 minutes) for `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77,
-  `SteamUtils010` 11/13, `SteamUser023` 12 and
-  `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/18/19 (needs three `READS`
-  entries); experiment 27 (HoloCure, Pixel Puzzles) for
-  `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3. No candidate:
-  `STEAMUGC_INTERFACE_VERSION020` 74; no experiment: `SteamFriends017` 0.
-
 - 2026-11-22: ADR 0055 stage 0, cloud reads (parallel agent, no runs):
   shim protocol 0.2 gains `CloudFileSize`, `CloudRead`, `FileSize` and
   `FileData` (base64 without a new dependency, `None` for a missing

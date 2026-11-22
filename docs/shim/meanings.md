@@ -3761,8 +3761,9 @@ been made**, and no result is claimed.
   person on the test account.
 ## Top rows of the gap list (loop iteration 15a)
 
-`python tools/shim/coverage.py` on `main` (2026-11-22, 205 positions, 130
-confirmed) put these unknown positions first: `SteamClient020`/`021` 22,
+`python tools/shim/coverage.py` on `main` (2026-11-22, then 205 positions,
+130 confirmed, before ADR 0056 added the extra games) put these unknown
+positions first: `SteamClient020`/`021` 22,
 `SteamUtils010` 34, `STEAMUSERSTATS_INTERFACE_VERSION013` 37,
 `SteamClient023` 21, `SteamGameServer012` 0 and `SteamUtils009` 16. No
 open pull request (`gh pr list`: #37, #39, #40, #41, #44 to #47) and no
@@ -3831,7 +3832,7 @@ in experiment 7.
   every 15 s, `rdx` 0. The result is a 64-bit value that the game then
   passes to `Steam_GetAPICallResult` with `r9` 16 (result 1); in the two
   logs with 703 payloads (one per game, experiment 22) every finished
-  call has callback number 1112 and size 16. No call has a text argument.
+  position-37 call has callback 1112 and size 16. No call has a text argument.
   In Coin Maker, position 39 follows each result with a stat name and a
   stack address.
 - **Fit:** of the page's `SteamAPICall_t` functions, those whose
@@ -3901,8 +3902,9 @@ in experiment 7.
   address and ports. It is the only function on the page with more than
   four parameters (the next largest, `GetNextOutgoingPacket`,
   `HandleIncomingPacket` and `SendUserConnectAndAuthenticate`, have
-  four), so its fifth to seventh arguments (counting `rcx`) are on the
-  stack, which the recordings do not show yet.
+  four), so its fifth to seventh arguments (counting `rcx`: flags, app
+  ID, version text) are on the stack, which the recordings do not show
+  yet.
 - **Every other function of the page:** `BUpdateUserData`,
   `SendUserConnectAndAuthenticate`, `SetKeyValue` (a pointer in `r8`),
   `GetNextOutgoingPacket` and `GetAuthSessionTicket` (a pointer in `r9`)
@@ -3914,29 +3916,35 @@ in experiment 7.
   7777 bytes), `RequestUserGroupStatus`, `BeginAuthSession`,
   `UserHasLicenseForApp`, the no-argument `BLoggedOn`, `BSecure`,
   `WasRestartRequested` and `GetPublicIP`, and the void setters, stack
-  slots 5 to 7 are not arguments: G2 rules them out under A3.
+  slots 6 and 7 are not arguments (for `HandleIncomingPacket`,
+  `GetNextOutgoingPacket` and `SendUserConnectAndAuthenticate` slot 5 is
+  their fourth page parameter; for the others slot 5 is not an argument
+  either): G2 rules them out under A3.
 
 ### Experiment 31 (planned 2026-11-22, before the runs)
 
-**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053), added on this
-plan's branch with two new read kinds:
+**Needs READS** (`crates/shim-observe`, ADR 0053 and 0058), added on this
+plan's branch with the two read kinds of ADR 0058:
 
 - `("SteamUtils009", 16, Read::Executable("rdx"))`: after the return the
   proxy logs `after rdx: executable (outside steamclient64)` (or `in
   steamclient64`, or `not executable`). Only the page protection is asked
   for (`VirtualQuery`); no byte at the address is read. The candidate
-  passes a function pointer; no candidate passes a ticket, token, password
-  or account identifier.
-- `("SteamGameServer012", 0, Read::StackArguments)`: the proxy logs
-  `stack arguments 5=… 6=… 7=…`, the three stack slots as the call
-  started (argument values, like the registers every call line already
-  shows; 24 bytes), and `N->"…"` for a slot that points to a text (the
-  proxy's usual text rules). For the candidate they are server flags, the
-  app ID and a version text; no function of the page takes a ticket,
-  token or password in these slots (`BeginAuthSession` and
-  `SendUserConnectAndAuthenticate` take theirs in registers and have no
-  slots 5 to 7). Raw logs stay local; the script prints neither values nor
-  texts.
+  passes a function pointer; a yes or no about page protection carries no
+  account data.
+- `("SteamGameServer012", 0, Read::StackAppIdAndText)`: the proxy logs
+  only `stack: slot 6 low 32 bits <number>, slot 7 text yes|no` (`not
+  readable` for a slot outside readable memory), taken as the call
+  started. Slot 5, the value of slot 7 and any text are never logged;
+  addresses found on the stack are never followed for logging (slot 7 is
+  looked at only to answer yes or no, with `VirtualQuery`, the region's
+  end and `checked_add` bounding every step). For the candidate, slot 6 is
+  the app ID. If the meaning were another, slot 6 could be leftover stack,
+  at worst the low half of the account's Steam ID: the script only
+  compares it with the app ID and prints match or mismatch, and no value
+  goes into `docs/shim/`. The first version of this plan read slots 5 to 7
+  in full and the text behind them; the review pass rejected that, and the
+  maintainer chose this narrowed read (ADR 0058). Raw logs stay local.
 
 **Assumptions:** A1, a `bool`, 8-, 16- or 32-bit argument or result
 arrives with the upper 32 bits of its register zero, a `bool` as 0 or 1 in
@@ -3959,8 +3967,8 @@ per game:
 - G1: the first `SteamGameServer012` call is position 0, called exactly
   once; `rdx` has low 32 bits 0, `r8` and `r9` lie in 1..=0xffff and
   differ.
-- G2: slot 6 of its stack line has low 32 bits equal to the app ID
-  `run.sh` started (`starts.log`), and slot 7 points to a text.
+- G2: its stack line has slot 6 (low 32 bits) equal to the app ID
+  `run.sh` started (`starts.log`) and `slot 7 text yes`.
 - G3: its result is 0 or 1.
 
 If U1 to U3 match in both games, `SteamUtils009` 16 is confirmed as
@@ -3969,6 +3977,11 @@ If U1 to U3 match in both games, `SteamUtils009` 16 is confirmed as
 mismatch leaves the candidate as it is, with the mismatch noted here; a
 mismatch of only U2 leaves "`SetWarningMessageHook`, `StartVRDashboard`,
 `GetIPCountry` or `GetSteamUILanguage`".
+
+The confirmations rest on these assumptions, so the entries must carry
+them: `meanings.md`, `status.json` and the shim's comments will say
+"`SetWarningMessageHook` (experiment 31, under A1 and A2)" and
+"`InitGameServer` (experiment 31, under A3)".
 
 Checked before the plan time on two earlier logs (Gravitas
 `observe-59640`, Dark Deception `observe-62168`, script with the plan

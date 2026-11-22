@@ -5,14 +5,16 @@ SteamGameServer012 position 0 (candidate InitGameServer) in Gravitas
 Candidates from https://partner.steamgames.com/doc/api/ISteamUtils and
 https://partner.steamgames.com/doc/api/ISteamGameServer.
 
-Needs READS (crates/shim-observe, ADR 0043/0053), added on the plan's
+Needs READS (crates/shim-observe, ADR 0053 and 0058), added on the plan's
 branch:
   ("SteamUtils009", 16, Read::Executable("rdx")): the proxy logs
     `after rdx: executable (outside steamclient64)` or `not executable`
     (only the page protection is asked for, no byte is read);
-  ("SteamGameServer012", 0, Read::StackArguments): the proxy logs
-    `stack arguments 5=0x.. 6=0x.. 7=0x..` (counting rcx as the first
-    argument) and `N->"text"` for a slot that points to a text.
+  ("SteamGameServer012", 0, Read::StackAppIdAndText): the proxy logs
+    `stack: slot 6 low 32 bits <number>, slot 7 text yes|no` (counting
+    rcx as the first argument; `not readable` for a slot outside readable
+    memory). It never logs slot 5, the value of slot 7 or any text, and
+    addresses found on the stack are never followed for logging.
 Without them U2 and G2 mismatch.
 
 Assumptions (stated in the plan, as in experiments 23 and 24):
@@ -36,8 +38,10 @@ U3  Every call returned, with non-zero upper 32 bits of rax and a lowest
 G1  The first SteamGameServer012 call is position 0, and position 0 is
     called exactly once; its rdx has low 32 bits 0, r8 and r9 lie in
     1..=0xffff and differ.
-G2  The stack line of that call has slot 6 with low 32 bits equal to the
-    app ID run.sh started (starts.log) and slot 7 pointing to a text.
+G2  The stack line of that call has slot 6 (low 32 bits) equal to the
+    app ID run.sh started (starts.log) and `slot 7 text yes`. Slot 6 is
+    only compared, never printed: if the meaning were another, it could
+    be the low half of the account's Steam ID (ADR 0058).
 G3  Its rax is 0 or 1.
 
 Each log must be a different file recorded by run.sh in starts.log
@@ -66,10 +70,9 @@ GAMES = {
     332950: "Dark Deception",
 }
 UTILS, SERVER = "SteamUtils009", "SteamGameServer012"
-PLAN_COMMITTED = datetime(2026, 11, 22, 20, 17, 38)  # commit a85feef on loop/plan-15a (final plan)
+PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in a follow-up commit
 EXECUTABLE = "after rdx: executable (outside steamclient64)"
-SLOT = re.compile(r"\b(\d)=(0x[0-9a-f]+|not readable)")
-POINTS = re.compile(r'\b(\d)->"')
+STACK = re.compile(r"^stack: slot 6 low 32 bits (\d+|not readable), slot 7 text (yes|no|not readable)$")
 
 
 def verdict(ok):
@@ -77,13 +80,15 @@ def verdict(ok):
 
 
 def stack_line(call):
-    """(slot -> value or None, slots that point to a text), or None."""
+    """(slot 6 low 32 bits or None, slot 7 is a text), or None. Only the
+    part of a note before any `->"` is parsed, so a text in a log line
+    can never be mistaken for a field."""
     for extra in call.extra:
-        if extra.startswith("stack arguments"):
-            values = {}
-            for slot, value in SLOT.findall(extra):
-                values[int(slot)] = None if value == "not readable" else int(value, 16)
-            return values, {int(s) for s in POINTS.findall(extra)}
+        head = extra.split('->"', 1)[0]
+        m = STACK.match(head)
+        if m:
+            six = None if m.group(1) == "not readable" else int(m.group(1))
+            return six, m.group(2) == "yes"
     return None
 
 
@@ -124,11 +129,9 @@ def check(path, app, label, verdicts):
     if stack is None:
         say("G2", False, "no stack line logged")
     else:
-        values, texts = stack
-        six = values.get(6)
-        ok_g2 = six is not None and observelog.low32(six) == app and 7 in texts
-        say("G2", ok_g2, f"slot 6 is the app ID: {six is not None and observelog.low32(six) == app}, "
-            f"slot 7 points to a text: {7 in texts}")
+        six, text = stack
+        ok_g2 = six == app and text
+        say("G2", ok_g2, f"slot 6 is the app ID: {six == app}, slot 7 points to a text: {text}")
     say("G3", init.rax in (0, 1), f"result {init.rax if init.rax in (0, 1) else 'other'}")
 
 

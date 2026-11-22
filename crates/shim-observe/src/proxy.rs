@@ -56,10 +56,11 @@
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
 //! started, or whether that address is executable memory (only the
-//! protection, no byte), or the fifth to seventh arguments from the stack
-//! (counting `rcx`; 24 bytes, the same kind of values as the register
-//! arguments every call line shows) with the text each points to. Calls
-//! not on the list are logged as before.
+//! protection, no byte; ADR 0058), or, from the stack, the low 32 bits of
+//! the sixth argument and whether the seventh points to a text (yes or
+//! no, never the text or the address; ADR 0058). Addresses found on the
+//! stack are never followed for logging. Calls not on the list are logged
+//! as before.
 //!
 //! Step 4d (ADR 0050): at `rdx` the proxy reads 24 bytes instead of 16.
 //! If bytes 8 to 16 hold an address and bytes 16 to 20 a size of at most
@@ -170,24 +171,27 @@ enum Read {
     /// Whether Windows marks the memory at the address this argument
     /// register held as executable, and whether it lies in
     /// `steamclient64`. Only the protection is asked for; no byte there
-    /// is read.
+    /// is read (ADR 0058).
     Executable(&'static str),
-    /// The fifth to seventh arguments as the call started (counting the
-    /// object in `rcx` as the first; the three stack slots above the 32
-    /// bytes of shadow space, Microsoft's x64 calling convention), and the
-    /// text each points to, if any: argument values like the registers of
-    /// every call line, and at most one text per argument.
-    StackArguments,
+    /// From the stack as the call started (counting the object in `rcx`
+    /// as the first argument; Microsoft's x64 calling convention): only
+    /// the low 32 bits of the sixth argument, and whether the seventh
+    /// points to a readable, NUL-terminated printable text (yes or no).
+    /// The fifth slot, the seventh slot's value and the text are never
+    /// logged (ADR 0058).
+    StackAppIdAndText,
 }
 
 /// Offset from the stack pointer at a stub's entry (where the return
-/// address is) to the fifth argument: the return address and the 32 bytes
-/// of shadow space lie below it (Microsoft's x64 calling convention,
+/// address is) to the sixth argument: the return address, the 32 bytes of
+/// shadow space and the fifth argument lie below it (Microsoft's x64
+/// calling convention,
 /// <https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention>).
-const FIFTH_ARGUMENT: usize = 0x28;
+const SIXTH_ARGUMENT: usize = 0x30;
 
-/// How many stack arguments [`Read::StackArguments`] logs.
-const STACK_ARGUMENTS: usize = 3;
+/// Offset from the stack pointer at a stub's entry to the seventh
+/// argument.
+const SEVENTH_ARGUMENT: usize = 0x38;
 
 /// The calls ADR 0043 allows reads for: interface version text, position,
 /// what is read. An entry is added only with a candidate and an experiment
@@ -234,9 +238,10 @@ const READS: &[(&str, usize, Read)] = &[
     // address is executable; no account data).
     ("SteamUtils009", 16, Read::Executable("rdx")),
     // `docs/shim/meanings.md`, experiment 31: candidate `InitGameServer`
-    // takes server flags, the game's app ID and a version text as its
-    // fifth to seventh arguments, counting the object (no account data).
-    ("SteamGameServer012", 0, Read::StackArguments),
+    // takes the game's app ID and a version text as its sixth and
+    // seventh arguments, counting the object; only the app ID's low 32
+    // bits and "text: yes/no" are logged (ADR 0058).
+    ("SteamGameServer012", 0, Read::StackAppIdAndText),
 ];
 
 /// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).
@@ -661,10 +666,12 @@ enum After {
         register: &'static str,
         address: u64,
     },
-    /// The fifth to seventh arguments as the call started, `None` where
-    /// the stack slot was not readable.
-    Stack {
-        arguments: [Option<u64>; STACK_ARGUMENTS],
+    /// Taken as the call started: the low 32 bits of the sixth argument,
+    /// and whether the seventh points to a text; `None` where the stack
+    /// slot was not readable.
+    StackAppIdAndText {
+        sixth: Option<u32>,
+        seventh_is_text: Option<bool>,
     },
 }
 
@@ -1279,7 +1286,8 @@ fn hex_at(address: u64) -> String {
 /// Step 4c of ADR 0043: the read for a call at `slot` of the object asked
 /// for with `interface`, if [`READS`] lists it. Output addresses are taken
 /// from `saved` as the call started; stack arguments from above
-/// `entry_rsp`, the stack pointer at the stub's entry.
+/// `entry_rsp`, the stack pointer at the stub's entry, also as the call
+/// started (only the low 32 bits and a yes or no are kept).
 fn after_for(interface: &str, slot: usize, saved: &Saved, entry_rsp: usize) -> Option<After> {
     let &(_, _, read) = READS
         .iter()
@@ -1300,13 +1308,17 @@ fn after_for(interface: &str, slot: usize, saved: &Saved, entry_rsp: usize) -> O
             register,
             address: register_value(register)?,
         }),
-        Read::StackArguments => Some(After::Stack {
-            arguments: core::array::from_fn(|index| {
-                entry_rsp
-                    .checked_add(FIFTH_ARGUMENT + 8 * index)
-                    .and_then(read_u64)
-            }),
-        }),
+        Read::StackAppIdAndText => {
+            let slot = |offset: usize| entry_rsp.checked_add(offset).and_then(read_u64);
+            Some(After::StackAppIdAndText {
+                // The page's `AppId_t` is 32 bits; the upper half is not
+                // kept.
+                sixth: slot(SIXTH_ARGUMENT).map(|value| value as u32),
+                // `ascii_at` checks the region with VirtualQuery and stops
+                // at its end; only whether a text is there is kept.
+                seventh_is_text: slot(SEVENTH_ARGUMENT).map(|value| ascii_at(value).is_some()),
+            })
+        }
     }
 }
 
@@ -1384,41 +1396,46 @@ fn describe_after(rax: u64, after: After) -> String {
         }
         After::Executable { register, address } => {
             let executable = usize::try_from(address).is_ok_and(is_executable);
-            let place = match MODULE.get() {
-                Some(&(base, end)) if executable => {
-                    if usize::try_from(address).is_ok_and(|at| (base..end).contains(&at)) {
-                        " (in steamclient64)"
-                    } else {
-                        " (outside steamclient64)"
-                    }
-                }
-                _ => "",
-            };
             let verdict = if executable {
                 "executable"
             } else {
                 "not executable"
             };
+            let place = executable_place(address, executable, MODULE.get().copied());
             format!("after {register}: {verdict}{place}")
         }
-        After::Stack { arguments } => {
-            let mut text = "stack arguments".to_owned();
-            for (index, argument) in arguments.into_iter().enumerate() {
-                let number = index + 5;
-                match argument {
-                    Some(value) => {
-                        let _ = write!(text, " {number}=0x{value:x}");
-                        if let Some(pointed) = ascii_at(value) {
-                            let _ = write!(text, " {number}->\"{pointed}\"");
-                        }
-                    }
-                    None => {
-                        let _ = write!(text, " {number}=not readable");
-                    }
-                }
-            }
-            text
+        After::StackAppIdAndText {
+            sixth,
+            seventh_is_text,
+        } => {
+            let sixth = sixth.map_or_else(|| "not readable".to_owned(), |value| value.to_string());
+            let seventh = match seventh_is_text {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "not readable",
+            };
+            format!("stack: slot 6 low 32 bits {sixth}, slot 7 text {seventh}")
         }
+    }
+}
+
+/// Where an executable address lies: in `steamclient64` (`module`, its
+/// start and end) or outside it; nothing for memory that is not
+/// executable or when the module's range is not known.
+fn executable_place(
+    address: u64,
+    executable: bool,
+    module: Option<(usize, usize)>,
+) -> &'static str {
+    match module {
+        Some((base, end)) if executable => {
+            if usize::try_from(address).is_ok_and(|at| (base..end).contains(&at)) {
+                " (in steamclient64)"
+            } else {
+                " (outside steamclient64)"
+            }
+        }
+        _ => "",
     }
 }
 
@@ -2035,34 +2052,90 @@ mod tests {
         // A made-up stack: the return address at entry, 32 bytes of shadow
         // space, then the fifth to seventh arguments.
         let version = c"1.0.0.0";
-        let stack: [u64; 8] = [0, 0, 0, 0, 0, 0, 1_067_310, version.as_ptr() as u64];
+        let stack: [u64; 8] = [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0x1234,
+            0xffff_ffff_0010_492e,
+            version.as_ptr() as u64,
+        ];
         let entry_rsp = stack.as_ptr() as usize;
         let after = after_for("SteamGameServer012", 0, &registers, entry_rsp);
         assert_eq!(
             after,
-            Some(After::Stack {
-                arguments: [Some(0), Some(1_067_310), Some(version.as_ptr() as u64)]
-            })
+            Some(After::StackAppIdAndText {
+                sixth: Some(1_067_310),
+                seventh_is_text: Some(true)
+            }),
+            "only the low 32 bits of slot 6; slot 5 is not kept"
         );
         let line = describe_after(1, after.unwrap());
-        assert!(
-            line.starts_with("stack arguments 5=0x0 6=0x10492e 7=0x"),
-            "{line}"
-        );
-        assert!(line.ends_with(" 7->\"1.0.0.0\""), "{line}");
+        assert_eq!(line, "stack: slot 6 low 32 bits 1067310, slot 7 text yes");
+        assert!(!line.contains("1.0.0.0"), "the text is never logged");
         assert_eq!(
             after_for("SteamGameServer012", 1, &registers, entry_rsp),
             None
         );
+        let no_text: [u64; 8] = [0, 0, 0, 0, 0, 0, 7, 0x1000];
         assert_eq!(
-            describe_after(
-                1,
-                After::Stack {
-                    arguments: [None, Some(3), None]
-                }
+            after_for(
+                "SteamGameServer012",
+                0,
+                &registers,
+                no_text.as_ptr() as usize
             ),
-            "stack arguments 5=not readable 6=0x3 7=not readable"
+            Some(After::StackAppIdAndText {
+                sixth: Some(7),
+                seventh_is_text: Some(false)
+            })
         );
+    }
+
+    #[test]
+    fn stack_read_survives_a_bad_entry_rsp() {
+        let registers = saved(0, 0, 0);
+        let none = After::StackAppIdAndText {
+            sixth: None,
+            seventh_is_text: None,
+        };
+        let unreadable = Some(none);
+        // Not mapped (the lowest 64 KiB never are).
+        assert_eq!(
+            after_for("SteamGameServer012", 0, &registers, 0),
+            unreadable
+        );
+        // The offsets overflow: checked_add gives up instead of wrapping.
+        assert_eq!(
+            after_for("SteamGameServer012", 0, &registers, usize::MAX - 0x10),
+            unreadable
+        );
+        assert_eq!(
+            describe_after(1, none),
+            "stack: slot 6 low 32 bits not readable, slot 7 text not readable"
+        );
+    }
+
+    #[test]
+    fn executable_place_names_steamclient64() {
+        let module = Some((0x1000_0000, 0x2000_0000));
+        assert_eq!(
+            executable_place(0x1800_0000, true, module),
+            " (in steamclient64)"
+        );
+        assert_eq!(
+            executable_place(0x2000_0000, true, module),
+            " (outside steamclient64)",
+            "the end is outside"
+        );
+        assert_eq!(
+            executable_place(0x0fff_ffff, true, module),
+            " (outside steamclient64)"
+        );
+        assert_eq!(executable_place(0x1800_0000, false, module), "");
+        assert_eq!(executable_place(0x1800_0000, true, None), "");
     }
 
     #[test]

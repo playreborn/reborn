@@ -2671,8 +2671,9 @@ The script rejects a log given twice, maps each log to its game through
 rejects a log whose start (`observelog.start_of`) is earlier than the
 plan commit (`PLAN_COMMITTED`, the local committer time of the commit on
 `loop/plan-11a` that holds this text and the final script, set in a
-follow-up commit). It prints only positions, small handle values,
-counts and match/MISMATCH.
+follow-up commit: 2026-11-22 14:34:22, commit `e21b039`; the first plan
+time 14:24:36, commit `79db875` before the rebase, is superseded). It
+prints only positions, small handle values, counts and match/MISMATCH.
 
 **Games to run:** Gravitas (1067310) and Dark Deception (332950), each
 to its first screen and closed by a close request (F needs a normal

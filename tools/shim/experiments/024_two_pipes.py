@@ -89,7 +89,7 @@ KIND = {
     26: re.compile(r"^SteamController\d+$"),
     38: re.compile(r"^SteamInput\d+$"),
 }
-PLAN_COMMITTED = datetime(2099, 1, 1, 0, 0, 0)  # set to the final plan commit's time in a follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 14, 34, 22)  # commit e21b039 on loop/plan-11a (final plan)
 RESULT = re.compile(r"^\d+ ms ThreadId\(\d+\) (\S+?)#(\d+) result (\d+) (.*)$")
 METHOD = re.compile(r"^\d+ ms ThreadId\(\d+\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 EXPORT = re.compile(r"^\d+ ms ThreadId\(\d+\) (Steam_\w+|CreateInterface) (call|return) (\d+) (.*)$")

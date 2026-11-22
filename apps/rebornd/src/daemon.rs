@@ -2340,13 +2340,13 @@ mod tests {
         daemon.reconnecting.store(true, Ordering::SeqCst);
         assert_eq!(daemon.link().await, Link::Offline);
         let short = Duration::from_millis(200);
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         daemon.wait_for_session(short).await;
         assert!(started.elapsed() >= short);
 
         daemon.reconnecting.store(false, Ordering::SeqCst);
         let held = daemon.session.lock().await;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         daemon.wait_for_session(short).await;
         assert!(started.elapsed() >= short);
         drop(held);

@@ -1,0 +1,45 @@
+{
+  "_comment": "Status of each recorded interface position, as docs/shim/meanings.md records it. Keys: interface version text, then position. Values: [status, meaning]. Status is confirmed, candidate or objects (hands out objects, docs/shim/objects.md). Positions not listed are not known. coverage.py builds the coverage table and the gap list from this.",
+  "SteamClient020": {
+    "0": ["confirmed", "CreateSteamPipe"], "2": ["confirmed", "ConnectToGlobalUser"],
+    "9": ["confirmed", "GetISteamUtils"], "12": ["confirmed", "GetISteamGenericInterface"],
+    "4": ["confirmed", "ReleaseUser"], "1": ["confirmed", "BReleaseSteamPipe"],
+    "23": ["confirmed", "BShutdownIfAllPipesClosed"], "34": ["candidate", "SetWarningMessageHook"],
+    "*interface": ["confirmed", "GetISteam… (per interface)"]
+  },
+  "SteamClient021": {
+    "0": ["confirmed", "CreateSteamPipe"], "2": ["confirmed", "ConnectToGlobalUser"],
+    "9": ["confirmed", "GetISteamUtils"], "12": ["confirmed", "GetISteamGenericInterface"],
+    "*interface": ["confirmed", "GetISteam… (per interface)"]
+  },
+  "SteamClient023": {
+    "0": ["confirmed", "CreateSteamPipe"], "2": ["confirmed", "ConnectToGlobalUser"],
+    "9": ["confirmed", "GetISteamUtils"], "12": ["confirmed", "GetISteamGenericInterface"],
+    "30": ["candidate", "SetWarningMessageHook"],
+    "*interface": ["confirmed", "GetISteam… (per interface)"]
+  },
+  "SteamUtils009": {"9": ["candidate", "GetAppID"]},
+  "SteamUtils010": {
+    "9": ["confirmed", "GetAppID"], "5": ["confirmed", "GetImageSize"], "6": ["confirmed", "GetImageRGBA"]
+  },
+  "STEAMAPPS_INTERFACE_VERSION008": {
+    "0": ["confirmed", "BIsSubscribed"], "7": ["confirmed", "BIsDlcInstalled or BIsSubscribedApp"],
+    "6": ["candidate", "BIsSubscribedApp or BIsAppInstalled"],
+    "4": ["candidate", "GetCurrentGameLanguage or GetAvailableGameLanguages"]
+  },
+  "STEAMREMOTESTORAGE_INTERFACE_VERSION014": {
+    "0": ["confirmed", "FileWrite"], "1": ["confirmed", "FileRead"], "15": ["confirmed", "GetFileSize"],
+    "13": ["candidate", "FileExists, FilePersisted or FileForget"]
+  },
+  "STEAMUSERSTATS_INTERFACE_VERSION011": {
+    "12": ["confirmed", "GetAchievementDisplayAttribute"],
+    "4": ["candidate", "SetStat"], "6": ["candidate", "GetAchievement, GetStat or GetGlobalStat"]
+  },
+  "SteamController007": {"2": ["candidate", "RunFrame"]},
+  "SteamController008": {"2": ["candidate", "RunFrame"]},
+  "SteamInput006": {"3": ["candidate", "RunFrame"]},
+  "SteamUser020": {"2": ["candidate", "GetSteamID"]},
+  "SteamUser021": {"2": ["candidate", "GetSteamID"]},
+  "SteamUser022": {"2": ["candidate", "GetSteamID"]},
+  "SteamUser023": {"2": ["candidate", "GetSteamID"]}
+}

@@ -153,3 +153,22 @@ client's result. First entry: `SteamUtils010` position 9 (`GetAppID`).
 Checked without a game (2026-11-21): unit tests (only listed versions
 and positions, the upper half of `rax` ignored, mismatch and missing app
 ID reported; the app ID file written and removed by the session).
+
+## `tools/shim/` (ADR 0051)
+
+Scripts the shim loop (`docs/shim/LOOP.md`) uses instead of typed steps:
+
+- `coverage.py`: regenerates the tables of `coverage.md` and `gaps.md`
+  from the reference runs in `games.json` and the statuses in
+  `status.json`.
+- `run.sh <app id>`: one observation run (arm, start through the official
+  client, wait, close, disarm), with the limits of ADR 0045 kept in
+  `starts.log` in Reborn's data folder. Run it from a normal terminal: in
+  the Claude desktop app, registry writes go to the app's private copy and
+  never reach games.
+- `observelog.py`: reads proxy logs for the scripts above and for
+  experiment checks in `experiments/`.
+- `dbwin.ps1`, `shot.ps1`, `crop.ps1`, `click.ps1`: debug output capture,
+  local screenshots and clicks (ADR 0044, 0049); screenshots stay on the
+  computer.
+

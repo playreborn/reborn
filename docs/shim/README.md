@@ -40,4 +40,7 @@ One file per topic (e.g. `loading.md`, `entry-points.md`). Each fact:
 | `meanings.md` | what recorded calls mean: candidates and experiments (ADR 0042) | 4a, about twenty confirmed (Windows) |
 | `coverage.md` | which positions games call, and how far each one is | 20 games (Windows) |
 | `m4-games.md` | the games of M4 and the criteria for them | fixed, 20 games |
+| `gaps.md` | every recorded position not yet confirmed, most-called first (generated) | 20 games |
+| `LOOP.md` | the steps of one iteration of autonomous work (ADR 0051) | |
+| `digest.md` | one line per iteration, newest first | |
 | `tools/` | scripts for the public tools used in stages 0 and 1, and how to use `reborn-observe` (stage 2) | |

@@ -3453,7 +3453,8 @@ the log to its game through `starts.log` (`observelog.app_of`), needs the
 VPet log and rejects a log whose start (`observelog.start_of`) is earlier
 than the plan commit (`PLAN_COMMITTED`, the local committer time of the
 final plan commit on `loop/plan-13a`, set in a follow-up commit:
-2026-11-22 19:14:46, commit `a4fb521`; the first plan time 18:57:22,
+2026-11-22 19:14:46, commit `212f413` (`a4fb521` before the rebase, the
+same committer time); the first plan time 18:57:22,
 commit `80afe13`, is superseded). It prints only positions, counts and
 match/MISMATCH.
 

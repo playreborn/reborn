@@ -776,6 +776,19 @@ and which the user stays open (limit above).
   "subscribed to the current app" is expected to be true; "from a free
   weekend", "from family sharing", "cyber cafe", "low violence" and "VAC
   banned" are expected to be false for the test account.
+- **Shadow mode** (ADR 0046 as amended by ADR 0055, stage 1; added
+  2026-11-22, not run yet): the proxy's `SHADOWS` lists position 0 as
+  `Shadow::Subscribed`. After the official client's call returns, a
+  worker thread in the proxy asks `rebornd` (`AppOwnership` for the app
+  given to `reborn-observe arm --app`, on the read-only shadow session
+  `arm` registered) and compares the answer with the lowest byte of
+  `rax`. The log line says only `shadow match` or `shadow mismatch`
+  (account data), or `shadow: no Reborn answer (<reason>)`; the call's
+  own return line then says `rax hidden (account data)` instead of the
+  value, so the two lines together do not give Reborn's answer. The game
+  always gets the official client's result; position 0 is never in
+  `ANSWERS`. Position 7 is not shadowed: it is narrowed to two meanings,
+  not confirmed as one, and the shadow session knows no DLC yet.
 
 ### Position 4: candidates `GetCurrentGameLanguage`, `GetAvailableGameLanguages`
 

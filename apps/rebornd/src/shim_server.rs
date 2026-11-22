@@ -24,6 +24,18 @@
 //! app only: `Accepted` and later the event `StatsReceived`, written on
 //! the same connection after the response, or `Unavailable`.
 //!
+//! Shadow sessions (ADR 0055, amending ADR 0047; `shim_shadow`): a
+//! connection without a session may send `RegisterShadow { app_id }`
+//! (`reborn-observe arm --app`) or `CancelShadow` (`disarm`); a
+//! connection bound to a process gets `NotAllowed` for both. The
+//! observation proxy then says `ShadowHello { pid, app_id }` and its
+//! connection is bound to that process as a shadow session, for good:
+//! it never becomes a launched run's session, and a launched process never
+//! gets a shadow session. A shadow session is answered like a shim-mode run
+//! for reads (`AppOwnership`, `RequestStats`), and every write is refused
+//! with `NotAllowed` before anything else. It ends when the connection
+//! closes, or for all at once when the Valve session ends.
+//!
 //! Whether an app is owned, and the stats, are account data: they are
 //! never logged.
 
@@ -32,14 +44,15 @@ use std::sync::Arc;
 
 use reborn_ipc::socket::LocalSocketStream;
 use reborn_shim_protocol::{
-    DaemonMessage, RefusalReason, Request, Response, ShimMessage, UnavailableReason, answer_hello,
-    decode, encode,
+    DaemonMessage, PROTOCOL_VERSION, RefusalReason, Request, Response, ShimMessage,
+    UnavailableReason, answer_hello, decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
 use crate::daemon::Daemon;
+use crate::shim_shadow::ShadowSessions;
 use crate::shim_stats::{RunStats, StatsBackend, StatsState, event_when_received, request_stats};
 
 /// Longest line read from a shim; anything longer closes the connection.
@@ -51,7 +64,8 @@ const MAX_LINE: usize = 64 * 1024;
 /// with more is closed. The recorded games ask once per run.
 const MAX_WAITING: usize = 16;
 
-/// A game process `rebornd` launched, as the shim channel sees it.
+/// A game process `rebornd` launched, or a shadow session's process
+/// (`shadow`), as the shim channel sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShimRun {
     /// The app the process was launched for.
@@ -62,6 +76,23 @@ pub struct ShimRun {
     /// The run's stats, fetched on the game's first `RequestStats`; `None`
     /// for a run that was not started in shim mode.
     pub stats: Option<Arc<RunStats>>,
+    /// Whether this is a read-only shadow session for a process
+    /// `reborn-observe arm` registered (ADR 0055), not a process `rebornd`
+    /// launched.
+    pub shadow: bool,
+}
+
+/// Where the shim channel finds runs and shadow sessions: the daemon, or
+/// fakes in tests.
+pub trait ShimHost: Send + Sync + 'static {
+    /// The run the daemon launched the process `pid` for, while it runs.
+    fn launched(&self, pid: u32) -> Option<ShimRun>;
+    /// The shadow registration and sessions.
+    fn shadows(&self) -> &ShadowSessions;
+    /// Registers `app_id` for a shadow session (`RegisterShadow`): the
+    /// response, after the registration is in [`Self::shadows`] or was
+    /// refused.
+    fn register_shadow(&self, app_id: u32) -> impl Future<Output = Response> + Send;
 }
 
 /// What the run may learn about ownership (ADR 0055, "What is cached"):
@@ -82,6 +113,21 @@ pub struct RunOwnership {
 struct Connection {
     /// The process this connection got a session for.
     pid: Option<u32>,
+    /// For a shadow session: the token of its claim, so only this
+    /// session's data is reached and only this session is ended.
+    shadow: Option<u64>,
+}
+
+impl Connection {
+    /// The connection's run, while it lasts: a shadow session only from
+    /// the shadow sessions, a launched process only from the launches.
+    fn run<H: ShimHost>(&self, host: &H) -> Option<ShimRun> {
+        let pid = self.pid?;
+        match self.shadow {
+            Some(token) => host.shadows().get(pid, token),
+            None => host.launched(pid),
+        }
+    }
 }
 
 /// Accepts shim connections until the listener fails.
@@ -104,15 +150,15 @@ pub async fn accept_loop(
 /// Responses and events go through one writer, so an event is always
 /// written after the response that accepted its request.
 async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
-    let runs = Arc::clone(&daemon);
-    serve_stream(stream, move |pid| runs.shim_run(pid), daemon).await;
+    serve_stream(stream, Arc::clone(&daemon), daemon).await;
 }
 
 /// [`serve`] on any byte stream, with the runs and the stats source given
 /// (the daemon, or fakes in tests).
-async fn serve_stream<S, B>(stream: S, run: impl Fn(u32) -> Option<ShimRun>, backend: Arc<B>)
+async fn serve_stream<S, H, B>(stream: S, host: Arc<H>, backend: Arc<B>)
 where
     S: AsyncRead + AsyncWrite + Send + 'static,
+    H: ShimHost,
     B: StatsBackend,
 {
     let (read, mut write) = tokio::io::split(stream);
@@ -145,7 +191,7 @@ where
                 break;
             }
         }
-        let Some(reply) = answer(&line, &mut connection, &run, &backend).await else {
+        let Some(reply) = answer(&line, &mut connection, &*host, &backend).await else {
             debug!("closing shim connection after a bad line");
             break;
         };
@@ -192,6 +238,11 @@ where
     for task in waiting {
         task.abort();
     }
+    // A shadow session lasts as long as the proxy's connection.
+    if let (Some(token), Some(pid)) = (connection.shadow, connection.pid) {
+        host.shadows().end(pid, token);
+        info!(pid, "shim shadow session ended");
+    }
     drop(outgoing);
     let _ = writer.await;
 }
@@ -228,24 +279,34 @@ struct Reply {
 }
 
 /// The reply to one line from a shim, `None` if the line is not a valid
-/// message. `run` gives the run the daemon launched for a process ID,
-/// while it runs; `backend` is where stats come from.
-async fn answer<B: StatsBackend>(
+/// message. `host` gives the runs the daemon launched and the shadow
+/// sessions; `backend` is where stats come from.
+async fn answer<H: ShimHost, B: StatsBackend>(
     line: &str,
     connection: &mut Connection,
-    run: impl Fn(u32) -> Option<ShimRun>,
+    host: &H,
     backend: &Arc<B>,
 ) -> Option<Reply> {
     let message: ShimMessage = decode(line).ok()?;
     let mut stats = None;
+    let not_allowed = Response::Unavailable {
+        reason: UnavailableReason::NotAllowed,
+    };
+    // A shadow session never writes (ADR 0055), checked before anything
+    // else.
+    if connection.shadow.is_some() && message.request.writes() {
+        info!(pid = ?connection.pid, "shim write on a shadow session refused");
+        return reply_line(message.id, not_allowed, None);
+    }
     let response = match message.request {
         Request::Hello { version, pid } => {
             let response = match connection.pid {
-                // Bound to another process: refused, the binding stays.
-                Some(bound) if bound != pid => Response::Refused {
+                // Bound to another process, or as a shadow session:
+                // refused, the binding stays.
+                Some(bound) if bound != pid || connection.shadow.is_some() => Response::Refused {
                     reason: RefusalReason::UnknownProcess,
                 },
-                _ => answer_hello(version, run(pid).map(|run| run.app_id)),
+                _ => answer_hello(version, host.launched(pid).map(|run| run.app_id)),
             };
             info!(pid, ?response, "shim said hello");
             // Only the first successful hello binds; a refused one never
@@ -255,8 +316,35 @@ async fn answer<B: StatsBackend>(
             }
             response
         }
+        Request::ShadowHello {
+            version,
+            pid,
+            app_id,
+        } => {
+            let response = answer_shadow_hello(connection, host, version, pid, app_id);
+            info!(pid, app_id, ?response, "shim shadow hello");
+            response
+        }
+        Request::RegisterShadow { app_id } => {
+            let response = if connection.pid.is_some() {
+                not_allowed
+            } else {
+                host.register_shadow(app_id).await
+            };
+            info!(app_id, ?response, "shadow session registration");
+            response
+        }
+        Request::CancelShadow => {
+            if connection.pid.is_some() {
+                not_allowed
+            } else {
+                host.shadows().cancel();
+                info!("shadow session registration cancelled");
+                Response::Accepted
+            }
+        }
         Request::AppOwnership { app_id } => {
-            let response = answer_ownership(connection.pid.and_then(&run).as_ref(), app_id);
+            let response = answer_ownership(connection.run(host).as_ref(), app_id);
             match &response {
                 Response::Unavailable { reason } => {
                     info!(pid = ?connection.pid, app_id, ?reason, "shim ownership request refused");
@@ -266,8 +354,7 @@ async fn answer<B: StatsBackend>(
             response
         }
         Request::RequestStats => {
-            let (response, receiver) =
-                answer_stats(connection.pid.and_then(&run).as_ref(), backend).await;
+            let (response, receiver) = answer_stats(connection.run(host).as_ref(), backend).await;
             match &response {
                 Response::Unavailable { reason } => {
                     info!(pid = ?connection.pid, ?reason, "shim stats request refused");
@@ -278,12 +365,52 @@ async fn answer<B: StatsBackend>(
             response
         }
     };
-    let line = encode(&DaemonMessage::Response {
-        id: message.id,
-        response,
-    })
-    .ok()?;
+    reply_line(message.id, response, stats)
+}
+
+fn reply_line(
+    id: u64,
+    response: Response,
+    stats: Option<watch::Receiver<StatsState>>,
+) -> Option<Reply> {
+    let line = encode(&DaemonMessage::Response { id, response }).ok()?;
     Some(Reply { line, stats })
+}
+
+/// The answer to `ShadowHello` (ADR 0055): the version first, then the
+/// binding, then the registration. Only a connection without a session
+/// claims one; the same shadow process may say it again on its own
+/// connection and keeps its session.
+fn answer_shadow_hello<H: ShimHost>(
+    connection: &mut Connection,
+    host: &H,
+    version: reborn_shim_protocol::Version,
+    pid: u32,
+    app_id: u32,
+) -> Response {
+    let unknown = Response::Refused {
+        reason: RefusalReason::UnknownProcess,
+    };
+    if version.major != PROTOCOL_VERSION.major {
+        return answer_hello(version, None);
+    }
+    match connection.pid {
+        Some(bound) if bound == pid && connection.shadow.is_some() => {
+            let run = connection.run(host).filter(|run| run.app_id == app_id);
+            answer_hello(version, run.map(|run| run.app_id))
+        }
+        Some(_) => unknown,
+        // A process `rebornd` launched is never a shadow.
+        None if host.launched(pid).is_some() => unknown,
+        None => match host.shadows().claim(pid, app_id) {
+            Some((token, run)) => {
+                connection.pid = Some(pid);
+                connection.shadow = Some(token);
+                answer_hello(version, Some(run.app_id))
+            }
+            None => unknown,
+        },
+    }
 }
 
 /// The answer to `RequestStats` for the connection's run (ADR 0055): the
@@ -342,6 +469,12 @@ mod tests {
     const OTHER_DLC: u32 = 2_444_553;
     /// An app the fake account owns that is not the game's business.
     const OTHER_OWNED: u32 = 3_419_430;
+    /// Dark Deception, a recorded `BIsSubscribed` game
+    /// (`docs/shim/meanings.md`, experiment 8), as the shadow game; used
+    /// here only as a number the fake account owns.
+    const SHADOW_GAME: u32 = 332_950;
+    /// The shadow game's process (not launched by the daemon).
+    const SHADOW_PID: u32 = 300;
 
     fn line(id: u64, request: Request) -> String {
         encode(&ShimMessage { id, request }).unwrap_or_default()
@@ -362,9 +495,19 @@ mod tests {
     /// The runs of the tests: process 100 runs Cave Crawlers in shim mode,
     /// 101 without shim mode, 200 Bongo Cat (the recorded stats) in shim
     /// mode. The stats of each run are kept, like the daemon keeps them.
+    /// `ended` makes every game exited. A shadow registration succeeds
+    /// only with `signed_in`, with the fake account's owned apps.
     struct Runs {
         game: ShimRun,
         bongo: ShimRun,
+        ended: bool,
+        signed_in: bool,
+        shadows: ShadowSessions,
+    }
+
+    /// The fake account's owned apps, for shadow registrations.
+    fn account_owns() -> BTreeSet<u32> {
+        BTreeSet::from([GAME, OTHER_DLC, OTHER_OWNED, SHADOW_GAME])
     }
 
     impl Runs {
@@ -377,26 +520,71 @@ mod tests {
                         dlc: BTreeSet::from([DLC, OTHER_DLC]),
                     })),
                     stats: Some(Arc::new(RunStats::default())),
+                    shadow: false,
                 },
                 bongo: ShimRun {
                     app_id: BONGO_CAT,
                     ownership: Some(Arc::new(RunOwnership::default())),
                     stats: Some(Arc::new(RunStats::default())),
+                    shadow: false,
                 },
+                ended: false,
+                signed_in: true,
+                shadows: ShadowSessions::default(),
             }
         }
 
+        fn ended() -> Self {
+            Self {
+                ended: true,
+                ..Self::new()
+            }
+        }
+
+        fn signed_out() -> Self {
+            Self {
+                signed_in: false,
+                ..Self::new()
+            }
+        }
+    }
+
+    impl ShimHost for Runs {
         fn launched(&self, pid: u32) -> Option<ShimRun> {
+            if self.ended {
+                return None;
+            }
             match pid {
                 100 => Some(self.game.clone()),
                 101 => Some(ShimRun {
                     app_id: GAME,
                     ownership: None,
                     stats: None,
+                    shadow: false,
                 }),
                 200 => Some(self.bongo.clone()),
                 _ => None,
             }
+        }
+
+        fn shadows(&self) -> &ShadowSessions {
+            &self.shadows
+        }
+
+        async fn register_shadow(&self, app_id: u32) -> Response {
+            if !self.signed_in {
+                return Response::Unavailable {
+                    reason: UnavailableReason::NotSignedIn,
+                };
+            }
+            self.shadows.register(
+                app_id,
+                RunOwnership {
+                    owned: account_owns(),
+                    dlc: BTreeSet::new(),
+                },
+            );
+            Response::Accepted
         }
     }
 
@@ -411,7 +599,7 @@ mod tests {
         runs: &Runs,
         backend: &Arc<Fake>,
     ) -> Option<(DaemonMessage, Option<watch::Receiver<StatsState>>)> {
-        let reply = answer(line, connection, |pid| runs.launched(pid), backend).await?;
+        let reply = answer(line, connection, runs, backend).await?;
         Some((decode::<DaemonMessage>(&reply.line).ok()?, reply.stats))
     }
 
@@ -457,7 +645,7 @@ mod tests {
         let text = answer(
             &hello(102, PROTOCOL_VERSION),
             &mut connection,
-            |pid| runs.launched(pid),
+            &runs,
             &offline(),
         )
         .await
@@ -531,12 +719,19 @@ mod tests {
         );
 
         // The game exited: the daemon no longer knows the process.
-        let mut connection = Connection { pid: Some(100) };
-        let ended = |_pid: u32| -> Option<ShimRun> { None };
-        let text = answer(&ownership(GAME), &mut connection, ended, &offline())
-            .await
-            .map(|reply| reply.line)
-            .unwrap_or_default();
+        let mut connection = Connection {
+            pid: Some(100),
+            shadow: None,
+        };
+        let text = answer(
+            &ownership(GAME),
+            &mut connection,
+            &Runs::ended(),
+            &offline(),
+        )
+        .await
+        .map(|reply| reply.line)
+        .unwrap_or_default();
         assert_eq!(decode::<DaemonMessage>(&text).ok(), not_allowed());
     }
 
@@ -581,14 +776,13 @@ mod tests {
     async fn bad_lines_get_no_reply() {
         let mut connection = Connection::default();
         let runs = Runs::new();
-        let launched = |pid| runs.launched(pid);
         assert!(
-            answer("not json\n", &mut connection, launched, &offline())
+            answer("not json\n", &mut connection, &runs, &offline())
                 .await
                 .is_none()
         );
         assert!(
-            answer("{\"id\":1}\n", &mut connection, launched, &offline())
+            answer("{\"id\":1}\n", &mut connection, &runs, &offline())
                 .await
                 .is_none()
         );
@@ -687,9 +881,11 @@ mod tests {
             .unwrap_or_else(|| panic!("no reply"));
         assert_eq!(Some(message), unavailable(5, UnavailableReason::NotAllowed));
         // The game exited.
-        let mut connection = Connection { pid: Some(200) };
-        let ended = |_pid: u32| -> Option<ShimRun> { None };
-        let reply = answer(&request_stats(), &mut connection, ended, &valve)
+        let mut connection = Connection {
+            pid: Some(200),
+            shadow: None,
+        };
+        let reply = answer(&request_stats(), &mut connection, &Runs::ended(), &valve)
             .await
             .unwrap_or_else(|| panic!("no reply"));
         assert_eq!(
@@ -782,13 +978,20 @@ mod tests {
         tokio::io::WriteHalf<tokio::io::DuplexStream>,
         tokio::task::JoinHandle<()>,
     ) {
+        connect_to(valve, &Arc::new(Runs::new()))
+    }
+
+    /// [`connect`] with the runs given, so several connections share them.
+    fn connect_to(
+        valve: &Arc<Fake>,
+        runs: &Arc<Runs>,
+    ) -> (
+        BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (client, server) = tokio::io::duplex(64 * 1024);
-        let runs = Runs::new();
-        let served = tokio::spawn(serve_stream(
-            server,
-            move |pid| runs.launched(pid),
-            Arc::clone(valve),
-        ));
+        let served = tokio::spawn(serve_stream(server, Arc::clone(runs), Arc::clone(valve)));
         let (read, write) = tokio::io::split(client);
         (BufReader::new(read), write, served)
     }
@@ -960,5 +1163,355 @@ mod tests {
             *valve.asked.lock().unwrap_or_else(|p| p.into_inner()),
             [BONGO_CAT, GAME]
         );
+    }
+
+    fn register(app_id: u32) -> String {
+        line(6, Request::RegisterShadow { app_id })
+    }
+
+    fn cancel() -> String {
+        line(6, Request::CancelShadow)
+    }
+
+    fn shadow_hello(pid: u32, app_id: u32) -> String {
+        line(
+            3,
+            Request::ShadowHello {
+                version: PROTOCOL_VERSION,
+                pid,
+                app_id,
+            },
+        )
+    }
+
+    fn shadow_session() -> Option<DaemonMessage> {
+        response(
+            3,
+            Response::Session(Session {
+                version: PROTOCOL_VERSION,
+                app_id: SHADOW_GAME,
+            }),
+        )
+    }
+
+    fn unknown_process() -> Option<DaemonMessage> {
+        response(
+            3,
+            Response::Refused {
+                reason: RefusalReason::UnknownProcess,
+            },
+        )
+    }
+
+    /// Registers the shadow game as `reborn-observe arm` does, on its own
+    /// connection, and checks it was accepted.
+    async fn registered(runs: &Runs, app_id: u32) {
+        let mut arm = Connection::default();
+        let answered = reply_with(&register(app_id), &mut arm, runs, &offline()).await;
+        assert_eq!(answered.map(|(m, _)| m), response(6, Response::Accepted));
+        assert_eq!(arm.pid, None, "registering binds nothing");
+    }
+
+    #[tokio::test]
+    async fn a_shadow_session_answers_its_own_app_read_only() {
+        let runs = Runs::new();
+        registered(&runs, SHADOW_GAME).await;
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        let mut proxy = Connection::default();
+        let hello = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &valve,
+        )
+        .await;
+        assert_eq!(hello.map(|(m, _)| m), shadow_session());
+        assert_eq!(proxy.pid, Some(SHADOW_PID));
+        assert!(proxy.shadow.is_some());
+
+        let owned = reply_with(&ownership(SHADOW_GAME), &mut proxy, &runs, &valve).await;
+        assert_eq!(
+            owned.map(|(m, _)| m),
+            response(4, Response::Ownership { owned: true })
+        );
+        // Strict: other apps, owned or not, and DLC (the shadow session
+        // knows none) are refused.
+        for app_id in [OTHER_OWNED, GAME, DLC, 730] {
+            let refused = reply_with(&ownership(app_id), &mut proxy, &runs, &valve).await;
+            assert_eq!(refused.map(|(m, _)| m), not_allowed(), "{app_id}");
+        }
+        // Stats are a read: accepted, fetched once for the shadow game.
+        let Some((message, Some(stats))) =
+            reply_with(&request_stats(), &mut proxy, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert_eq!(Some(message), response(5, Response::Accepted));
+        assert!(event_line(stats).await.is_some());
+        assert_eq!(
+            *valve.asked.lock().unwrap_or_else(|p| p.into_inner()),
+            [SHADOW_GAME]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shadow_session_is_not_owned_when_the_account_lacks_the_app() {
+        let runs = Runs::new();
+        registered(&runs, 480).await;
+        let mut proxy = Connection::default();
+        assert!(matches!(
+            reply_with(
+                &shadow_hello(SHADOW_PID, 480),
+                &mut proxy,
+                &runs,
+                &offline()
+            )
+            .await,
+            Some((
+                DaemonMessage::Response {
+                    response: Response::Session(Session { app_id: 480, .. }),
+                    ..
+                },
+                _
+            ))
+        ));
+        let answered = reply_with(&ownership(480), &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            answered.map(|(m, _)| m),
+            response(4, Response::Ownership { owned: false })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shadow_hello_needs_an_open_registration_for_its_app() {
+        let runs = Runs::new();
+        let mut proxy = Connection::default();
+        assert_eq!(
+            reply(&shadow_hello(SHADOW_PID, SHADOW_GAME), &mut proxy).await,
+            unknown_process()
+        );
+        assert_eq!(proxy.pid, None);
+
+        // Registered for another app.
+        registered(&runs, 480).await;
+        let refused = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+
+        // Claimed once: a second process gets nothing.
+        registered(&runs, SHADOW_GAME).await;
+        let claimed = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(claimed.map(|(m, _)| m), shadow_session());
+        let mut other = Connection::default();
+        let refused = reply_with(
+            &shadow_hello(SHADOW_PID + 1, SHADOW_GAME),
+            &mut other,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+
+        // A process the daemon launched is never a shadow.
+        registered(&runs, GAME).await;
+        let mut launched = Connection::default();
+        let refused = reply_with(&shadow_hello(100, GAME), &mut launched, &runs, &offline()).await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+        assert_eq!(launched.pid, None);
+    }
+
+    #[tokio::test]
+    async fn an_incompatible_shadow_hello_claims_nothing() {
+        let runs = Runs::new();
+        registered(&runs, SHADOW_GAME).await;
+        let mut proxy = Connection::default();
+        let old = line(
+            3,
+            Request::ShadowHello {
+                version: Version { major: 9, minor: 0 },
+                pid: SHADOW_PID,
+                app_id: SHADOW_GAME,
+            },
+        );
+        let refused = reply_with(&old, &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            refused.map(|(m, _)| m),
+            response(
+                3,
+                Response::Refused {
+                    reason: RefusalReason::IncompatibleVersion
+                }
+            )
+        );
+        assert_eq!(proxy.pid, None);
+        // The registration is still open.
+        let claimed = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(claimed.map(|(m, _)| m), shadow_session());
+    }
+
+    #[tokio::test]
+    async fn registering_needs_a_valve_session() {
+        let runs = Runs::signed_out();
+        let mut arm = Connection::default();
+        let refused = reply_with(&register(SHADOW_GAME), &mut arm, &runs, &offline()).await;
+        assert_eq!(
+            refused.map(|(m, _)| m),
+            unavailable(6, UnavailableReason::NotSignedIn)
+        );
+        let mut proxy = Connection::default();
+        let refused = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_registration_cannot_be_claimed() {
+        let runs = Runs::new();
+        registered(&runs, SHADOW_GAME).await;
+        let mut disarm = Connection::default();
+        let cancelled = reply_with(&cancel(), &mut disarm, &runs, &offline()).await;
+        assert_eq!(cancelled.map(|(m, _)| m), response(6, Response::Accepted));
+        let mut proxy = Connection::default();
+        let refused = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+    }
+
+    #[tokio::test]
+    async fn bound_connections_neither_register_nor_switch_kind() {
+        let runs = Runs::new();
+        // A launched game cannot register or cancel shadow sessions.
+        let mut game = Connection::default();
+        reply_with(&hello(100, PROTOCOL_VERSION), &mut game, &runs, &offline()).await;
+        for request in [register(SHADOW_GAME), cancel()] {
+            let refused = reply_with(&request, &mut game, &runs, &offline()).await;
+            assert_eq!(
+                refused.map(|(m, _)| m),
+                unavailable(6, UnavailableReason::NotAllowed)
+            );
+        }
+        // Nor become a shadow session.
+        registered(&runs, SHADOW_GAME).await;
+        let refused = reply_with(
+            &shadow_hello(100, SHADOW_GAME),
+            &mut game,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(refused.map(|(m, _)| m), unknown_process());
+        assert!(game.shadow.is_none());
+
+        // A shadow session cannot become a launched run's session, nor
+        // register.
+        let mut proxy = Connection::default();
+        reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        for pid in [SHADOW_PID, 100] {
+            let refused =
+                reply_with(&hello(pid, PROTOCOL_VERSION), &mut proxy, &runs, &offline()).await;
+            assert_eq!(refused.map(|(m, _)| m), unknown_process());
+        }
+        let refused = reply_with(&register(SHADOW_GAME), &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            refused.map(|(m, _)| m),
+            unavailable(6, UnavailableReason::NotAllowed)
+        );
+        // Its own shadow hello again keeps the session.
+        let again = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(again.map(|(m, _)| m), shadow_session());
+        assert_eq!(proxy.pid, Some(SHADOW_PID));
+        assert!(proxy.shadow.is_some());
+    }
+
+    #[tokio::test]
+    async fn an_ended_valve_session_stops_shadow_sessions() {
+        let runs = Runs::new();
+        registered(&runs, SHADOW_GAME).await;
+        let mut proxy = Connection::default();
+        reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            &runs,
+            &offline(),
+        )
+        .await;
+        // What the daemon does on any logoff, kick or lost connection.
+        assert!(runs.shadows.stop_all());
+        let refused = reply_with(&ownership(SHADOW_GAME), &mut proxy, &runs, &offline()).await;
+        assert_eq!(refused.map(|(m, _)| m), not_allowed());
+        let refused = reply_with(&request_stats(), &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            refused.map(|(m, _)| m),
+            unavailable(5, UnavailableReason::NotAllowed)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_closed_proxy_connection_ends_its_shadow_session() {
+        let valve = Fake::new(Link::Connected, Vec::new());
+        let runs = Arc::new(Runs::new());
+        registered(&runs, SHADOW_GAME).await;
+        let (mut lines, mut write, served) = connect_to(&valve, &runs);
+        write
+            .write_all(shadow_hello(SHADOW_PID, SHADOW_GAME).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(next(&mut lines).await.contains("\"session\""));
+        write
+            .write_all(ownership(SHADOW_GAME).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            response(4, Response::Ownership { owned: true })
+        );
+        // The first claim of these runs has token 1.
+        assert!(runs.shadows.get(SHADOW_PID, 1).is_some());
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+        assert!(runs.shadows.get(SHADOW_PID, 1).is_none());
     }
 }

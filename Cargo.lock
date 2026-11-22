@@ -3856,7 +3856,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "interprocess",
  "reborn-platform",
+ "reborn-shim-protocol",
  "sha2",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",

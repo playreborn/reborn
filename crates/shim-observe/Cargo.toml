@@ -22,7 +22,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+interprocess.workspace = true
 reborn-platform.workspace = true
+reborn-shim-protocol.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]

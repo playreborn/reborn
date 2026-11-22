@@ -31,6 +31,9 @@ enum Command {
         read_only: bool,
         /// The app ID of the game about to run, for shadow mode (ADR 0046):
         /// the proxy compares the official client's answers with Reborn's.
+        /// Also registers a read-only shadow session for that app with a
+        /// running, signed-in `rebornd` (ADR 0055), from which the proxy
+        /// gets Reborn's ownership answer.
         #[arg(long)]
         app: Option<u32>,
         /// Experiment 6 of ADR 0048 only: write this process ID into
@@ -85,6 +88,7 @@ fn run(command: Command) -> Result<()> {
             }
             if let Some(app) = app {
                 println!("Shadow mode: app ID {app}.");
+                println!("{}", register_shadow(app));
             }
             if read_only {
                 println!("Read only: the proxy hands out no stand-in objects.");
@@ -96,6 +100,9 @@ fn run(command: Command) -> Result<()> {
             println!("Run `reborn-observe disarm` when the game has exited.");
         }
         Command::Disarm => {
+            if let Some(note) = cancel_shadow() {
+                println!("{note}");
+            }
             if let Some(original) = session.restore_pid(&PidStore::steam_pid())? {
                 println!("Restored pid to {original}.");
             }
@@ -111,6 +118,47 @@ fn run(command: Command) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Registers the shadow session for `app` with `rebornd` (ADR 0055); what
+/// to tell the user. A failure leaves the session armed: the proxy then
+/// logs that it has no Reborn answer for ownership.
+#[cfg(windows)]
+fn register_shadow(app: u32) -> String {
+    use reborn_shim_observe::daemon::{connect, reason_name};
+    use reborn_shim_protocol::UnavailableReason;
+    match connect()
+        .map_err(Into::into)
+        .and_then(|mut client| client.register_shadow(app))
+    {
+        Ok(Ok(())) => format!("rebornd: shadow session registered for app {app}."),
+        Ok(Err(reason)) => {
+            let advice = match reason {
+                UnavailableReason::NotSignedIn => {
+                    " Sign in to rebornd (for example `reborn-cli library`), then disarm and arm again."
+                }
+                UnavailableReason::Offline => {
+                    " rebornd is reconnecting, signing in or could not load the licence list; \
+                     wait a moment, then disarm and arm again."
+                }
+                UnavailableReason::NotAllowed | UnavailableReason::TooLarge => "",
+            };
+            format!(
+                "rebornd refused the shadow session ({}); ownership is not compared.{advice}",
+                reason_name(reason)
+            )
+        }
+        Err(error) => format!("No shadow session ({error}); ownership is not compared."),
+    }
+}
+
+/// Drops a shadow registration nobody claimed; a note if it was dropped.
+/// Without a reachable `rebornd` there is nothing to drop.
+#[cfg(windows)]
+fn cancel_shadow() -> Option<String> {
+    let mut client = reborn_shim_observe::daemon::connect().ok()?;
+    matches!(client.cancel_shadow(), Ok(Ok(())))
+        .then(|| "rebornd: open shadow registration dropped.".to_owned())
 }
 
 #[cfg(not(windows))]

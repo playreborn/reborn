@@ -25,7 +25,8 @@ use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tracing::{info, warn};
 
-use crate::shim_server::{RunOwnership, ShimRun};
+use crate::shim_server::{RunOwnership, ShimHost, ShimRun};
+use crate::shim_shadow::ShadowSessions;
 use crate::shim_stats::{FetchError, Link, RunStats, StatsBackend};
 
 /// How often the connection to Steam is checked (ADR 0025).
@@ -153,6 +154,9 @@ pub struct Daemon {
     /// Process ID of each game process we started, with its app and, in
     /// shim mode, its ownership data (for shim sessions, ADR 0047, 0055).
     launched: Arc<Mutex<BTreeMap<u32, ShimRun>>>,
+    /// Read-only shadow sessions for processes `reborn-observe arm`
+    /// registered (ADR 0055); dropped whenever the Valve session ends.
+    shadows: ShadowSessions,
     /// The app IDs the licences of one Valve session grant, loaded on the
     /// first shim-mode launch of that session (ADR 0055: one licence list
     /// per daemon session). Tied to the session it came from: a new
@@ -203,6 +207,7 @@ impl Daemon {
             next_sign_in: AtomicU64::new(1),
             running: Arc::new(Mutex::new(BTreeSet::new())),
             launched: Arc::new(Mutex::new(BTreeMap::new())),
+            shadows: ShadowSessions::default(),
             licensed_apps: tokio::sync::Mutex::new(None),
             friends: Arc::new(Mutex::new(BTreeMap::new())),
             friends_loaded: Arc::new(AtomicBool::new(false)),
@@ -242,6 +247,30 @@ impl Daemon {
     /// from the one we started; such games get no shim session yet.
     pub fn shim_run(&self, pid: u32) -> Option<ShimRun> {
         lock(&self.launched).get(&pid).cloned()
+    }
+
+    /// Puts `new` into the session slot (held by the caller). Every drop or
+    /// replacement of a session goes through here: the shadow sessions were
+    /// registered with the old one's data, so they stop (ADR 0055). They
+    /// stop even when the slot was already empty: a registration needs a
+    /// session, so nothing current is lost, and no path can keep one.
+    fn replace_session(
+        &self,
+        slot: &mut Option<Arc<Session>>,
+        new: Option<Arc<Session>>,
+        why: &str,
+    ) {
+        self.stop_shadows(why);
+        *slot = new;
+    }
+
+    /// Drops the shadow registration and every shadow session (ADR 0055:
+    /// any logoff or kick stops the shadow stage), saying so in the log
+    /// when there was one.
+    fn stop_shadows(&self, why: &str) {
+        if self.shadows.stop_all() {
+            warn!(why, "shadow mode stopped: shadow sessions dropped");
+        }
     }
 
     /// The app IDs the licences of `session` grant
@@ -300,7 +329,7 @@ impl Daemon {
             };
         let session = Arc::new(session);
         info!(account = session.account(), "signed in to Steam");
-        *cached = Some(Arc::clone(&session));
+        self.replace_session(&mut cached, Some(Arc::clone(&session)), "a new session");
         self.signed_out.store(false, Ordering::SeqCst);
         drop(cached);
         self.session_ready.notify_waiters();
@@ -430,7 +459,7 @@ impl Daemon {
         self.reconnecting.store(reconnect, Ordering::SeqCst);
         {
             let mut session = self.session.lock().await;
-            *session = None;
+            self.replace_session(&mut session, None, "the connection to Steam ended");
             if !reconnect {
                 self.signed_out.store(true, Ordering::SeqCst);
             }
@@ -442,6 +471,9 @@ impl Daemon {
         if let Some(task) = lock(&self.friends_watch).take() {
             task.abort();
         }
+        // Dropping the session above stopped shadow mode (ADR 0055: any
+        // logoff, kick or lost connection); a reconnect does not bring it
+        // back.
         warn!(?lost, reconnect, "connection to Steam lost");
         self.emit(Event::SteamConnection {
             connected: false,
@@ -542,7 +574,7 @@ impl Daemon {
             .is_err_and(reborn_cm::Error::is_connection_lost)
         {
             // Reading is safe to repeat: sign in again and retry once.
-            *self.session.lock().await = None;
+            self.replace_session(&mut *self.session.lock().await, None, "connection lost");
             match self.session().await {
                 Ok(session) => result = session.recent_messages(friend, 50).await,
                 Err(error) => return error_response(&error),
@@ -654,7 +686,7 @@ impl Daemon {
             .as_ref()
             .is_err_and(reborn_cm::Error::is_connection_lost)
         {
-            *self.session.lock().await = None;
+            self.replace_session(&mut *self.session.lock().await, None, "connection lost");
             match self.session().await {
                 Ok(session) => result = session.achievements(app_id, language).await,
                 Err(error) => return error_response(&error),
@@ -766,7 +798,11 @@ impl Daemon {
         {
             let mut session = self.session.lock().await;
             if forget {
-                *session = None;
+                self.replace_session(
+                    &mut session,
+                    None,
+                    "the session was forgotten after an error",
+                );
             }
             if sign_out && session.is_none() {
                 self.signed_out.store(true, Ordering::SeqCst);
@@ -955,7 +991,7 @@ impl Daemon {
                 let session = Arc::new(session);
                 {
                     let mut current = self.session.lock().await;
-                    *current = Some(Arc::clone(&session));
+                    self.replace_session(&mut current, Some(Arc::clone(&session)), "a new sign-in");
                     self.signed_out.store(false, Ordering::SeqCst);
                 }
                 self.session_ready.notify_waiters();
@@ -1016,7 +1052,7 @@ impl Daemon {
         if let Err(error) = reborn_core::account::sign_out(&account) {
             return error_response(&error);
         }
-        *session = None;
+        self.replace_session(&mut session, None, "signed out");
         self.signed_out.store(true, Ordering::SeqCst);
         drop(session);
         self.session_ready.notify_waiters();
@@ -1203,6 +1239,7 @@ impl Daemon {
                 app_id,
                 ownership,
                 stats,
+                shadow: false,
             },
         );
         info!(app_id, program = %plan.executable.display(), proton = ?plan.proton, "game started");
@@ -1692,6 +1729,64 @@ impl StatsBackend for Daemon {
             _ => {}
         }
         let _ = tokio::time::timeout(longest, notified).await;
+    }
+}
+
+/// The shim channel's view of the daemon: its launches and its shadow
+/// sessions (ADR 0047, 0055).
+impl ShimHost for Daemon {
+    fn launched(&self, pid: u32) -> Option<ShimRun> {
+        self.shim_run(pid)
+    }
+
+    fn shadows(&self) -> &ShadowSessions {
+        &self.shadows
+    }
+
+    /// Registers a shadow session for `app_id` with the owned apps of the
+    /// current Valve session (ADR 0055). Never signs in and never waits
+    /// behind a sign-in: without a session it is refused (`NotSignedIn`,
+    /// or `Offline` while one is being made). Loading the licence list may
+    /// ask Valve once per Valve session (cached as for shim-mode launches);
+    /// only its size is logged.
+    async fn register_shadow(&self, app_id: u32) -> reborn_shim_protocol::Response {
+        use reborn_shim_protocol::{Response as ShimResponse, UnavailableReason};
+        let unavailable = |reason| ShimResponse::Unavailable { reason };
+        match self.link().await {
+            Link::Connected => {}
+            Link::Offline => return unavailable(UnavailableReason::Offline),
+            Link::SignedOut => return unavailable(UnavailableReason::NotSignedIn),
+        }
+        let session = match self.session.try_lock() {
+            Ok(session) => session.clone(),
+            Err(_) => None,
+        };
+        let Some(session) = session else {
+            return unavailable(UnavailableReason::Offline);
+        };
+        let licensed = match self.licensed_apps(&session).await {
+            Ok(licensed) => licensed,
+            Err(error) => {
+                warn!(%error, "shadow mode: cannot load the licensed apps");
+                return unavailable(UnavailableReason::Offline);
+            }
+        };
+        // No DLC: the shadow session answers only the game itself
+        // (`shim_shadow`).
+        self.shadows
+            .register(app_id, ownership_from(&licensed, &[]));
+        // The Valve session may have ended while the list loaded; its
+        // stop must not miss this registration.
+        let current = matches!(
+            self.session.try_lock(),
+            Ok(now) if now.as_ref().is_some_and(|now| Arc::ptr_eq(now, &session))
+        );
+        if !current {
+            // A claim may already have happened in between; drop it too.
+            self.shadows.stop_all();
+            return unavailable(UnavailableReason::Offline);
+        }
+        ShimResponse::Accepted
     }
 }
 
@@ -2248,6 +2343,73 @@ mod tests {
     #[test]
     fn a_daemon_knows_no_shim_run_before_a_launch() {
         assert_eq!(Daemon::new().shim_run(4242), None);
+    }
+
+    #[tokio::test]
+    async fn shadow_registration_needs_a_valve_session_and_never_signs_in() {
+        use reborn_shim_protocol::{Response as ShimResponse, UnavailableReason};
+        let daemon = Daemon::new();
+        assert_eq!(
+            daemon.register_shadow(332_950).await,
+            ShimResponse::Unavailable {
+                reason: UnavailableReason::NotSignedIn
+            }
+        );
+        daemon.reconnecting.store(true, Ordering::SeqCst);
+        assert_eq!(
+            daemon.register_shadow(332_950).await,
+            ShimResponse::Unavailable {
+                reason: UnavailableReason::Offline
+            }
+        );
+        assert!(daemon.session.lock().await.is_none(), "no sign-in");
+        assert!(daemon.shadows.claim(10, 332_950).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_forgotten_session_stops_shadow_sessions() {
+        // A Steam error forgets the session (the next request signs in
+        // again); the shadow sessions came from it, so they stop too. No
+        // sign-in or keyring is touched: a Steam error does not sign out.
+        let daemon = Daemon::new();
+        daemon
+            .shadows
+            .register(332_950, ownership_from(&BTreeSet::from([332_950]), &[]));
+        assert!(daemon.shadows.claim(10, 332_950).is_some());
+        daemon
+            .forget_session_after(&CoreError::Steam(reborn_cm::Error::LicenseListTimeout))
+            .await;
+        assert!(daemon.shadows.get(10, 1).is_none());
+
+        // An error that forgets nothing keeps them.
+        daemon
+            .shadows
+            .register(332_950, ownership_from(&BTreeSet::new(), &[]));
+        assert!(daemon.shadows.claim(11, 332_950).is_some());
+        daemon.forget_session_after(&CoreError::SignInTimeout).await;
+        assert!(daemon.shadows.get(11, 2).is_some());
+    }
+
+    #[tokio::test]
+    async fn any_end_of_the_valve_session_stops_shadow_sessions() {
+        // Steam ended the session (EResult 6, signed in elsewhere; 34,
+        // replaced). Both allow no reconnect, so no sign-in or keyring is
+        // touched; a reconnecting loss drops them at the same place, before
+        // it signs in again.
+        for lost in [Lost::LoggedOff(6), Lost::LoggedOff(34)] {
+            let daemon = Daemon::new();
+            daemon
+                .shadows
+                .register(332_950, ownership_from(&BTreeSet::from([332_950]), &[]));
+            assert!(daemon.shadows.claim(10, 332_950).is_some());
+            daemon
+                .shadows
+                .register(480, ownership_from(&BTreeSet::new(), &[]));
+            assert!(!lost.allows_reconnect());
+            daemon.connection_lost(lost).await;
+            assert!(daemon.shadows.get(10, 1).is_none(), "{lost:?}");
+            assert!(daemon.shadows.claim(11, 480).is_none(), "{lost:?}");
+        }
     }
 
     #[tokio::test]

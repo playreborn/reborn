@@ -16,10 +16,16 @@
 //!   ADR 0055);
 //! - a run started without shim mode has no ownership data and gets
 //!   `NotAllowed`;
-//! - no request here reaches Valve: the answer comes from the run's set,
-//!   so it keeps working while the connection to Valve is lost.
+//! - no ownership request reaches Valve: the answer comes from the run's
+//!   set, so it keeps working while the connection to Valve is lost.
 //!
-//! Whether an app is owned is account data: it is never logged.
+//! `RequestStats` is checked the same way (a session on this connection, a
+//! run in shim mode) and then answered by `shim_stats` for the run's own
+//! app only: `Accepted` and later the event `StatsReceived`, written on
+//! the same connection after the response, or `Unavailable`.
+//!
+//! Whether an app is owned, and the stats, are account data: they are
+//! never logged.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -30,9 +36,11 @@ use reborn_shim_protocol::{
     decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
 use crate::daemon::Daemon;
+use crate::shim_stats::{RunStats, StatsBackend, StatsState, event_when_received, request_stats};
 
 /// Longest line read from a shim; anything longer closes the connection.
 /// No message of protocol 0.2 comes near it; ADR 0055 raises it per
@@ -47,6 +55,9 @@ pub struct ShimRun {
     /// Ownership data fetched from Valve at launch; `None` for a run that
     /// was not started in shim mode.
     pub ownership: Option<Arc<RunOwnership>>,
+    /// The run's stats, fetched on the game's first `RequestStats`; `None`
+    /// for a run that was not started in shim mode.
+    pub stats: Option<Arc<RunStats>>,
 }
 
 /// What the run may learn about ownership (ADR 0055, "What is cached"):
@@ -86,8 +97,19 @@ pub async fn accept_loop(
 }
 
 /// Serves one shim until it disconnects or sends something it should not.
+/// Responses and events go through one writer, so an event is always
+/// written after the response that accepted its request.
 async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
     let (read, mut write) = tokio::io::split(stream);
+    let (outgoing, mut to_write) = mpsc::unbounded_channel::<String>();
+    let writer = tokio::spawn(async move {
+        while let Some(line) = to_write.recv().await {
+            if write.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+        }
+    });
+    let mut waiting = Vec::new();
     let mut lines = BufReader::new(read);
     let mut line = String::new();
     let mut connection = Connection::default();
@@ -108,25 +130,59 @@ async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
                 break;
             }
         }
-        let Some(reply) = answer(&line, &mut connection, |pid| daemon.shim_run(pid)) else {
+        let Some(reply) = answer(&line, &mut connection, |pid| daemon.shim_run(pid), &daemon).await
+        else {
             debug!("closing shim connection after a bad line");
             break;
         };
-        if write.write_all(reply.as_bytes()).await.is_err() {
+        if outgoing.send(reply.line).is_err() {
             break;
         }
+        if let Some(stats) = reply.stats {
+            let outgoing = outgoing.clone();
+            waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
+            waiting.push(tokio::spawn(async move {
+                if let Some(line) = event_line(stats).await {
+                    let _ = outgoing.send(line);
+                }
+            }));
+        }
     }
+    // The game is gone: nobody waits for its events any more. A fetch that
+    // runs keeps going and fills the run's cache.
+    for task in waiting {
+        task.abort();
+    }
+    drop(outgoing);
+    let _ = writer.await;
 }
 
-/// The reply line to one line from a shim, `None` if the line is not a
-/// valid message. `run` gives the run the daemon launched for a process
-/// ID, while it runs.
-fn answer(
+/// The event line for an accepted `RequestStats`, once the run's stats are
+/// received; `None` when the request failed (no event, `shim_stats`).
+async fn event_line(stats: watch::Receiver<StatsState>) -> Option<String> {
+    let event = event_when_received(stats).await?;
+    encode(&DaemonMessage::Event { event }).ok()
+}
+
+/// What the daemon writes back for one line.
+struct Reply {
+    /// The response line.
+    line: String,
+    /// For an accepted `RequestStats`: where its event shows up.
+    stats: Option<watch::Receiver<StatsState>>,
+}
+
+/// The reply to one line from a shim, `None` if the line is not a valid
+/// message. `run` gives the run the daemon launched for a process ID,
+/// while it runs; `backend` is where stats come from.
+async fn answer<B: StatsBackend>(
     line: &str,
     connection: &mut Connection,
     run: impl Fn(u32) -> Option<ShimRun>,
-) -> Option<String> {
+    backend: &Arc<B>,
+) -> Option<Reply> {
     let message: ShimMessage = decode(line).ok()?;
+    let mut stats = None;
     let response = match message.request {
         Request::Hello { version, pid } => {
             let response = match connection.pid {
@@ -154,12 +210,43 @@ fn answer(
             }
             response
         }
+        Request::RequestStats => {
+            let (response, receiver) =
+                answer_stats(connection.pid.and_then(&run).as_ref(), backend).await;
+            match &response {
+                Response::Unavailable { reason } => {
+                    info!(pid = ?connection.pid, ?reason, "shim stats request refused");
+                }
+                _ => debug!(pid = ?connection.pid, "shim stats request accepted"),
+            }
+            stats = receiver;
+            response
+        }
     };
-    encode(&DaemonMessage::Response {
+    let line = encode(&DaemonMessage::Response {
         id: message.id,
         response,
     })
-    .ok()
+    .ok()?;
+    Some(Reply { line, stats })
+}
+
+/// The answer to `RequestStats` for the connection's run (ADR 0055): the
+/// session check first, then shim mode, then the run's own app only.
+async fn answer_stats<B: StatsBackend>(
+    run: Option<&ShimRun>,
+    backend: &Arc<B>,
+) -> (Response, Option<watch::Receiver<StatsState>>) {
+    let not_allowed = Response::Unavailable {
+        reason: UnavailableReason::NotAllowed,
+    };
+    let Some(run) = run else {
+        return (not_allowed, None);
+    };
+    let Some(stats) = run.stats.as_ref() else {
+        return (not_allowed, None);
+    };
+    request_stats(backend, run.app_id, stats).await
 }
 
 /// The answer to `AppOwnership { app_id }` for the connection's run
@@ -186,8 +273,10 @@ fn answer_ownership(run: Option<&ShimRun>, app_id: u32) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shim_stats::tests::{BONGO_CAT, Fake, recorded};
+    use crate::shim_stats::{FetchError, Link};
     use reborn_shim_protocol::{
-        PROTOCOL_VERSION, RefusalReason, Response, Session, Version, decode,
+        Event, PROTOCOL_VERSION, RefusalReason, Response, Session, Version, decode,
     };
 
     /// Cave Crawlers and the two DLC IDs its recorded app info lists
@@ -211,46 +300,90 @@ mod tests {
         line(4, Request::AppOwnership { app_id })
     }
 
-    /// Process 100 runs the game in shim mode, 101 without shim mode.
-    fn launched(pid: u32) -> Option<ShimRun> {
-        match pid {
-            100 => Some(ShimRun {
-                app_id: GAME,
-                ownership: Some(Arc::new(RunOwnership {
-                    owned: BTreeSet::from([GAME, OTHER_DLC, OTHER_OWNED]),
-                    dlc: BTreeSet::from([DLC, OTHER_DLC]),
-                })),
-            }),
-            101 => Some(ShimRun {
-                app_id: GAME,
-                ownership: None,
-            }),
-            _ => None,
+    fn request_stats() -> String {
+        line(5, Request::RequestStats)
+    }
+
+    /// The runs of the tests: process 100 runs Cave Crawlers in shim mode,
+    /// 101 without shim mode, 200 Bongo Cat (the recorded stats) in shim
+    /// mode. The stats of each run are kept, like the daemon keeps them.
+    struct Runs {
+        game: ShimRun,
+        bongo: ShimRun,
+    }
+
+    impl Runs {
+        fn new() -> Self {
+            Self {
+                game: ShimRun {
+                    app_id: GAME,
+                    ownership: Some(Arc::new(RunOwnership {
+                        owned: BTreeSet::from([GAME, OTHER_DLC, OTHER_OWNED]),
+                        dlc: BTreeSet::from([DLC, OTHER_DLC]),
+                    })),
+                    stats: Some(Arc::new(RunStats::default())),
+                },
+                bongo: ShimRun {
+                    app_id: BONGO_CAT,
+                    ownership: Some(Arc::new(RunOwnership::default())),
+                    stats: Some(Arc::new(RunStats::default())),
+                },
+            }
+        }
+
+        fn launched(&self, pid: u32) -> Option<ShimRun> {
+            match pid {
+                100 => Some(self.game.clone()),
+                101 => Some(ShimRun {
+                    app_id: GAME,
+                    ownership: None,
+                    stats: None,
+                }),
+                200 => Some(self.bongo.clone()),
+                _ => None,
+            }
         }
     }
 
-    fn reply(line: &str, connection: &mut Connection) -> Option<DaemonMessage> {
-        decode::<DaemonMessage>(&answer(line, connection, launched)?).ok()
+    /// No Valve session in the ownership tests: they never need one.
+    fn offline() -> Arc<Fake> {
+        Fake::new(Link::SignedOut, Vec::new())
+    }
+
+    async fn reply_with(
+        line: &str,
+        connection: &mut Connection,
+        runs: &Runs,
+        backend: &Arc<Fake>,
+    ) -> Option<(DaemonMessage, Option<watch::Receiver<StatsState>>)> {
+        let reply = answer(line, connection, |pid| runs.launched(pid), backend).await?;
+        Some((decode::<DaemonMessage>(&reply.line).ok()?, reply.stats))
+    }
+
+    async fn reply(line: &str, connection: &mut Connection) -> Option<DaemonMessage> {
+        let runs = Runs::new();
+        reply_with(line, connection, &runs, &offline())
+            .await
+            .map(|(message, _)| message)
     }
 
     fn response(id: u64, response: Response) -> Option<DaemonMessage> {
         Some(DaemonMessage::Response { id, response })
     }
 
-    fn not_allowed() -> Option<DaemonMessage> {
-        response(
-            4,
-            Response::Unavailable {
-                reason: UnavailableReason::NotAllowed,
-            },
-        )
+    fn unavailable(id: u64, reason: UnavailableReason) -> Option<DaemonMessage> {
+        response(id, Response::Unavailable { reason })
     }
 
-    #[test]
-    fn a_launched_process_gets_its_session() {
+    fn not_allowed() -> Option<DaemonMessage> {
+        unavailable(4, UnavailableReason::NotAllowed)
+    }
+
+    #[tokio::test]
+    async fn a_launched_process_gets_its_session() {
         let mut connection = Connection::default();
         assert_eq!(
-            reply(&hello(100, PROTOCOL_VERSION), &mut connection),
+            reply(&hello(100, PROTOCOL_VERSION), &mut connection).await,
             response(
                 3,
                 Response::Session(Session {
@@ -262,14 +395,22 @@ mod tests {
         assert_eq!(connection.pid, Some(100));
     }
 
-    #[test]
-    fn other_processes_and_versions_are_refused() {
+    #[tokio::test]
+    async fn other_processes_and_versions_are_refused() {
         let mut connection = Connection::default();
-        let text =
-            answer(&hello(102, PROTOCOL_VERSION), &mut connection, launched).unwrap_or_default();
+        let runs = Runs::new();
+        let text = answer(
+            &hello(102, PROTOCOL_VERSION),
+            &mut connection,
+            |pid| runs.launched(pid),
+            &offline(),
+        )
+        .await
+        .map(|reply| reply.line)
+        .unwrap_or_default();
         assert!(text.contains("unknown_process"), "{text}");
         assert_eq!(
-            reply(&hello(100, Version { major: 9, minor: 0 }), &mut connection),
+            reply(&hello(100, Version { major: 9, minor: 0 }), &mut connection).await,
             response(
                 3,
                 Response::Refused {
@@ -280,67 +421,79 @@ mod tests {
         assert_eq!(connection.pid, None);
     }
 
-    #[test]
-    fn the_game_and_its_dlc_get_ownership_answers() {
+    #[tokio::test]
+    async fn the_game_and_its_dlc_get_ownership_answers() {
         let mut connection = Connection::default();
-        reply(&hello(100, PROTOCOL_VERSION), &mut connection);
+        reply(&hello(100, PROTOCOL_VERSION), &mut connection).await;
         assert_eq!(
-            reply(&ownership(GAME), &mut connection),
+            reply(&ownership(GAME), &mut connection).await,
             response(4, Response::Ownership { owned: true })
         );
         assert_eq!(
-            reply(&ownership(OTHER_DLC), &mut connection),
+            reply(&ownership(OTHER_DLC), &mut connection).await,
             response(4, Response::Ownership { owned: true })
         );
         assert_eq!(
-            reply(&ownership(DLC), &mut connection),
+            reply(&ownership(DLC), &mut connection).await,
             response(4, Response::Ownership { owned: false })
         );
     }
 
-    #[test]
-    fn other_apps_are_refused_even_when_owned() {
+    #[tokio::test]
+    async fn other_apps_are_refused_even_when_owned() {
         let mut connection = Connection::default();
-        reply(&hello(100, PROTOCOL_VERSION), &mut connection);
+        reply(&hello(100, PROTOCOL_VERSION), &mut connection).await;
         assert_eq!(
-            reply(&ownership(OTHER_OWNED), &mut connection),
+            reply(&ownership(OTHER_OWNED), &mut connection).await,
             not_allowed()
         );
-        assert_eq!(reply(&ownership(730), &mut connection), not_allowed());
+        assert_eq!(reply(&ownership(730), &mut connection).await, not_allowed());
     }
 
-    #[test]
-    fn ownership_needs_a_session_on_this_connection() {
+    #[tokio::test]
+    async fn ownership_needs_a_session_on_this_connection() {
         let mut connection = Connection::default();
-        assert_eq!(reply(&ownership(GAME), &mut connection), not_allowed());
+        assert_eq!(
+            reply(&ownership(GAME), &mut connection).await,
+            not_allowed()
+        );
         // A refused hello binds nothing.
-        reply(&hello(102, PROTOCOL_VERSION), &mut connection);
-        assert_eq!(reply(&ownership(GAME), &mut connection), not_allowed());
+        reply(&hello(102, PROTOCOL_VERSION), &mut connection).await;
+        assert_eq!(
+            reply(&ownership(GAME), &mut connection).await,
+            not_allowed()
+        );
     }
 
-    #[test]
-    fn a_run_without_shim_mode_or_that_ended_gets_no_ownership() {
+    #[tokio::test]
+    async fn a_run_without_shim_mode_or_that_ended_gets_no_ownership() {
         let mut connection = Connection::default();
-        reply(&hello(101, PROTOCOL_VERSION), &mut connection);
+        reply(&hello(101, PROTOCOL_VERSION), &mut connection).await;
         assert_eq!(connection.pid, Some(101));
-        assert_eq!(reply(&ownership(GAME), &mut connection), not_allowed());
+        assert_eq!(
+            reply(&ownership(GAME), &mut connection).await,
+            not_allowed()
+        );
 
         // The game exited: the daemon no longer knows the process.
         let mut connection = Connection { pid: Some(100) };
         let ended = |_pid: u32| -> Option<ShimRun> { None };
-        let text = answer(&ownership(GAME), &mut connection, ended).unwrap_or_default();
+        let text = answer(&ownership(GAME), &mut connection, ended, &offline())
+            .await
+            .map(|reply| reply.line)
+            .unwrap_or_default();
         assert_eq!(decode::<DaemonMessage>(&text).ok(), not_allowed());
     }
 
-    #[test]
-    fn a_connection_stays_bound_to_its_first_process() {
+    #[tokio::test]
+    async fn a_connection_stays_bound_to_its_first_process() {
         let mut connection = Connection::default();
-        reply(&hello(100, PROTOCOL_VERSION), &mut connection);
+        reply(&hello(100, PROTOCOL_VERSION), &mut connection).await;
         assert_eq!(connection.pid, Some(100));
 
         // Another launched process on the same connection: refused.
         assert_eq!(
-            reply(&hello(101, PROTOCOL_VERSION), &mut connection),
+            reply(&hello(101, PROTOCOL_VERSION), &mut connection).await,
             response(
                 3,
                 Response::Refused {
@@ -351,16 +504,16 @@ mod tests {
         assert_eq!(connection.pid, Some(100));
 
         // A refused hello for the bound process keeps the binding.
-        reply(&hello(100, Version { major: 9, minor: 0 }), &mut connection);
+        reply(&hello(100, Version { major: 9, minor: 0 }), &mut connection).await;
         assert_eq!(connection.pid, Some(100));
         assert_eq!(
-            reply(&ownership(GAME), &mut connection),
+            reply(&ownership(GAME), &mut connection).await,
             response(4, Response::Ownership { owned: true })
         );
 
         // The same process may say hello again and gets its session.
         assert!(matches!(
-            reply(&hello(100, PROTOCOL_VERSION), &mut connection),
+            reply(&hello(100, PROTOCOL_VERSION), &mut connection).await,
             Some(DaemonMessage::Response {
                 response: Response::Session(_),
                 ..
@@ -369,10 +522,196 @@ mod tests {
         assert_eq!(connection.pid, Some(100));
     }
 
-    #[test]
-    fn bad_lines_get_no_reply() {
+    #[tokio::test]
+    async fn bad_lines_get_no_reply() {
         let mut connection = Connection::default();
-        assert_eq!(answer("not json\n", &mut connection, launched), None);
-        assert_eq!(answer("{\"id\":1}\n", &mut connection, launched), None);
+        let runs = Runs::new();
+        let launched = |pid| runs.launched(pid);
+        assert!(
+            answer("not json\n", &mut connection, launched, &offline())
+                .await
+                .is_none()
+        );
+        assert!(
+            answer("{\"id\":1}\n", &mut connection, launched, &offline())
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn stats_are_fetched_for_the_own_app_and_sent_as_an_event() {
+        let runs = Runs::new();
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        let mut connection = Connection::default();
+        reply_with(
+            &hello(200, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let Some((message, Some(stats))) =
+            reply_with(&request_stats(), &mut connection, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert_eq!(
+            message,
+            response(5, Response::Accepted).unwrap_or_else(|| unreachable!())
+        );
+        let line = event_line(stats).await.unwrap_or_default();
+        let Ok(DaemonMessage::Event {
+            event:
+                Event::StatsReceived {
+                    result,
+                    achievement_names,
+                },
+        }) = decode::<DaemonMessage>(&line)
+        else {
+            panic!("not a stats event: {line}");
+        };
+        assert_eq!(result, 1);
+        assert_eq!(achievement_names.len(), 28);
+        assert_eq!(achievement_names[0].name, "PET_1");
+        assert_eq!(achievement_names[0].display_name, "Bongo Beat 1");
+        // Only the run's own app was asked about, once.
+        assert_eq!(
+            *valve.asked.lock().unwrap_or_else(|p| p.into_inner()),
+            [BONGO_CAT]
+        );
+
+        // A second request in the same run: from the run's cache.
+        let Some((message, Some(stats))) =
+            reply_with(&request_stats(), &mut connection, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert_eq!(
+            message,
+            response(5, Response::Accepted).unwrap_or_else(|| unreachable!())
+        );
+        assert_eq!(event_line(stats).await, Some(line));
+        assert_eq!(valve.fetches(), 1);
+    }
+
+    #[tokio::test]
+    async fn stats_need_a_session_and_shim_mode() {
+        let runs = Runs::new();
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        // No hello on this connection.
+        let mut connection = Connection::default();
+        let (message, stats) = reply_with(&request_stats(), &mut connection, &runs, &valve)
+            .await
+            .unwrap_or_else(|| panic!("no reply"));
+        assert_eq!(Some(message), unavailable(5, UnavailableReason::NotAllowed));
+        assert!(stats.is_none());
+        // A refused hello binds nothing.
+        reply_with(
+            &hello(102, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let (message, _) = reply_with(&request_stats(), &mut connection, &runs, &valve)
+            .await
+            .unwrap_or_else(|| panic!("no reply"));
+        assert_eq!(Some(message), unavailable(5, UnavailableReason::NotAllowed));
+        // A run without shim mode.
+        let mut connection = Connection::default();
+        reply_with(
+            &hello(101, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let (message, _) = reply_with(&request_stats(), &mut connection, &runs, &valve)
+            .await
+            .unwrap_or_else(|| panic!("no reply"));
+        assert_eq!(Some(message), unavailable(5, UnavailableReason::NotAllowed));
+        // The game exited.
+        let mut connection = Connection { pid: Some(200) };
+        let ended = |_pid: u32| -> Option<ShimRun> { None };
+        let reply = answer(&request_stats(), &mut connection, ended, &valve)
+            .await
+            .unwrap_or_else(|| panic!("no reply"));
+        assert_eq!(
+            decode::<DaemonMessage>(&reply.line).ok(),
+            unavailable(5, UnavailableReason::NotAllowed)
+        );
+        assert_eq!(valve.fetches(), 0);
+    }
+
+    #[tokio::test]
+    async fn stats_without_valve_are_unavailable() {
+        for (link, reason) in [
+            (Link::SignedOut, UnavailableReason::NotSignedIn),
+            (Link::Offline, UnavailableReason::Offline),
+        ] {
+            let runs = Runs::new();
+            let valve = Fake::new(link, vec![Ok(recorded())]);
+            let mut connection = Connection::default();
+            reply_with(
+                &hello(200, PROTOCOL_VERSION),
+                &mut connection,
+                &runs,
+                &valve,
+            )
+            .await;
+            let (message, stats) = reply_with(&request_stats(), &mut connection, &runs, &valve)
+                .await
+                .unwrap_or_else(|| panic!("no reply"));
+            assert_eq!(Some(message), unavailable(5, reason));
+            assert!(stats.is_none());
+            assert_eq!(valve.fetches(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_sends_no_event() {
+        let runs = Runs::new();
+        let valve = Fake::new(Link::Connected, vec![Err(FetchError::Unreadable)]);
+        let mut connection = Connection::default();
+        reply_with(
+            &hello(200, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let Some((_, Some(stats))) =
+            reply_with(&request_stats(), &mut connection, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert_eq!(event_line(stats).await, None);
+    }
+
+    #[tokio::test]
+    async fn runs_do_not_share_stats() {
+        // Each run asks Valve once, for its own app (the fake answers
+        // both with the same recording; only the asked app IDs matter).
+        let runs = Runs::new();
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        let mut bongo = Connection::default();
+        reply_with(&hello(200, PROTOCOL_VERSION), &mut bongo, &runs, &valve).await;
+        let Some((_, Some(stats))) = reply_with(&request_stats(), &mut bongo, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert!(event_line(stats).await.is_some());
+        let mut game = Connection::default();
+        reply_with(&hello(100, PROTOCOL_VERSION), &mut game, &runs, &valve).await;
+        let Some((_, Some(stats))) = reply_with(&request_stats(), &mut game, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        event_line(stats).await;
+        assert_eq!(
+            *valve.asked.lock().unwrap_or_else(|p| p.into_inner()),
+            [BONGO_CAT, GAME]
+        );
     }
 }

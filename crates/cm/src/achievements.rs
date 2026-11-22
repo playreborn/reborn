@@ -1,9 +1,11 @@
-//! Achievements of the signed-in account for one game (ADR 0029). Reading
-//! only: Reborn never writes stats or achievements (red line 4).
+//! Stats and achievements of the signed-in account for one game (ADR 0029,
+//! ADR 0055). Reading only: this module never sends a store message; stats
+//! are written only later, in the shim, when a game asks (red line 4).
 //!
 //! Steam answers `ClientGetUserStats` with the game's stats schema (binary
-//! KeyValues) and the account's unlock times. Details and sources:
-//! `docs/protocol/achievements.md`.
+//! KeyValues), the account's stat values and its unlock times.
+//! [`UserStats`] is that answer typed; [`Achievement`] is the list built
+//! from it. Details and sources: `docs/protocol/achievements.md`.
 
 use std::io::{Read, Write};
 
@@ -40,7 +42,120 @@ pub struct Achievement {
     pub unlocked_at: Option<u32>,
 }
 
+/// One stat value of the account, as Steam sent it (`stats` of the
+/// response: `stat_id`, `stat_value`).
+///
+/// The value is the raw 32-bit number. What it means depends on the stat's
+/// type in the schema; Reborn does not interpret it (only for achievement
+/// stats is it observed that bit n marks achievement n, see
+/// `docs/protocol/achievements.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatValue {
+    /// The stat ID, the key of the stat in the schema's `stats` object.
+    pub stat_id: u32,
+    /// The raw value.
+    pub value: u32,
+}
+
+/// The unlock times of the achievements of one achievement stat
+/// (`achievement_blocks` of the response).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AchievementBlock {
+    /// The stat whose `bits` hold the achievements (`achievement_id`).
+    pub stat_id: u32,
+    /// Unlock time per bit, in seconds since the Unix epoch, 0 while locked.
+    pub unlock_times: Vec<u32>,
+}
+
+/// Steam's answer to `ClientGetUserStats` for one app, typed (ADR 0055,
+/// stage 0). Account data: never log it, only counts and the result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserStats {
+    /// The app the answer is for.
+    pub app_id: u32,
+    /// The `EResult` Steam sent; 1 is OK.
+    pub result: i32,
+    /// Steam's checksum of the stats (`crc_stats`), if sent.
+    pub crc_stats: Option<u32>,
+    /// The game's stats schema, binary KeyValues as sent; empty when Steam
+    /// sent none.
+    pub schema: Vec<u8>,
+    /// The account's stat values.
+    pub stats: Vec<StatValue>,
+    /// The account's unlock times.
+    pub achievement_blocks: Vec<AchievementBlock>,
+}
+
+impl UserStats {
+    /// Whether Steam answered with `EResult::OK`.
+    pub fn is_ok(&self) -> bool {
+        self.result == RESULT_OK
+    }
+
+    /// The achievements with their unlock state, texts in `language`
+    /// (falling back to [`FALLBACK_LANGUAGE`]): every entry under `bits`
+    /// of every stat in the schema, in schema order, unlocked when its
+    /// unlock time is not zero. An answer that is not OK is an error
+    /// ([`Error::Refused`]); no schema means no achievements.
+    pub fn achievements(&self, language: &str) -> Result<Vec<Achievement>, Error> {
+        if !self.is_ok() {
+            return Err(Error::Refused {
+                what: "user stats",
+                code: self.result,
+            });
+        }
+        let app_id = self.app_id;
+        if self.schema.is_empty() {
+            return Ok(Vec::new());
+        }
+        let document = binary::parse(&self.schema)
+            .map_err(|error| Error::StatsSchema(app_id, error.to_string()))?;
+        let Some(stats) = game_object(&document, app_id).and_then(|game| game.get_object("stats"))
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut achievements = Vec::new();
+        for (stat_id, stat) in stats.iter() {
+            let Some(bits) = stat.as_object().and_then(|stat| stat.get_object("bits")) else {
+                continue;
+            };
+            let stat_id: u32 = stat_id
+                .parse()
+                .map_err(|_| Error::StatsSchema(app_id, format!("stat ID `{stat_id}`")))?;
+            for (bit, entry) in bits.iter() {
+                let bit: usize = bit.parse().map_err(|_| {
+                    Error::StatsSchema(app_id, format!("bit `{bit}` of stat {stat_id}"))
+                })?;
+                let Some(entry) = entry.as_object() else {
+                    continue;
+                };
+                achievements.push(achievement(entry, self.unlock_time(stat_id, bit), language));
+            }
+        }
+        Ok(achievements)
+    }
+
+    fn unlock_time(&self, stat_id: u32, bit: usize) -> Option<u32> {
+        self.achievement_blocks
+            .iter()
+            .find(|block| block.stat_id == stat_id)
+            .and_then(|block| block.unlock_times.get(bit).copied())
+            .filter(|&time| time != 0)
+    }
+}
+
 impl Session {
+    /// Steam's answer to `ClientGetUserStats` for an app, typed: schema,
+    /// stat values, unlock times and `crc_stats` (ADR 0055). One request
+    /// per call; caching is the caller's business (ADR 0055: at most one
+    /// per app and run). A result other than OK is returned, not turned
+    /// into an error.
+    pub async fn user_stats(&self, app_id: u32) -> Result<UserStats, Error> {
+        let response = self.user_stats_response(app_id).await?;
+        user_stats_from(&response, app_id)
+    }
+
     /// The achievements of an app for the signed-in account, texts in
     /// `language` (Steam's language names, e.g. `german`, `english`).
     ///
@@ -84,59 +199,68 @@ impl Session {
     }
 }
 
+/// Steam's answer typed ([`UserStats`]). An error when `eresult` is
+/// missing, or when the answer names another game (`game_id`; an OK answer
+/// must name the asked app, a refusal may leave it out). Stat and block
+/// entries without their ID, and stats without a value, are skipped:
+/// nothing is filled in.
+pub fn user_stats_from(
+    response: &CMsgClientGetUserStatsResponse,
+    app_id: u32,
+) -> Result<UserStats, Error> {
+    let result = response
+        .eresult
+        .ok_or(Error::IncompleteResponse("user stats"))?;
+    let game_id = response.game_id;
+    if game_id != Some(u64::from(app_id)) && (result == RESULT_OK || game_id.is_some()) {
+        return Err(Error::IncompleteResponse("user stats"));
+    }
+    Ok(UserStats {
+        app_id,
+        result,
+        crc_stats: response.crc_stats,
+        schema: response.schema.clone().unwrap_or_default(),
+        stats: response
+            .stats
+            .iter()
+            .filter_map(|stat| {
+                Some(StatValue {
+                    stat_id: stat.stat_id?,
+                    value: stat.stat_value?,
+                })
+            })
+            .collect(),
+        achievement_blocks: response
+            .achievement_blocks
+            .iter()
+            .filter_map(|block| {
+                Some(AchievementBlock {
+                    stat_id: block.achievement_id?,
+                    unlock_times: block.unlock_time.clone(),
+                })
+            })
+            .collect(),
+    })
+}
+
+/// [`user_stats_from`] for a protobuf-encoded answer, as
+/// [`Session::record_achievements`] writes it: for replaying recorded
+/// fixtures in crates that do not see the protobuf types.
+pub fn user_stats_from_bytes(bytes: &[u8], app_id: u32) -> Result<UserStats, Error> {
+    let response = CMsgClientGetUserStatsResponse::parse_from_bytes(bytes)
+        .map_err(|_| Error::IncompleteResponse("user stats"))?;
+    user_stats_from(&response, app_id)
+}
+
 /// The achievements from Steam's answer: every entry under `bits` of every
 /// stat in the schema, in schema order, unlocked when its unlock time in
-/// `achievement_blocks` is not zero.
+/// `achievement_blocks` is not zero ([`UserStats::achievements`]).
 pub fn achievements_from(
     response: &CMsgClientGetUserStatsResponse,
     app_id: u32,
     language: &str,
 ) -> Result<Vec<Achievement>, Error> {
-    let code = response
-        .eresult
-        .ok_or(Error::IncompleteResponse("user stats"))?;
-    if code != RESULT_OK {
-        return Err(Error::Refused {
-            what: "user stats",
-            code,
-        });
-    }
-    if response.game_id != Some(u64::from(app_id)) {
-        return Err(Error::IncompleteResponse("user stats"));
-    }
-    let Some(schema) = response.schema.as_deref().filter(|bytes| !bytes.is_empty()) else {
-        return Ok(Vec::new());
-    };
-    let document =
-        binary::parse(schema).map_err(|error| Error::StatsSchema(app_id, error.to_string()))?;
-    let Some(stats) = game_object(&document, app_id).and_then(|game| game.get_object("stats"))
-    else {
-        return Ok(Vec::new());
-    };
-
-    let mut achievements = Vec::new();
-    for (stat_id, stat) in stats.iter() {
-        let Some(bits) = stat.as_object().and_then(|stat| stat.get_object("bits")) else {
-            continue;
-        };
-        let stat_id: u32 = stat_id
-            .parse()
-            .map_err(|_| Error::StatsSchema(app_id, format!("stat ID `{stat_id}`")))?;
-        for (bit, entry) in bits.iter() {
-            let bit: usize = bit.parse().map_err(|_| {
-                Error::StatsSchema(app_id, format!("bit `{bit}` of stat {stat_id}"))
-            })?;
-            let Some(entry) = entry.as_object() else {
-                continue;
-            };
-            achievements.push(achievement(
-                entry,
-                unlock_time(response, stat_id, bit),
-                language,
-            ));
-        }
-    }
-    Ok(achievements)
+    user_stats_from(response, app_id)?.achievements(language)
 }
 
 /// The object for the app below the root. The root holds one object named
@@ -149,15 +273,6 @@ fn game_object(document: &Object, app_id: u32) -> Option<&Object> {
             _ => None,
         }
     })
-}
-
-fn unlock_time(response: &CMsgClientGetUserStatsResponse, stat_id: u32, bit: usize) -> Option<u32> {
-    response
-        .achievement_blocks
-        .iter()
-        .find(|block| block.achievement_id == Some(stat_id))
-        .and_then(|block| block.unlock_time.get(bit).copied())
-        .filter(|&time| time != 0)
 }
 
 fn achievement(entry: &Object, unlocked_at: Option<u32>, language: &str) -> Achievement {
@@ -459,6 +574,113 @@ mod tests {
                 assert_eq!(bits >> bit & 1 == 1, time != 0, "bit {bit}");
             }
         }
+    }
+
+    #[test]
+    fn replays_recorded_user_stats_typed() {
+        let response = CMsgClientGetUserStatsResponse::parse_from_bytes(RECORDED).unwrap();
+        let stats = user_stats_from(&response, 3_419_430).unwrap();
+        assert!(stats.is_ok());
+        assert_eq!(stats.app_id, 3_419_430);
+        assert_eq!(stats.crc_stats, Some(2_651_121_208));
+        assert_eq!(stats.schema.len(), 24_158);
+        let values: Vec<(u32, u32)> = stats
+            .stats
+            .iter()
+            .map(|stat| (stat.stat_id, stat.value))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                (2, 15),
+                (3, 1279),
+                (4, 1279),
+                (10, 1000),
+                (35, 1),
+                (48, 1204),
+                (91, 1),
+                (111, 1),
+                (126, 1),
+                (127, 1)
+            ]
+        );
+        assert_eq!(stats.achievement_blocks.len(), 1);
+        assert_eq!(stats.achievement_blocks[0].stat_id, 2);
+        assert_eq!(stats.achievement_blocks[0].unlock_times.len(), 32);
+        // The typed answer gives the same achievements as the direct read.
+        assert_eq!(
+            stats.achievements("english").unwrap(),
+            achievements_from(&response, 3_419_430, "english").unwrap()
+        );
+        // The recording is for Bongo Cat only.
+        assert!(user_stats_from(&response, 480).is_err());
+    }
+
+    #[test]
+    fn a_refusal_is_typed_not_an_error() {
+        let mut refused = response(Vec::new());
+        refused.eresult = Some(15);
+        refused.schema = None;
+        let stats = user_stats_from(&refused, 480).unwrap();
+        assert_eq!(stats.result, 15);
+        assert!(!stats.is_ok());
+        assert!(stats.schema.is_empty());
+        assert!(matches!(
+            stats.achievements("english"),
+            Err(Error::Refused { code: 15, .. })
+        ));
+        // A refusal may leave out the game ID, but must not name another.
+        refused.game_id = None;
+        assert_eq!(user_stats_from(&refused, 480).unwrap().result, 15);
+        refused.game_id = Some(70);
+        assert!(user_stats_from(&refused, 480).is_err());
+        // An OK answer must name the game; no result is an error.
+        let mut unnamed = response(Vec::new());
+        unnamed.game_id = None;
+        assert!(user_stats_from(&unnamed, 480).is_err());
+        unnamed.game_id = Some(480);
+        unnamed.eresult = None;
+        assert!(user_stats_from(&unnamed, 480).is_err());
+    }
+
+    #[test]
+    fn entries_without_ids_or_values_are_skipped() {
+        use steam_vent_proto_steam::steammessages_clientserver_userstats::cmsg_client_get_user_stats_response::Stats;
+        let mut answer = response(vec![(2, vec![5])]);
+        answer.achievement_blocks.push(Achievement_Blocks {
+            unlock_time: vec![9],
+            ..Default::default()
+        });
+        answer.stats = vec![
+            Stats {
+                stat_id: Some(1),
+                stat_value: Some(7),
+                ..Default::default()
+            },
+            Stats {
+                stat_id: Some(2),
+                ..Default::default()
+            },
+            Stats {
+                stat_value: Some(3),
+                ..Default::default()
+            },
+        ];
+        let stats = user_stats_from(&answer, 480).unwrap();
+        assert_eq!(
+            stats.stats,
+            [StatValue {
+                stat_id: 1,
+                value: 7
+            }]
+        );
+        assert_eq!(
+            stats.achievement_blocks,
+            [AchievementBlock {
+                stat_id: 2,
+                unlock_times: vec![5]
+            }]
+        );
     }
 
     #[test]

@@ -26,6 +26,7 @@ use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tracing::{info, warn};
 
 use crate::shim_server::{RunOwnership, ShimRun};
+use crate::shim_stats::{FetchError, Link, RunStats, StatsBackend};
 
 /// How often the connection to Steam is checked (ADR 0025).
 const PROBE_INTERVAL: Duration = Duration::from_secs(60);
@@ -166,6 +167,9 @@ pub struct Daemon {
     friends_watch: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// When the last typing notice went to each friend.
     typing_sent: Mutex<HashMap<u64, Instant>>,
+    /// Whether a lost connection is being signed in again (ADR 0025), so
+    /// a shim's stats request can tell "offline" from "signed out".
+    reconnecting: AtomicBool,
     /// Reports a lost connection to the keeper task.
     lost: mpsc::UnboundedSender<Lost>,
     /// Taken once by [`keep_connected`].
@@ -181,6 +185,7 @@ impl Daemon {
         Self {
             lost,
             lost_receiver: Mutex::new(Some(lost_receiver)),
+            reconnecting: AtomicBool::new(false),
             events: broadcast::channel(256).0,
             session: tokio::sync::Mutex::new(None),
             sign_in: Mutex::new(None),
@@ -392,11 +397,14 @@ impl Daemon {
     /// frontends, and signs in again with backoff unless another session
     /// took over or the user signed out.
     async fn connection_lost(&self, lost: Lost) {
+        let reconnect = lost.allows_reconnect();
+        // Set before the session is dropped, so a shim's stats request
+        // never sees "signed out" during a reconnect.
+        self.reconnecting.store(reconnect, Ordering::SeqCst);
         *self.session.lock().await = None;
         if let Some(task) = lock(&self.friends_watch).take() {
             task.abort();
         }
-        let reconnect = lost.allows_reconnect();
         warn!(?lost, reconnect, "connection to Steam lost");
         self.emit(Event::SteamConnection {
             connected: false,
@@ -411,6 +419,22 @@ impl Daemon {
         if !reconnect {
             return;
         }
+        let reconnected = self.reconnect().await;
+        self.reconnecting.store(false, Ordering::SeqCst);
+        if !reconnected {
+            return;
+        }
+        info!("reconnected to Steam");
+        self.emit(Event::SteamConnection {
+            connected: true,
+            reconnecting: false,
+            reason: None,
+        });
+    }
+
+    /// Signs in again with backoff after a lost connection (ADR 0025);
+    /// whether a session exists afterwards.
+    async fn reconnect(&self) -> bool {
         for attempt in 0.. {
             tokio::time::sleep(reconnect_delay(attempt)).await;
             if self.session.lock().await.is_some() {
@@ -424,7 +448,7 @@ impl Daemon {
                 });
             if !signed_in {
                 info!("signed out, not reconnecting");
-                return;
+                return false;
             }
             match self.session().await {
                 Ok(_) => break,
@@ -437,17 +461,12 @@ impl Daemon {
                         reconnecting: false,
                         reason: Some(error.to_string()),
                     });
-                    return;
+                    return false;
                 }
                 Err(error) => warn!(%error, attempt, "reconnecting failed"),
             }
         }
-        info!("reconnected to Steam");
-        self.emit(Event::SteamConnection {
-            connected: true,
-            reconnecting: false,
-            reason: None,
-        });
+        true
     }
 
     /// Stops following friends and forgets them.
@@ -1106,7 +1125,16 @@ impl Daemon {
         };
         self.running().insert(app_id);
         let pid = child.id();
-        lock(&self.launched).insert(pid, ShimRun { app_id, ownership });
+        // The run's stats are fetched only on the game's first request.
+        let stats = ownership.as_ref().map(|_| Arc::new(RunStats::default()));
+        lock(&self.launched).insert(
+            pid,
+            ShimRun {
+                app_id,
+                ownership,
+                stats,
+            },
+        );
         info!(app_id, program = %plan.executable.display(), proton = ?plan.proton, "game started");
         self.emit(Event::GameStarted {
             app_id,
@@ -1531,6 +1559,36 @@ fn persona_state(status: OwnStatus) -> PersonaState {
         OwnStatus::Busy => PersonaState::Busy,
         OwnStatus::Invisible => PersonaState::Invisible,
         OwnStatus::Offline => PersonaState::Offline,
+    }
+}
+
+/// The daemon's Valve session as the source of a shim run's stats
+/// (ADR 0055). It never signs in: only the reconnect logic of ADR 0025
+/// does that.
+impl StatsBackend for Daemon {
+    async fn link(&self) -> Link {
+        if self.session.lock().await.is_some() {
+            Link::Connected
+        } else if self.reconnecting.load(Ordering::SeqCst) {
+            Link::Offline
+        } else {
+            Link::SignedOut
+        }
+    }
+
+    async fn fetch(&self, app_id: u32) -> Result<reborn_cm::UserStats, FetchError> {
+        let Some(session) = self.session.lock().await.clone() else {
+            return Err(FetchError::NoSession);
+        };
+        match session.user_stats(app_id).await {
+            Ok(stats) => Ok(stats),
+            Err(reborn_cm::Error::Network(_)) => Err(FetchError::Network),
+            Err(_) => Err(FetchError::Unreadable),
+        }
+    }
+
+    async fn sleep(&self, duration: Duration) {
+        tokio::time::sleep(duration).await;
     }
 }
 
@@ -2078,6 +2136,18 @@ mod tests {
     #[test]
     fn a_daemon_knows_no_shim_run_before_a_launch() {
         assert_eq!(Daemon::new().shim_run(4242), None);
+    }
+
+    #[tokio::test]
+    async fn shim_stats_never_sign_in() {
+        // Without a session the daemon is signed out, or offline while it
+        // reconnects; a fetch sends nothing and does not sign in.
+        let daemon = Daemon::new();
+        assert_eq!(daemon.link().await, Link::SignedOut);
+        daemon.reconnecting.store(true, Ordering::SeqCst);
+        assert_eq!(daemon.link().await, Link::Offline);
+        assert_eq!(daemon.fetch(3_419_430).await, Err(FetchError::NoSession));
+        assert!(daemon.session.lock().await.is_none());
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! source of the library because it leaves out free games that were added
 //! but never played (observed live with a test account, 2026-11-19).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use steam_vent::ConnectionTrait;
 use steam_vent_proto_steam::steammessages_player_steamclient::{
@@ -62,6 +62,19 @@ fn library_licenses(licenses: &[License]) -> Vec<License> {
         .collect()
 }
 
+/// The licenses that grant ownership: every active license, the base
+/// package included. node-steam-user `components/apps.js`: `ownsApp`
+/// uses `getOwnedApps` over `getOwnedPackages`, which keeps package 0
+/// unless free licenses are excluded on request ("sub 0 is covered by
+/// NoCost") and always drops expired licenses.
+fn ownership_licenses(licenses: &[License]) -> Vec<License> {
+    licenses
+        .iter()
+        .filter(|license| license.flags & LICENSE_FLAG_EXPIRED == 0)
+        .copied()
+        .collect()
+}
+
 /// Playtime of one app from `GetOwnedGames`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Playtime {
@@ -99,6 +112,16 @@ impl Session {
                 }
             })
             .collect())
+    }
+
+    /// The app IDs the account's active licenses grant, the base package
+    /// included (ADR 0055, for ownership answers to the shim). Only the
+    /// package step of [`Session::owned_apps`]: the license list sent
+    /// after logon, then the packages' app lists via PICS
+    /// (`docs/protocol/licenses-pics.md`); no access tokens, app infos or
+    /// playtimes are requested.
+    pub async fn licensed_app_ids(&self) -> Result<BTreeSet<u32>, Error> {
+        pics::apps_in_packages(&self.connection, &ownership_licenses(&self.licenses)).await
     }
 
     /// Playtime per app via `Player.GetOwnedGames#1`, the request used in
@@ -196,6 +219,26 @@ mod tests {
             .map(|l| l.package_id)
             .collect();
         assert_eq!(kept, [100, 300]);
+    }
+
+    #[test]
+    fn ownership_keeps_the_base_package_and_skips_expired_licenses() {
+        let license = |package_id, flags| License {
+            package_id,
+            access_token: 0,
+            flags,
+        };
+        let licenses = [
+            license(0, 0),
+            license(100, 0),
+            license(200, LICENSE_FLAG_EXPIRED),
+            license(300, 0x01 | 0x40),
+        ];
+        let kept: Vec<_> = ownership_licenses(&licenses)
+            .iter()
+            .map(|l| l.package_id)
+            .collect();
+        assert_eq!(kept, [0, 100, 300]);
     }
 
     #[test]

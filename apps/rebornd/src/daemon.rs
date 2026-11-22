@@ -119,6 +119,21 @@ impl Jobs {
 }
 
 /// A password sign-in that is still running (ADR 0014).
+/// The licensed app IDs of one Valve session.
+struct LicensedApps {
+    /// The session they came from. A weak reference keeps the allocation,
+    /// so a later session can never have the same address.
+    session: std::sync::Weak<Session>,
+    apps: Arc<BTreeSet<u32>>,
+}
+
+impl LicensedApps {
+    fn of(&self, session: &Arc<Session>) -> Option<Arc<BTreeSet<u32>>> {
+        let current = self.session.upgrade()?;
+        Arc::ptr_eq(&current, session).then(|| Arc::clone(&self.apps))
+    }
+}
+
 struct PendingSignIn {
     id: u64,
     /// Taken by the first `submit_guard_code`.
@@ -137,6 +152,11 @@ pub struct Daemon {
     /// Process ID of each game process we started, with its app and, in
     /// shim mode, its ownership data (for shim sessions, ADR 0047, 0055).
     launched: Arc<Mutex<BTreeMap<u32, ShimRun>>>,
+    /// The app IDs the licences of one Valve session grant, loaded on the
+    /// first shim-mode launch of that session (ADR 0055: one licence list
+    /// per daemon session). Tied to the session it came from: a new
+    /// session after a reconnect or sign-in loads it again.
+    licensed_apps: tokio::sync::Mutex<Option<LicensedApps>>,
     /// Friends of the signed-in account with their latest persona, kept
     /// current by the watcher (initial list plus every change).
     friends: Arc<Mutex<BTreeMap<u64, FriendInfo>>>,
@@ -167,6 +187,7 @@ impl Daemon {
             next_sign_in: AtomicU64::new(1),
             running: Arc::new(Mutex::new(BTreeSet::new())),
             launched: Arc::new(Mutex::new(BTreeMap::new())),
+            licensed_apps: tokio::sync::Mutex::new(None),
             friends: Arc::new(Mutex::new(BTreeMap::new())),
             friends_loaded: Arc::new(AtomicBool::new(false)),
             friends_watch: Mutex::new(None),
@@ -205,6 +226,23 @@ impl Daemon {
     /// from the one we started; such games get no shim session yet.
     pub fn shim_run(&self, pid: u32) -> Option<ShimRun> {
         lock(&self.launched).get(&pid).cloned()
+    }
+
+    /// The app IDs the licences of `session` grant
+    /// ([`Session::licensed_app_ids`]), loaded once per Valve session.
+    /// Only counts are logged.
+    async fn licensed_apps(&self, session: &Arc<Session>) -> Result<Arc<BTreeSet<u32>>, CoreError> {
+        let mut cached = self.licensed_apps.lock().await;
+        if let Some(apps) = cached.as_ref().and_then(|cached| cached.of(session)) {
+            return Ok(apps);
+        }
+        let apps = Arc::new(session.licensed_app_ids().await?);
+        info!(apps = apps.len(), "shim mode: licensed apps loaded");
+        *cached = Some(LicensedApps {
+            session: Arc::downgrade(session),
+            apps: Arc::clone(&apps),
+        });
+        Ok(apps)
     }
 
     fn pending_sign_in(&self) -> MutexGuard<'_, Option<PendingSignIn>> {
@@ -1019,20 +1057,6 @@ impl Daemon {
             }
         };
         let shim_mode = crate::shim_launch::enabled();
-        // In shim mode the run's ownership set, before the game starts
-        // (ADR 0055): without it the launch is refused, so the shim never
-        // answers ownership without Valve.
-        let ownership = if shim_mode {
-            match run_ownership(&session, &plan).await {
-                Ok(ownership) => Some(Arc::new(ownership)),
-                Err(error) => {
-                    self.forget_session_after(&error).await;
-                    return error_response(&error);
-                }
-            }
-        } else {
-            None
-        };
         // Missing saves from Steam Cloud first (ADR 0035). Never stops the
         // game: a conflict or an error is only reported.
         let restore = tokio::time::timeout(
@@ -1055,6 +1079,22 @@ impl Daemon {
                 message: format!("shim mode: {message}"),
             };
         }
+        // In shim mode the run's ownership set, once shim mode is entered
+        // (so a launch that shim mode refuses asks Valve for nothing) and
+        // before the game starts (ADR 0055): without it the launch is
+        // refused, so the shim never answers ownership without Valve.
+        let ownership = if shim_mode {
+            match self.licensed_apps(&session).await {
+                Ok(licensed) => Some(Arc::new(ownership_from(&licensed, &plan.dlc_app_ids))),
+                Err(error) => {
+                    crate::shim_launch::leave();
+                    self.forget_session_after(&error).await;
+                    return error_response(&error);
+                }
+            }
+        } else {
+            None
+        };
         let mut child = match spawn(&plan) {
             Ok(child) => child,
             Err(error) => {
@@ -1494,35 +1534,18 @@ fn persona_state(status: OwnStatus) -> PersonaState {
     }
 }
 
-/// Locks a mutex; a poisoned lock only means another thread panicked while
-/// holding it, the data is still usable.
 /// The ownership data a shim-mode run gets (ADR 0055): the apps the
-/// account owns, from the licence list of this Valve session
-/// ([`Session::owned_apps`], the request the library list makes), once
-/// per launch, and the DLC the app's info names. Nothing here is logged
-/// except counts.
-async fn run_ownership(
-    session: &Session,
-    plan: &reborn_core::launch::LaunchPlan,
-) -> Result<RunOwnership, CoreError> {
-    let owned = session.owned_apps().await?;
-    let ownership = ownership_from(owned.iter().map(|app| app.app_id), &plan.dlc_app_ids);
-    info!(
-        app_id = plan.app_id,
-        owned = ownership.owned.len(),
-        dlc = ownership.dlc.len(),
-        "shim mode: ownership for the run loaded"
-    );
-    Ok(ownership)
-}
-
-fn ownership_from(owned: impl IntoIterator<Item = u32>, dlc: &[u32]) -> RunOwnership {
+/// account's licences grant (`licensed`, from the daemon session's cache)
+/// and the DLC the app's info names.
+fn ownership_from(licensed: &BTreeSet<u32>, dlc: &[u32]) -> RunOwnership {
     RunOwnership {
-        owned: owned.into_iter().collect(),
+        owned: licensed.clone(),
         dlc: dlc.iter().copied().collect(),
     }
 }
 
+/// Locks a mutex; a poisoned lock only means another thread panicked while
+/// holding it, the data is still usable.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -2042,13 +2065,14 @@ mod tests {
 
     #[test]
     fn run_ownership_keeps_owned_apps_and_named_dlc() {
-        let ownership = ownership_from([2_143_030, 480, 2_143_030], &[2_444_550, 2_444_553]);
+        let licensed = BTreeSet::from([480, 2_143_030]);
+        let ownership = ownership_from(&licensed, &[2_444_550, 2_444_553, 2_444_550]);
+        assert_eq!(ownership.owned, licensed);
         assert_eq!(
-            ownership.owned,
-            BTreeSet::from([480, 2_143_030]),
+            ownership.dlc,
+            BTreeSet::from([2_444_550, 2_444_553]),
             "duplicates collapse"
         );
-        assert_eq!(ownership.dlc, BTreeSet::from([2_444_550, 2_444_553]));
     }
 
     #[test]

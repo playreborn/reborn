@@ -2,7 +2,9 @@
 //!
 //! One JSON object per line (`reborn-shim-protocol`). A shim first says
 //! `Hello` and gets its session: the app the daemon launched for its
-//! process ID, or a refusal. The connection is then bound to that process.
+//! process ID, or a refusal. The connection is then bound to that process
+//! for good: a later `Hello` for another process ID is refused
+//! (`unknown_process`), and a refused `Hello` never clears the binding.
 //! After that it may ask `AppOwnership`, answered from what `rebornd`
 //! fetched from Valve for this run at launch (ADR 0055, stage 0):
 //!
@@ -24,7 +26,8 @@ use std::sync::Arc;
 
 use reborn_ipc::socket::LocalSocketStream;
 use reborn_shim_protocol::{
-    DaemonMessage, Request, Response, ShimMessage, UnavailableReason, answer_hello, decode, encode,
+    DaemonMessage, RefusalReason, Request, Response, ShimMessage, UnavailableReason, answer_hello,
+    decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, info, warn};
@@ -50,8 +53,9 @@ pub struct ShimRun {
 /// kept in memory for the run only, never written or logged.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunOwnership {
-    /// The app IDs the account owns, from the licence list of the Valve
-    /// session the game was launched in (`reborn_cm::Session::owned_apps`).
+    /// The app IDs the account's active licences grant, base package
+    /// included, from the Valve session the game was launched in
+    /// (`reborn_cm::Session::licensed_app_ids`).
     pub owned: BTreeSet<u32>,
     /// The DLC app IDs the own app's info names
     /// (`reborn_core::launch::LaunchPlan::dlc_app_ids`).
@@ -125,9 +129,19 @@ fn answer(
     let message: ShimMessage = decode(line).ok()?;
     let response = match message.request {
         Request::Hello { version, pid } => {
-            let response = answer_hello(version, run(pid).map(|run| run.app_id));
+            let response = match connection.pid {
+                // Bound to another process: refused, the binding stays.
+                Some(bound) if bound != pid => Response::Refused {
+                    reason: RefusalReason::UnknownProcess,
+                },
+                _ => answer_hello(version, run(pid).map(|run| run.app_id)),
+            };
             info!(pid, ?response, "shim said hello");
-            connection.pid = matches!(response, Response::Session(_)).then_some(pid);
+            // Only the first successful hello binds; a refused one never
+            // clears a binding.
+            if connection.pid.is_none() && matches!(response, Response::Session(_)) {
+                connection.pid = Some(pid);
+            }
             response
         }
         Request::AppOwnership { app_id } => {
@@ -316,6 +330,43 @@ mod tests {
         let ended = |_pid: u32| -> Option<ShimRun> { None };
         let text = answer(&ownership(GAME), &mut connection, ended).unwrap_or_default();
         assert_eq!(decode::<DaemonMessage>(&text).ok(), not_allowed());
+    }
+
+    #[test]
+    fn a_connection_stays_bound_to_its_first_process() {
+        let mut connection = Connection::default();
+        reply(&hello(100, PROTOCOL_VERSION), &mut connection);
+        assert_eq!(connection.pid, Some(100));
+
+        // Another launched process on the same connection: refused.
+        assert_eq!(
+            reply(&hello(101, PROTOCOL_VERSION), &mut connection),
+            response(
+                3,
+                Response::Refused {
+                    reason: RefusalReason::UnknownProcess
+                }
+            )
+        );
+        assert_eq!(connection.pid, Some(100));
+
+        // A refused hello for the bound process keeps the binding.
+        reply(&hello(100, Version { major: 9, minor: 0 }), &mut connection);
+        assert_eq!(connection.pid, Some(100));
+        assert_eq!(
+            reply(&ownership(GAME), &mut connection),
+            response(4, Response::Ownership { owned: true })
+        );
+
+        // The same process may say hello again and gets its session.
+        assert!(matches!(
+            reply(&hello(100, PROTOCOL_VERSION), &mut connection),
+            Some(DaemonMessage::Response {
+                response: Response::Session(_),
+                ..
+            })
+        ));
+        assert_eq!(connection.pid, Some(100));
     }
 
     #[test]

@@ -18,8 +18,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 - 2026-11-22: ADR 0055 stage 0, first part (parallel agent, no runs):
   shim protocol 0.2 with `AppOwnership`, `Ownership` and `Unavailable`;
-  `rebornd` loads the run's ownership set at a shim-mode launch (refused
-  without it) and answers only the game and the DLC its depots name,
+  once shim mode is entered, `rebornd` takes the run's ownership set from
+  `Session::licensed_app_ids` (active licences incl. package 0, package
+  step only, cached per Valve session; `docs/protocol/licenses-pics.md`),
+  refuses the launch without it, binds each connection to its first
+  `Hello`, and answers only the game and the DLC its depots name,
   everything else `NotAllowed`. The shim does not ask yet. Stats, cloud,
   events and shadow sessions are later stage-0 work.
 - 2026-11-22: loop iteration 11a (planned by a parallel agent, run by the

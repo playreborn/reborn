@@ -66,8 +66,7 @@ use reborn_core::run_cloud::{RunCloud, RunCloudError};
 use reborn_ipc::socket::LocalSocketStream;
 use reborn_shim_protocol::{
     Bytes, DaemonMessage, NameDigest, PROTOCOL_VERSION, RefusalReason, Request, Response,
-    ShimMessage,
-    UnavailableReason, answer_hello, decode, encode,
+    ShimMessage, UnavailableReason, answer_hello, decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, watch};

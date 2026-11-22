@@ -40,32 +40,6 @@ Positions recorded: 205; confirmed: 109; open: 96.
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 8 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 22 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 39 |  |
-| not known | 1 | `SteamClient018` | 0 |  |
-| not known | 1 | `SteamClient018` | 1 |  |
-| not known | 1 | `SteamClient018` | 2 |  |
-| not known | 1 | `SteamClient018` | 3 |  |
-| not known | 1 | `SteamClient018` | 4 |  |
-| not known | 1 | `SteamClient018` | 5 |  |
-| not known | 1 | `SteamClient018` | 6 |  |
-| not known | 1 | `SteamClient018` | 7 |  |
-| not known | 1 | `SteamClient018` | 9 |  |
-| not known | 1 | `SteamClient018` | 12 |  |
-| not known | 1 | `SteamClient018` | 23 |  |
-| not known | 1 | `SteamClient018` | 34 |  |
-| not known | 1 | `SteamClient019` | 0 |  |
-| not known | 1 | `SteamClient019` | 1 |  |
-| not known | 1 | `SteamClient019` | 2 |  |
-| not known | 1 | `SteamClient019` | 3 |  |
-| not known | 1 | `SteamClient019` | 4 |  |
-| not known | 1 | `SteamClient019` | 5 |  |
-| not known | 1 | `SteamClient019` | 6 |  |
-| not known | 1 | `SteamClient019` | 7 |  |
-| not known | 1 | `SteamClient019` | 9 |  |
-| not known | 1 | `SteamClient019` | 12 |  |
-| not known | 1 | `SteamClient019` | 23 |  |
-| not known | 1 | `SteamClient019` | 26 |  |
-| not known | 1 | `SteamClient019` | 34 |  |
-| not known | 1 | `SteamClient019` | 38 |  |
 | not known | 1 | `SteamGameServer012` | 7 |  |
 | not known | 1 | `SteamMatchMakingServers002` | 10 |  |
 | not known | 1 | `SteamNetworking005` | 7 |  |
@@ -97,6 +71,31 @@ Positions recorded: 205; confirmed: 109; open: 96.
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |
+| candidate | 1 | `SteamClient018` | 0 | CreateSteamPipe (experiment 24) |
+| candidate | 1 | `SteamClient018` | 1 | BReleaseSteamPipe (experiment 24) |
+| candidate | 1 | `SteamClient018` | 2 | ConnectToGlobalUser (experiment 24) |
+| candidate | 1 | `SteamClient018` | 3 | CreateLocalUser (experiment 24) |
+| candidate | 1 | `SteamClient018` | 4 | ReleaseUser (experiment 24) |
+| candidate | 1 | `SteamClient018` | 5 | GetISteamUser (experiment 24) |
+| candidate | 1 | `SteamClient018` | 6 | GetISteamGameServer (experiment 24) |
+| candidate | 1 | `SteamClient018` | 7 | narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24) |
+| candidate | 1 | `SteamClient018` | 9 | GetISteamUtils (experiment 24) |
+| candidate | 1 | `SteamClient018` | 12 | GetISteamGenericInterface (experiment 24) |
+| candidate | 1 | `SteamClient018` | 23 | BShutdownIfAllPipesClosed (experiment 24) |
+| candidate | 1 | `SteamClient018` | 34 | SetWarningMessageHook |
+| candidate | 1 | `SteamClient019` | 0 | CreateSteamPipe (experiment 24) |
+| candidate | 1 | `SteamClient019` | 1 | BReleaseSteamPipe (experiment 24) |
+| candidate | 1 | `SteamClient019` | 2 | ConnectToGlobalUser (experiment 24) |
+| candidate | 1 | `SteamClient019` | 3 | CreateLocalUser (experiment 24) |
+| candidate | 1 | `SteamClient019` | 4 | ReleaseUser (experiment 24) |
+| candidate | 1 | `SteamClient019` | 5 | GetISteamUser (experiment 24) |
+| candidate | 1 | `SteamClient019` | 6 | GetISteamGameServer (experiment 24) |
+| candidate | 1 | `SteamClient019` | 7 | narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24) |
+| candidate | 1 | `SteamClient019` | 9 | GetISteamUtils (experiment 24) |
+| candidate | 1 | `SteamClient019` | 12 | GetISteamGenericInterface (experiment 24) |
+| candidate | 1 | `SteamClient019` | 23 | BShutdownIfAllPipesClosed (experiment 24) |
+| candidate | 1 | `SteamClient019` | 26 | GetISteamController (experiment 24) |
+| candidate | 1 | `SteamClient019` | 34 | SetWarningMessageHook |
 | candidate | 1 | `SteamFriends017` | 36 | narrowed: GetLargeFriendAvatar (experiment 17) |
 | candidate | 1 | `SteamFriends017` | 37 | RequestUserInformation, HasFriend or another (Steam ID, 0) call |
 | candidate | 1 | `SteamFriends017` | 44 | ClearRichPresence or GetPersonaName |
@@ -105,3 +104,4 @@ Positions recorded: 205; confirmed: 109; open: 96.
 | candidate | 1 | `SteamFriends018` | 36 | RequestUserInformation, HasFriend or another (Steam ID, 0) call |
 | candidate | 1 | `SteamUser021` | 1 | BLoggedOn, another no-argument bool, GetHSteamUser or others (one call) |
 | candidate | 1 | `SteamUser022` | 2 | GetSteamID |
+| objects | 1 | `SteamClient019` | 38 | SteamInput001 objects; no page function |

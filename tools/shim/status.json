@@ -1,5 +1,121 @@
 {
   "_comment": "Status of each recorded interface position, as docs/shim/meanings.md records it. Keys: interface version text, then position. Values: [status, meaning]. Status is confirmed, candidate or objects (hands out objects, docs/shim/objects.md). Positions not listed are not known. coverage.py builds the coverage table and the gap list from this.",
+  "SteamClient018": {
+    "0": [
+      "candidate",
+      "CreateSteamPipe (experiment 24)"
+    ],
+    "2": [
+      "candidate",
+      "ConnectToGlobalUser (experiment 24)"
+    ],
+    "3": [
+      "candidate",
+      "CreateLocalUser (experiment 24)"
+    ],
+    "7": [
+      "candidate",
+      "narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24)"
+    ],
+    "9": [
+      "candidate",
+      "GetISteamUtils (experiment 24)"
+    ],
+    "12": [
+      "candidate",
+      "GetISteamGenericInterface (experiment 24)"
+    ],
+    "5": [
+      "candidate",
+      "GetISteamUser (experiment 24)"
+    ],
+    "6": [
+      "candidate",
+      "GetISteamGameServer (experiment 24)"
+    ],
+    "26": [
+      "candidate",
+      "GetISteamController (experiment 24)"
+    ],
+    "38": [
+      "objects",
+      "SteamInput001 objects; no page function"
+    ],
+    "4": [
+      "candidate",
+      "ReleaseUser (experiment 24)"
+    ],
+    "1": [
+      "candidate",
+      "BReleaseSteamPipe (experiment 24)"
+    ],
+    "23": [
+      "candidate",
+      "BShutdownIfAllPipesClosed (experiment 24)"
+    ],
+    "34": [
+      "candidate",
+      "SetWarningMessageHook"
+    ]
+  },
+  "SteamClient019": {
+    "0": [
+      "candidate",
+      "CreateSteamPipe (experiment 24)"
+    ],
+    "2": [
+      "candidate",
+      "ConnectToGlobalUser (experiment 24)"
+    ],
+    "3": [
+      "candidate",
+      "CreateLocalUser (experiment 24)"
+    ],
+    "7": [
+      "candidate",
+      "narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24)"
+    ],
+    "9": [
+      "candidate",
+      "GetISteamUtils (experiment 24)"
+    ],
+    "12": [
+      "candidate",
+      "GetISteamGenericInterface (experiment 24)"
+    ],
+    "5": [
+      "candidate",
+      "GetISteamUser (experiment 24)"
+    ],
+    "6": [
+      "candidate",
+      "GetISteamGameServer (experiment 24)"
+    ],
+    "26": [
+      "candidate",
+      "GetISteamController (experiment 24)"
+    ],
+    "38": [
+      "objects",
+      "SteamInput001 objects; no page function"
+    ],
+    "4": [
+      "candidate",
+      "ReleaseUser (experiment 24)"
+    ],
+    "1": [
+      "candidate",
+      "BReleaseSteamPipe (experiment 24)"
+    ],
+    "23": [
+      "candidate",
+      "BShutdownIfAllPipesClosed (experiment 24)"
+    ],
+    "34": [
+      "candidate",
+      "SetWarningMessageHook"
+    ]
+  },
   "SteamClient020": {
     "0": [
       "confirmed",

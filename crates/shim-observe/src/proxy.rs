@@ -72,6 +72,15 @@
 //! asked on a worker thread after the call returned, and the log says only
 //! match or mismatch.
 //!
+//! Persona name (ADR 0056, decision 2): for `SteamFriends017` position 0
+//! (`GetPersonaName` or `ClearRichPresence`) the proxy reads the text the
+//! result points to in memory, on the game's thread, hashes it with
+//! SHA-256 and drops it; only the digest goes to `rebornd`, which says
+//! whether it is the account's persona name. The text and the digest are
+//! never logged, not in the call line (register texts are left out for
+//! this call), not in the return line (only the address) and not as a
+//! `READS` result text; the log says only match, mismatch or why.
+//!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
 //! --app`, the stub jumps to Reborn's own function instead of the official
@@ -213,6 +222,13 @@ enum Shadow {
     /// Asked on a worker thread, so the game's call is not delayed; only
     /// match or mismatch is logged.
     Subscribed,
+    /// `SteamFriends017` position 0, `GetPersonaName` or
+    /// `ClearRichPresence` (`docs/shim/meanings.md`): whether the text the
+    /// result points to is the account's persona name, as `rebornd` says
+    /// from the SHA-256 the proxy sends (ADR 0056). A match tells the two
+    /// apart. The text is account data: never logged, and the call line
+    /// shows no register texts.
+    PersonaName,
 }
 
 /// The calls ADR 0046 compares in shadow mode: interface version text,
@@ -234,6 +250,11 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     // Position 7 is not listed: it is narrowed to two meanings, not
     // confirmed as one.
     ("STEAMAPPS_INTERFACE_VERSION008", 0, Shadow::Subscribed),
+    // `docs/shim/meanings.md`, "Positions 0 and 44": narrowed to
+    // `GetPersonaName` or `ClearRichPresence`; ADR 0056 (decision 2) lets
+    // a shadow comparison tell them apart. Not a confirmed meaning yet: the
+    // comparison is the experiment.
+    ("SteamFriends017", 0, Shadow::PersonaName),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -277,8 +298,9 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
         Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
         // Not in ANSWERS yet: shadow mode first (ADR 0046).
         Shadow::BatteryPower => None,
-        // Ownership is never answered by the proxy (ADR 0046, 0055).
-        Shadow::Subscribed => None,
+        // Ownership and the persona name are never answered by the proxy
+        // (ADR 0046, 0055, 0056).
+        Shadow::Subscribed | Shadow::PersonaName => None,
     }
 }
 
@@ -295,6 +317,9 @@ enum Official {
     Subscribed(u64),
     /// Callback 0x44d (`UserStatsReceived_t`): its compared fields.
     StatsReceived(crate::daemon::OfficialStats),
+    /// `SteamFriends017` position 0: the SHA-256 of the text the result
+    /// pointed to, or why there was none (ADR 0056). Never the text.
+    PersonaName(Result<reborn_shim_protocol::NameDigest, &'static str>),
 }
 
 /// Callback number of `UserStatsReceived_t` (`docs/shim/meanings.md`,
@@ -317,7 +342,7 @@ const MAX_ASKS: usize = 16;
 static ASKS: OnceLock<Option<std::sync::mpsc::SyncSender<Ask>>> = OnceLock::new();
 
 /// Hands a comparison with `rebornd`'s answer to the worker thread
-/// (ADR 0055); never waits.
+/// (ADR 0055, 0056); never waits.
 fn ask(prefix: String, official: Official) {
     let sender = ASKS.get_or_init(|| {
         let (sender, asks) = std::sync::mpsc::sync_channel(MAX_ASKS);
@@ -344,9 +369,12 @@ fn ask(prefix: String, official: Official) {
 
 /// The worker: one shadow session with `rebornd` for this process, for the
 /// app given to `arm` only; one `AppOwnership` per `BIsSubscribed`, one
-/// `RequestStats` per 0x44d.
+/// `RequestStats` per 0x44d, one `ComparePersonaName` per
+/// `SteamFriends017` position 0.
 fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
-    use crate::daemon::{compare_stats_received, compare_subscribed, connect_with_waits};
+    use crate::daemon::{
+        compare_persona_name, compare_stats_received, compare_subscribed, connect_with_waits,
+    };
     let mut link = crate::daemon::ShadowLink::default();
     let pid = std::process::id();
     for ask in asks {
@@ -360,6 +388,12 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
                 app_id,
                 link.stats_result(pid, app_id, connect_with_waits, STATS_WAIT),
             ),
+            (Some(app_id), Official::PersonaName(digest)) => match digest {
+                Ok(digest) => compare_persona_name(Ok(()), || {
+                    link.persona_name(pid, app_id, digest, connect_with_waits)
+                }),
+                Err(why) => compare_persona_name(Err(why), || Err("not asked".to_owned())),
+            },
         };
         log(&format!("{} {note}", ask.prefix));
     }
@@ -389,6 +423,88 @@ fn stats_received_at(rax: u64, rdx: u64) -> Option<crate::daemon::OfficialStats>
     }
     let first = bytes_in(address, size.min(crate::daemon::STATS_READ))?;
     crate::daemon::OfficialStats::new(size, &first)
+}
+
+/// Longest result text hashed for the persona name comparison; a longer
+/// one counts as no text. A bound chosen here, not a documented limit.
+const MAX_NAME_BYTES: usize = 1024;
+
+/// The SHA-256 of the NUL-terminated text at `address`, read in place and
+/// dropped (ADR 0056), or why there is none: not readable, no NUL within
+/// [`MAX_NAME_BYTES`] in one memory region. Any bytes count, so a name in
+/// UTF-8 is hashed as it is.
+fn text_digest_at(address: u64) -> Result<reborn_shim_protocol::NameDigest, &'static str> {
+    let no_text = "no text at the result";
+    let text = c_text_at(address, MAX_NAME_BYTES).ok_or(no_text)?;
+    reborn_shim_protocol::NameDigest::from_hex(&sha256_hex(text.bytes())).ok_or(no_text)
+}
+
+/// A copy of text that may be account data: zeroed when dropped (best
+/// effort; the buffer is allocated once, so no other copy is left behind
+/// by growing it).
+struct Wiped(Vec<u8>);
+
+impl Wiped {
+    fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        self.0.fill(0);
+        // Keeps the zeroing from being optimised away as a dead store.
+        std::hint::black_box(&self.0);
+    }
+}
+
+/// The bytes of the NUL-terminated text at `address` (without the NUL),
+/// if it is readable, ends within `max` bytes and lies in one memory
+/// region. Never logged by any caller; zeroed when dropped.
+fn c_text_at(address: u64, max: usize) -> Option<Wiped> {
+    // As in `ascii_at`: the lowest 64 KiB are never mapped.
+    if address < 0x1_0000 {
+        return None;
+    }
+    let start = usize::try_from(address).ok()?;
+    let end = readable_end(start)?;
+    // Room for `max` bytes up front: pushing never reallocates, so every
+    // byte read stays in this one buffer, which `Wiped` zeroes.
+    let mut text = Wiped(Vec::with_capacity(max));
+    for offset in 0..=max {
+        let at = start.checked_add(offset)?;
+        if at >= end {
+            return None;
+        }
+        // SAFETY: `at` lies inside a committed, readable region that
+        // `readable_end` just checked.
+        let byte = unsafe { std::ptr::read_volatile(at as *const u8) };
+        if byte == 0 {
+            return Some(text);
+        }
+        if offset == max {
+            return None;
+        }
+        text.0.push(byte);
+    }
+    None
+}
+
+/// Whether the call's argument texts stay out of the log: for the persona
+/// name comparison a leftover register could point to the name (ADR 0056).
+fn hides_texts(interface: &str, slot: usize) -> bool {
+    shadow_for(interface, slot) == Some(Shadow::PersonaName)
+}
+
+/// The result part of a return line: `rax` as a number, except for an
+/// ownership shadow (account data). For the persona name comparison `rax`
+/// is an address, never the text it points to.
+fn result_note(rax: u64, shadow: Option<Shadow>) -> String {
+    if shadow == Some(Shadow::Subscribed) {
+        "rax hidden (account data)".to_owned()
+    } else {
+        format!("rax=0x{rax:x}")
+    }
 }
 
 /// Most table entries counted in step 3a (ADR 0040).
@@ -624,7 +740,7 @@ extern "C" fn observe_call(
                 elapsed_ms(),
                 std::thread::current().id(),
                 ENTRY_POINTS[index],
-                describe_registers(saved)
+                describe_registers(saved, true)
             ));
         }
         let interface = (index == CREATE_INTERFACE)
@@ -667,11 +783,7 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
             // For an ownership shadow the result is account data: together
             // with the shadow line it would give Reborn's answer, so it is
             // not logged (ADR 0055: only match or mismatch).
-            let result = if call.shadow == Some(Shadow::Subscribed) {
-                "rax hidden (account data)".to_owned()
-            } else {
-                format!("rax=0x{rax:x}")
-            };
+            let result = result_note(rax, call.shadow);
             log(&format!(
                 "{} ms {thread:?} {name} return {} {result} xmm0=0x{xmm0:x}",
                 elapsed_ms(),
@@ -717,6 +829,11 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                 // ADR 0055: Reborn's answer comes from `rebornd`, asked
                 // off the game's thread.
                 Shadow::Subscribed => ask(prefix, Official::Subscribed(rax)),
+                // ADR 0056: the text is read and hashed here, before the
+                // game can change it; only the digest leaves this thread.
+                Shadow::PersonaName => {
+                    ask(prefix, Official::PersonaName(text_digest_at(rax)));
+                }
                 _ => log(&format!(
                     "{prefix} {}",
                     describe_shadow(rax, shadow, given_app_id())
@@ -788,11 +905,16 @@ extern "C" fn observe_method(
             "rcx did not hold the stand-in, left as it was"
         };
         // Texts are looked for before swapping, in the registers the
-        // object is not in (step 3c).
-        let interface = [saved.rdx, saved.r8, saved.r9]
-            .into_iter()
-            .find_map(ascii_at)
-            .map(String::into_boxed_str);
+        // object is not in (step 3c); never for the persona name call.
+        let hide_texts = hides_texts(&info.name, slot);
+        let interface = if hide_texts {
+            None
+        } else {
+            [saved.rdx, saved.r8, saved.r9]
+                .into_iter()
+                .find_map(ascii_at)
+                .map(String::into_boxed_str)
+        };
         let call = METHOD_CALLS[number].fetch_add(1, Ordering::Relaxed) + 1;
         let logged = should_log(call);
         // Step 4c: the registers as the call started, before any swap.
@@ -810,7 +932,7 @@ extern "C" fn observe_method(
                 elapsed_ms(),
                 std::thread::current().id(),
                 kind_name(Kind::Method { object, slot }),
-                describe_registers(saved)
+                describe_registers(saved, !hide_texts)
             ));
         }
         let Some(target) = info
@@ -978,15 +1100,19 @@ fn elapsed_ms() -> u128 {
     START.get_or_init(Instant::now).elapsed().as_millis()
 }
 
-/// The argument registers as raw values, plus text where an integer
-/// register points to printable ASCII.
-fn describe_registers(saved: &Saved) -> String {
+/// The argument registers as raw values, plus (with `texts`) text where an
+/// integer register points to printable ASCII.
+fn describe_registers(saved: &Saved, texts: bool) -> String {
     let mut line = format!(
         "rcx=0x{:x} rdx=0x{:x} r8=0x{:x} r9=0x{:x}",
         saved.rcx, saved.rdx, saved.r8, saved.r9
     );
     for (number, xmm) in saved.xmm.iter().enumerate() {
         let _ = write!(line, " xmm{number}=0x{:x}", xmm[0]);
+    }
+    if !texts {
+        line.push_str(" (texts hidden: account data)");
+        return line;
     }
     for (name, value) in [
         ("rcx", saved.rcx),
@@ -1165,8 +1291,8 @@ fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
             format!("shadow {verdict}: client {client}, Reborn {reborn}")
         }
         // Needs `rebornd`'s answer: compared by the worker thread
-        // (`ask_subscribed`), never here.
-        Shadow::Subscribed => "shadow: asked rebornd".to_owned(),
+        // (`ask`), never here.
+        Shadow::Subscribed | Shadow::PersonaName => "shadow: asked rebornd".to_owned(),
     }
 }
 
@@ -1862,6 +1988,132 @@ mod tests {
                 .all(|&(_, _, answer)| answer != Shadow::Subscribed)
         );
         assert_eq!(answer_for("STEAMAPPS_INTERFACE_VERSION008", 0), None);
+    }
+
+    /// A made-up persona name, non-ASCII on purpose.
+    const NAME: &std::ffi::CStr = c"Zoë Testperson";
+
+    #[test]
+    fn the_persona_name_is_shadowed_never_read_as_text_and_never_answered() {
+        assert_eq!(shadow_for("SteamFriends017", 0), Some(Shadow::PersonaName));
+        // Position 44 has the same two candidates but is not compared, and
+        // 018 is not listed.
+        assert_eq!(shadow_for("SteamFriends017", 44), None);
+        assert_eq!(shadow_for("SteamFriends018", 0), None);
+        assert!(hides_texts("SteamFriends017", 0));
+        assert!(!hides_texts("SteamFriends017", 44));
+        assert!(!hides_texts("SteamUtils010", 9));
+        // Never a READS result text, never answered by the proxy.
+        assert!(
+            READS
+                .iter()
+                .all(|&(name, _, _)| !name.starts_with("SteamFriends"))
+        );
+        let registers = saved(NAME.as_ptr() as u64, 0, 0);
+        assert_eq!(after_for("SteamFriends017", 0, &registers), None);
+        assert_eq!(answer_for("SteamFriends017", 0), None);
+        assert!(
+            ANSWERS
+                .iter()
+                .all(|&(_, _, answer)| answer != Shadow::PersonaName)
+        );
+    }
+
+    #[test]
+    fn the_persona_name_is_hashed_in_place_and_never_printed() {
+        let address = NAME.as_ptr() as u64;
+        let digest = text_digest_at(address).unwrap_or_else(|why| panic!("{why}"));
+        // SHA-256 of the UTF-8 bytes, as `rebornd` computes it.
+        assert_eq!(
+            digest.as_hex(),
+            "28c47ad8ecd1f9876d8e7154472021dcc42c271c4cd05bdbb27bab3773f9b4ea"
+        );
+        let text = |address, max| c_text_at(address, max).map(|text| text.bytes().to_vec());
+        assert_eq!(text(address, 64).as_deref(), Some(NAME.to_bytes()));
+        assert_eq!(text(c"".as_ptr() as u64, 64).as_deref(), Some(&[][..]));
+        assert_eq!(text(address, 4), None, "longer than allowed");
+        let len = NAME.to_bytes().len();
+        assert_eq!(
+            text(address, len).as_deref(),
+            Some(NAME.to_bytes()),
+            "exactly max"
+        );
+        assert_eq!(text(address, len - 1), None, "one byte over");
+        assert_eq!(text_digest_at(0).map(|_| ()), Err("no text at the result"));
+        assert_eq!(
+            text_digest_at(0x7fff_ffff_0000).map(|_| ()),
+            Err("no text at the result")
+        );
+
+        // Every line the proxy writes for this call: the call line (the
+        // name's address could be a leftover in a register), the return
+        // line and the shadow note. None holds the name or its digest.
+        let registers = saved(address, address, address);
+        let lines = [
+            describe_registers(&registers, !hides_texts("SteamFriends017", 0)),
+            result_note(address, shadow_for("SteamFriends017", 0)),
+            describe_shadow(address, Shadow::PersonaName, Some(2_143_030)),
+            crate::daemon::compare_persona_name(Ok(()), || Ok(true)),
+            crate::daemon::compare_persona_name(Ok(()), || Ok(false)),
+        ];
+        for line in &lines {
+            assert!(!line.contains("Zo"), "{line}");
+            assert!(!line.contains("Testperson"), "{line}");
+            assert!(!line.contains(&digest.as_hex()[..8]), "{line}");
+        }
+        assert!(lines[0].contains("texts hidden"), "{}", lines[0]);
+        assert_eq!(lines[1], format!("rax=0x{address:x}"));
+        // An ASCII name would be shown as a text in other calls' lines; for
+        // this call it is hidden.
+        let ascii = c"Plain Testperson";
+        let registers = saved(ascii.as_ptr() as u64, 0, 0);
+        assert!(describe_registers(&registers, true).contains("Plain Testperson"));
+        assert!(!describe_registers(&registers, false).contains("Testperson"));
+    }
+
+    #[test]
+    fn a_text_running_into_the_region_end_without_nul_is_no_text() {
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+        };
+        const PAGE: usize = 4096;
+        // SAFETY: asks Windows for one fresh committed page; the rest of the
+        // 64 KiB reservation stays uncommitted, so the region ends after
+        // the page.
+        let page = unsafe {
+            VirtualAlloc(
+                std::ptr::null(),
+                PAGE,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_READWRITE,
+            )
+        };
+        assert!(!page.is_null(), "VirtualAlloc failed");
+        // SAFETY: `page` is PAGE writable bytes this test owns.
+        unsafe { std::ptr::write_bytes(page.cast::<u8>(), b'a', PAGE) };
+        let address = page as u64;
+        assert_eq!(readable_end(page as usize), Some(page as usize + PAGE));
+        assert!(
+            c_text_at(address, 2 * PAGE).is_none(),
+            "no NUL before the end"
+        );
+        assert!(
+            c_text_at(address + PAGE as u64 - 3, 64).is_none(),
+            "near the end"
+        );
+        assert_eq!(
+            text_digest_at(address).map(|_| ()),
+            Err("no text at the result")
+        );
+        // A NUL in the last byte ends the text inside the region.
+        // SAFETY: the last byte of the page this test owns.
+        unsafe { page.cast::<u8>().add(PAGE - 1).write(0) };
+        assert_eq!(
+            c_text_at(address + PAGE as u64 - 3, 64).map(|text| text.bytes().to_vec()),
+            Some(b"aa".to_vec())
+        );
+        // SAFETY: releases the allocation made above; nothing uses it later.
+        assert_ne!(unsafe { VirtualFree(page, 0, MEM_RELEASE) }, 0);
     }
 
     #[test]

@@ -2043,7 +2043,10 @@ here. Planning only: no game was run for this section.
     each group of `SetRichPresence` calls fits `ClearRichPresence`; nothing
     recorded rules out either for either position. Telling them apart
     needs the result text, which for `GetPersonaName` is account data
-    (ADR 0043). No experiment.
+    (ADR 0043). No experiment. ADR 0056 now allows comparing position 0's
+    text with the persona name without reading it out; see "Shadow
+    comparison for `SteamFriends017` position 0" at the end (planned, not
+    run).
 
 ### `SteamController007`/`008` position 2 and `SteamInput001` position 2 / `SteamInput006` position 3: `RunFrame`
 
@@ -3620,3 +3623,46 @@ As fixed beforehand, a match confirms, for these interface versions:
 `GetFileCount`, `SteamUtils010` 11 `IsAPICallCompleted`, `STEAMUGC…020`
 77 (an item-ID function returning false or 0) and `SteamUser023` 12
 `GetVoiceOptimalSampleRate` (all "experiment 26").
+
+## Shadow comparison for `SteamFriends017` position 0 (ADR 0056, planned, not run)
+
+Position 0 is narrowed to `GetPersonaName` or `ClearRichPresence`
+("Positions 0 and 44" above). ADR 0056 (decision 2) lets a shadow
+comparison tell them apart; this section records the tool, **no run has
+been made**, and no result is claimed.
+
+- **What the proxy does** (`crates/shim-observe/src/proxy.rs`,
+  `Shadow::PersonaName`): after the official client's call returns, on the
+  game's thread, it reads the NUL-terminated bytes `rax` points to (at
+  most 1024, in one readable memory region), hashes them with SHA-256 and
+  drops them. Only the digest goes to `rebornd` over the shadow session
+  (`ComparePersonaName`, `crates/shim-protocol`). The game always gets the
+  official client's result.
+- **What `rebornd` does** (`apps/rebornd/src/shim_server.rs`): only on a
+  shadow session, it compares the digest with the SHA-256 of the
+  account's persona name and answers only `matches`. The name comes from
+  `CMsgClientAccountInfo` (EMsg 768, `persona_name`), which Valve sends
+  unasked around logon (node-steam-user `components/account.js`,
+  `ClientAccountInfo` handler); Reborn sends no request for it
+  (`crates/cm/src/account_info.rs`, `Session::persona_name`). If it has
+  not arrived, `rebornd` waits up to 5 seconds once per Valve session, on a
+  task of its own so other questions on the connection are answered
+  meanwhile, and refuses the answer if the shadow session ended during
+  the wait. The messages are protocol 0.3; the proxy does not send them
+  to a 0.2 `rebornd` (it logs why instead).
+- **What is logged:** `shadow match`, `shadow mismatch`, `shadow mismatch
+  (no text at the result)`, or `shadow: no Reborn answer (<reason>)`.
+  Never the text or its digest: the call line of this position leaves out
+  register texts, the return line shows only the address, and `READS`
+  does not list it. A digest of a short name could be reversed by
+  guessing, so it is treated like the name.
+- **Reading a result:** a match means the returned text is the account's
+  persona name, which fits `GetPersonaName` only (`ClearRichPresence`
+  returns nothing, so `rax` would be a leftover). A mismatch does not
+  confirm `ClearRichPresence` by itself: it could also mean Reborn's name
+  differs (for example renamed during the run). An experiment plan with
+  predictions is committed before the first run, as for every experiment.
+- **Open before a run:** a recorded, redacted fixture of
+  `CMsgClientAccountInfo` (`reborn-cli friends --record` now writes
+  `account_info.bin` with the name replaced by `Player 1`), recorded by a
+  person on the test account.

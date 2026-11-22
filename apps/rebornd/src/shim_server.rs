@@ -48,17 +48,25 @@
 //! with `NotAllowed` before anything else. It ends when the connection
 //! closes, or for all at once when the Valve session ends.
 //!
-//! Whether an app is owned, and the stats, are account data: they are
-//! never logged.
+//! `ComparePersonaName { sha256 }` (ADR 0056, decision 2) is answered only
+//! on a shadow session: whether the SHA-256 of the account's persona name,
+//! from the account info Valve sent for the current session
+//! (`reborn_cm::Session::persona_name`, no request of its own), is the
+//! digest the proxy sent. Only `matches` goes back; the name and both
+//! digests stay in memory and are never logged.
+//!
+//! Whether an app is owned, the stats and the persona name are account
+//! data: they are never logged.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use reborn_cm::PersonaName;
 use reborn_core::run_cloud::{RunCloud, RunCloudError};
 use reborn_ipc::socket::LocalSocketStream;
 use reborn_shim_protocol::{
-    Bytes, DaemonMessage, PROTOCOL_VERSION, RefusalReason, Request, Response, ShimMessage,
-    UnavailableReason, answer_hello, decode, encode,
+    Bytes, DaemonMessage, NameDigest, PROTOCOL_VERSION, RefusalReason, Request, Response,
+    ShimMessage, UnavailableReason, answer_hello, decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, watch};
@@ -74,8 +82,10 @@ use crate::shim_stats::{RunStats, StatsBackend, StatsState, event_when_received,
 /// from the app's cloud quota once cloud writes exist.
 const MAX_LINE: usize = 64 * 1024;
 
-/// Most accepted stats requests one connection may wait on at once; a shim
-/// with more is closed. The recorded games ask once per run.
+/// Most open requests one connection may wait on at once, shared by
+/// accepted stats requests (waiting for their event) and persona name
+/// lookups (waiting for the account info); a shim with more is closed. The
+/// recorded games ask for stats once per run.
 const MAX_WAITING: usize = 16;
 
 /// A game process `rebornd` launched, or a shadow session's process
@@ -110,6 +120,9 @@ pub trait ShimHost: Send + Sync + 'static {
     /// response, after the registration is in [`Self::shadows`] or was
     /// refused.
     fn register_shadow(&self, app_id: u32) -> impl Future<Output = Response> + Send;
+    /// The account's persona name from the current Valve session (ADR
+    /// 0056), or why there is none. Never asks Valve for it.
+    fn persona_name(&self) -> impl Future<Output = Result<PersonaName, UnavailableReason>> + Send;
 }
 
 /// What the run may learn about ownership (ADR 0055, "What is cached"):
@@ -212,7 +225,31 @@ where
             debug!("closing shim connection after a bad line");
             break;
         };
-        let Reply { line: reply, stats } = reply;
+        let Reply {
+            line: reply,
+            stats,
+            persona,
+        } = reply;
+        // A persona name comparison may wait for the account info: it is
+        // answered by its own task, so later lines (ownership questions)
+        // are not held up, and it ends with the connection.
+        if let Some(ask) = persona {
+            waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
+            if waiting.len() >= MAX_WAITING {
+                debug!(
+                    "closing shim connection with too many open stats requests or persona name lookups"
+                );
+                break;
+            }
+            let host = Arc::clone(&host);
+            let outgoing = outgoing.clone();
+            waiting.push(tokio::spawn(async move {
+                if let Some(line) = persona_line(&*host, ask).await {
+                    let _ = outgoing.send(line);
+                }
+            }));
+            continue;
+        }
         match stats.map(|stats| (decided_event_line(&stats), stats)) {
             None => {
                 if outgoing.send(reply).is_err() {
@@ -231,11 +268,14 @@ where
                     break;
                 }
             }
-            // Still open: a task waits for the event. Only these count.
+            // Still open: a task waits for the event. These count toward
+            // `MAX_WAITING`, together with the persona name lookups.
             Some((None, stats)) => {
                 waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
                 if waiting.len() >= MAX_WAITING {
-                    debug!("closing shim connection with too many open stats requests");
+                    debug!(
+                        "closing shim connection with too many open stats requests or persona name lookups"
+                    );
                     break;
                 }
                 if outgoing.send(reply).is_err() {
@@ -289,10 +329,24 @@ fn decided_event_line(stats: &watch::Receiver<StatsState>) -> Option<Option<Stri
 
 /// What the daemon writes back for one line.
 struct Reply {
-    /// The response line.
+    /// The response line; empty when `persona` answers later.
     line: String,
     /// For an accepted `RequestStats`: where its event shows up.
     stats: Option<watch::Receiver<StatsState>>,
+    /// For `ComparePersonaName` on a shadow session: answered by
+    /// [`persona_line`] off the read loop.
+    persona: Option<PersonaAsk>,
+}
+
+/// A persona name comparison waiting for its answer (ADR 0056).
+struct PersonaAsk {
+    /// The request's `id`.
+    id: u64,
+    /// The shadow session it was asked on: its process and claim token.
+    pid: u32,
+    token: u64,
+    /// The proxy's digest; never logged.
+    sha256: NameDigest,
 }
 
 /// The reply to one line from a shim, `None` if the line is not a valid
@@ -392,6 +446,25 @@ async fn answer<H: ShimHost, B: StatsBackend>(
             log_cloud(connection.pid, "read", &response);
             response
         }
+        Request::ComparePersonaName { sha256 } => {
+            // Only a shadow session that still lasts; answered later.
+            if let (Some(pid), Some(token)) = (connection.pid, connection.shadow)
+                && connection.run(host).is_some_and(|run| run.shadow)
+            {
+                return Some(Reply {
+                    line: String::new(),
+                    stats: None,
+                    persona: Some(PersonaAsk {
+                        id: message.id,
+                        pid,
+                        token,
+                        sha256,
+                    }),
+                });
+            }
+            info!(pid = ?connection.pid, "shim persona name comparison refused");
+            not_allowed
+        }
     };
     reply_line(message.id, response, stats)
 }
@@ -402,7 +475,11 @@ fn reply_line(
     stats: Option<watch::Receiver<StatsState>>,
 ) -> Option<Reply> {
     let line = encode(&DaemonMessage::Response { id, response }).ok()?;
-    Some(Reply { line, stats })
+    Some(Reply {
+        line,
+        stats,
+        persona: None,
+    })
 }
 
 /// The answer to `ShadowHello` (ADR 0055): the version first, then the
@@ -537,6 +614,54 @@ fn log_cloud(pid: Option<u32>, what: &str, response: &Response) {
     }
 }
 
+/// The response line to a `ComparePersonaName` (ADR 0056) asked on a
+/// shadow session: the name of the current Valve session compared with
+/// the digest. The session is checked again after the wait: a logoff
+/// meanwhile ends every shadow session, and then nothing is compared.
+/// Neither the name, the digests nor the result is logged.
+async fn persona_line<H: ShimHost>(host: &H, ask: PersonaAsk) -> Option<String> {
+    let name = host.persona_name().await;
+    let still_open = host.shadows().get(ask.pid, ask.token).is_some();
+    let response = match name {
+        _ if !still_open => Response::Unavailable {
+            reason: UnavailableReason::NotAllowed,
+        },
+        Ok(name) => Response::PersonaNameCompared {
+            matches: name_matches(&name, &ask.sha256),
+        },
+        Err(reason) => Response::Unavailable { reason },
+    };
+    match &response {
+        Response::Unavailable { reason } => {
+            info!(
+                pid = ask.pid,
+                ?reason,
+                "shim persona name comparison refused"
+            );
+        }
+        _ => debug!(pid = ask.pid, "shim persona name compared"),
+    }
+    encode(&DaemonMessage::Response {
+        id: ask.id,
+        response,
+    })
+    .ok()
+}
+
+/// Whether `sha256` is the SHA-256 of the name's UTF-8 bytes.
+fn name_matches(name: &PersonaName, sha256: &NameDigest) -> bool {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    let digest = Sha256::digest(name.as_str().as_bytes()).iter().fold(
+        String::with_capacity(64),
+        |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        },
+    );
+    digest == sha256.as_hex()
+}
+
 /// The answer to `AppOwnership { app_id }` for the connection's run
 /// (ADR 0055): the session check first, then the app check, then the
 /// run's data.
@@ -581,6 +706,10 @@ mod tests {
     const SHADOW_GAME: u32 = 332_950;
     /// The shadow game's process (not launched by the daemon).
     const SHADOW_PID: u32 = 300;
+    /// The fake account's persona name (made up, non-ASCII on purpose).
+    const PERSONA: &str = "Zoë Testperson";
+    /// SHA-256 of [`PERSONA`]'s UTF-8 bytes.
+    const PERSONA_SHA256: &str = "28c47ad8ecd1f9876d8e7154472021dcc42c271c4cd05bdbb27bab3773f9b4ea";
 
     fn line(id: u64, request: Request) -> String {
         encode(&ShimMessage { id, request }).unwrap_or_default()
@@ -609,6 +738,12 @@ mod tests {
         ended: bool,
         signed_in: bool,
         shadows: ShadowSessions,
+        /// The fake account's persona name; `None` as if Valve sent none.
+        persona: Option<&'static str>,
+        /// If set, a persona name lookup waits for a permit first.
+        persona_gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// Whether the Valve session ends during a persona name lookup.
+        logoff_while_waiting: bool,
     }
 
     /// The fake account's owned apps, for shadow registrations.
@@ -639,6 +774,9 @@ mod tests {
                 ended: false,
                 signed_in: true,
                 shadows: ShadowSessions::default(),
+                persona: Some(PERSONA),
+                persona_gate: None,
+                logoff_while_waiting: false,
             }
         }
 
@@ -695,6 +833,25 @@ mod tests {
             );
             Response::Accepted
         }
+
+        async fn persona_name(&self) -> Result<PersonaName, UnavailableReason> {
+            if let Some(gate) = &self.persona_gate {
+                // Waits like the daemon does for account info not here yet.
+                if let Ok(permit) = gate.acquire().await {
+                    permit.forget();
+                }
+            }
+            if self.logoff_while_waiting {
+                // The Valve session ends while the name is awaited.
+                self.shadows.stop_all();
+            }
+            if !self.signed_in {
+                return Err(UnavailableReason::NotSignedIn);
+            }
+            self.persona
+                .map(|name| PersonaName::new(name.to_owned()))
+                .ok_or(UnavailableReason::NotReceived)
+        }
     }
 
     /// No Valve session in the ownership tests: they never need one.
@@ -709,7 +866,11 @@ mod tests {
         backend: &Arc<Fake>,
     ) -> Option<(DaemonMessage, Option<watch::Receiver<StatsState>>)> {
         let reply = answer(line, connection, runs, backend).await?;
-        Some((decode::<DaemonMessage>(&reply.line).ok()?, reply.stats))
+        let line = match reply.persona {
+            Some(ask) => persona_line(runs, ask).await?,
+            None => reply.line,
+        };
+        Some((decode::<DaemonMessage>(&line).ok()?, reply.stats))
     }
 
     async fn reply(line: &str, connection: &mut Connection) -> Option<DaemonMessage> {
@@ -1890,6 +2051,244 @@ mod tests {
             decode::<DaemonMessage>(&next(&mut lines).await).ok(),
             file_data(Some(&big))
         );
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+    }
+
+    fn compare(sha256: &str) -> String {
+        line(
+            8,
+            Request::ComparePersonaName {
+                sha256: NameDigest::from_hex(sha256).unwrap_or_else(|| panic!("no digest")),
+            },
+        )
+    }
+
+    fn compared(matches: bool) -> Option<DaemonMessage> {
+        response(8, Response::PersonaNameCompared { matches })
+    }
+
+    /// A shadow session on `proxy` for `runs`.
+    async fn shadow_proxy(runs: &Runs) -> Connection {
+        registered(runs, SHADOW_GAME).await;
+        let mut proxy = Connection::default();
+        let hello = reply_with(
+            &shadow_hello(SHADOW_PID, SHADOW_GAME),
+            &mut proxy,
+            runs,
+            &offline(),
+        )
+        .await;
+        assert_eq!(hello.map(|(m, _)| m), shadow_session());
+        proxy
+    }
+
+    thread_local! {
+        /// Where this thread's log lines go while [`logged`] runs.
+        static CAPTURED: std::cell::RefCell<Option<Vec<u8>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Writes into [`CAPTURED`] of the writing thread, if it captures.
+    struct ThreadLines;
+
+    impl std::io::Write for ThreadLines {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // `try_with`: a line written while the thread's storage is
+            // being torn down is dropped instead of panicking.
+            let _ = CAPTURED.try_with(|captured| {
+                if let Some(lines) = captured.borrow_mut().as_mut() {
+                    lines.extend_from_slice(buf);
+                }
+            });
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Everything `rebornd` logs on this thread while `work` runs, at every
+    /// level. A global subscriber, installed once for the test binary: a
+    /// scoped one would race with other test threads over tracing's
+    /// per-callsite interest cache and miss lines now and then.
+    async fn logged<F: Future<Output = ()>>(work: F) -> String {
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        INSTALLED.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_ansi(false)
+                .with_writer(|| ThreadLines)
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        });
+        CAPTURED.with(|captured| *captured.borrow_mut() = Some(Vec::new()));
+        tracing::info!("capture started");
+        // The tests run on a current-thread runtime: `work` stays on this
+        // thread.
+        work.await;
+        let bytes = CAPTURED.with(|captured| captured.borrow_mut().take().unwrap_or_default());
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[test]
+    fn the_fake_digest_is_the_names_sha256() {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(PERSONA.as_bytes());
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(hex, PERSONA_SHA256);
+    }
+
+    #[tokio::test]
+    async fn a_shadow_session_compares_the_persona_name_and_logs_nothing_of_it() {
+        let runs = Runs::new();
+        let other = "0".repeat(64);
+        let log = logged(async {
+            let mut proxy = shadow_proxy(&runs).await;
+            let same = reply(&compare(PERSONA_SHA256), &mut proxy, &runs).await;
+            assert_eq!(same, compared(true));
+            // Upper-case hex is the same digest.
+            let upper = reply(
+                &compare(&PERSONA_SHA256.to_ascii_uppercase()),
+                &mut proxy,
+                &runs,
+            )
+            .await;
+            assert_eq!(upper, compared(true));
+            let different = reply(&compare(&other), &mut proxy, &runs).await;
+            assert_eq!(different, compared(false));
+        })
+        .await;
+        assert!(log.contains("capture started"), "the capture works");
+        assert!(
+            log.contains("persona name compared"),
+            "the daemon's lines are captured"
+        );
+        for secret in [
+            PERSONA,
+            "Zo",
+            "Testperson",
+            PERSONA_SHA256,
+            &PERSONA_SHA256[..16],
+        ] {
+            // The message names neither the value nor the log, so a failure
+            // prints no persona data.
+            assert!(!log.contains(secret), "a persona value is in the log");
+        }
+        assert!(
+            !log.contains("matches"),
+            "the result is the proxy's to log: {log}"
+        );
+
+        async fn reply(line: &str, proxy: &mut Connection, runs: &Runs) -> Option<DaemonMessage> {
+            reply_with(line, proxy, runs, &offline())
+                .await
+                .map(|(m, _)| m)
+        }
+    }
+
+    #[tokio::test]
+    async fn the_persona_name_is_only_for_shadow_sessions() {
+        let runs = Runs::new();
+        // No session on the connection.
+        let mut nobody = Connection::default();
+        let answered = reply_with(&compare(PERSONA_SHA256), &mut nobody, &runs, &offline()).await;
+        assert_eq!(
+            answered.map(|(m, _)| m),
+            unavailable(8, UnavailableReason::NotAllowed)
+        );
+        // A launched shim-mode run: not a shadow, not answered.
+        let mut game = Connection::default();
+        let hello_line = hello(100, PROTOCOL_VERSION);
+        assert!(matches!(
+            reply_with(&hello_line, &mut game, &runs, &offline()).await,
+            Some((
+                DaemonMessage::Response {
+                    response: Response::Session(_),
+                    ..
+                },
+                _
+            ))
+        ));
+        let answered = reply_with(&compare(PERSONA_SHA256), &mut game, &runs, &offline()).await;
+        assert_eq!(
+            answered.map(|(m, _)| m),
+            unavailable(8, UnavailableReason::NotAllowed)
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_persona_name_there_is_no_comparison() {
+        let runs = Runs {
+            persona: None,
+            ..Runs::new()
+        };
+        let mut proxy = shadow_proxy(&runs).await;
+        let answered = reply_with(&compare(PERSONA_SHA256), &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            answered.map(|(m, _)| m),
+            unavailable(8, UnavailableReason::NotReceived)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_logoff_during_the_wait_refuses_the_comparison() {
+        let runs = Runs {
+            logoff_while_waiting: true,
+            ..Runs::new()
+        };
+        let mut proxy = shadow_proxy(&runs).await;
+        let answered = reply_with(&compare(PERSONA_SHA256), &mut proxy, &runs, &offline()).await;
+        assert_eq!(
+            answered.map(|(m, _)| m),
+            unavailable(8, UnavailableReason::NotAllowed)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_waiting_comparison_holds_up_nothing_and_ends_with_the_connection() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let runs = Arc::new(Runs {
+            persona_gate: Some(Arc::clone(&gate)),
+            ..Runs::new()
+        });
+        registered(&runs, SHADOW_GAME).await;
+        let valve = Fake::new(Link::Connected, Vec::new());
+        let (mut lines, mut write, served) = connect_to(&valve, &runs);
+        let send = |text: String| text.into_bytes();
+        write
+            .write_all(&send(shadow_hello(SHADOW_PID, SHADOW_GAME)))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(next(&mut lines).await.contains("\"session\""));
+        write
+            .write_all(&send(compare(PERSONA_SHA256)))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        write
+            .write_all(&send(ownership(SHADOW_GAME)))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        // The ownership answer comes first, while the comparison waits.
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            response(4, Response::Ownership { owned: true })
+        );
+        gate.add_permits(1);
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            compared(true)
+        );
+        // Another comparison that never gets its answer: closing the
+        // connection ends it, and the connection's task finishes.
+        write
+            .write_all(&send(compare(PERSONA_SHA256)))
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
         drop((lines, write));
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(5), served)

@@ -26,11 +26,12 @@ use steam_vent_proto_steam::enums_clientserver::EMsg;
 use steam_vent_proto_steam::steammessages_clientserver::CMsgClientLicenseList;
 use steam_vent_proto_steam::steammessages_clientserver_friends::CMsgClientFriendsList;
 use steam_vent_proto_steam::steammessages_clientserver_login::{
-    CMsgClientHeartBeat, CMsgClientLoggedOff,
+    CMsgClientAccountInfo, CMsgClientHeartBeat, CMsgClientLoggedOff,
 };
 use tracing::{debug, info, warn};
 
 use crate::Secret;
+use crate::account_info::AccountInfoSlot;
 use crate::friends::FriendsSlot;
 use crate::guard::MemoryGuardStore;
 use crate::pics::License;
@@ -129,6 +130,8 @@ pub struct Session {
     pub(crate) licenses: Vec<License>,
     /// The friends list, sent by Steam after logon (ADR 0020).
     pub(crate) friends: Arc<FriendsSlot>,
+    /// The account info Steam sends unasked around logon (ADR 0056).
+    pub(crate) account_info: Arc<AccountInfoSlot>,
 }
 
 impl Session {
@@ -225,12 +228,13 @@ pub async fn login_with_password<H: AuthConfirmationHandler>(
         .ok_or(Error::MissingRefreshToken)?;
     let new_guard_data = take(&received).map(Secret::new);
 
-    let (licenses, friends) = receive_initial(&connection).await?;
+    let (licenses, friends, account_info) = receive_initial(&connection).await?;
     let session = Session {
         connection,
         account: account.to_owned(),
         licenses,
         friends,
+        account_info,
     };
     info!(account, "logged in with password");
     Ok(PasswordLogin {
@@ -281,12 +285,13 @@ pub async fn login_with_token(account: &str, refresh_token: &Secret) -> Result<S
         }
     };
     info!(account, "logged in with refresh token");
-    let (licenses, friends) = receive_initial(&connection).await?;
+    let (licenses, friends, account_info) = receive_initial(&connection).await?;
     Ok(Session {
         connection,
         account: account.to_owned(),
         licenses,
         friends,
+        account_info,
     })
 }
 
@@ -319,15 +324,21 @@ fn take(slot: &Arc<Mutex<Option<String>>>) -> Option<String> {
 /// It may already have arrived while logging in, so the messages steam-vent
 /// kept unprocessed are checked too. The same holds for the friends list
 /// (node-steam-user `components/friends.js`, `ClientFriendsList` handler),
-/// which is kept for [`Session::friends`] or awaited in the background.
+/// which is kept for [`Session::friends`] or awaited in the background,
+/// and for the account info (node-steam-user `components/account.js`,
+/// `ClientAccountInfo` handler), which is followed in the background for
+/// [`Session::persona_name`].
 async fn receive_initial(
     connection: &Connection,
-) -> Result<(Vec<License>, Arc<FriendsSlot>), Error> {
+) -> Result<(Vec<License>, Arc<FriendsSlot>, Arc<AccountInfoSlot>), Error> {
     // Subscribe first, so nothing can slip through between the two checks.
     let licenses_incoming = connection.one::<CMsgClientLicenseList>();
     // A subscription, not `one`: an unused one-time wait would swallow the
     // first incremental friends list later (see `FriendsSlot`).
     let friends_incoming = connection.on::<CMsgClientFriendsList>();
+    // A subscription for the whole session: Steam may send it again.
+    let account_info_incoming = connection.on::<CMsgClientAccountInfo>();
+    let account_info = Arc::new(AccountInfoSlot::default());
     let mut licenses = None;
     let friends = Arc::new(FriendsSlot::default());
     let mut friends_found = false;
@@ -340,13 +351,18 @@ async fn receive_initial(
             if let Ok(list) = raw.into_message::<CMsgClientLicenseList>() {
                 licenses = Some(licenses_from(list));
             }
-        } else if kind == MsgKind::from(EMsg::k_EMsgClientFriendsList)
-            && let Ok(list) = raw.into_message::<CMsgClientFriendsList>()
+        } else if kind == MsgKind::from(EMsg::k_EMsgClientFriendsList) {
+            if let Ok(list) = raw.into_message::<CMsgClientFriendsList>() {
+                friends.store(list);
+                friends_found = true;
+            }
+        } else if kind == MsgKind::from(EMsg::k_EMsgClientAccountInfo)
+            && let Ok(info) = raw.into_message::<CMsgClientAccountInfo>()
         {
-            friends.store(list);
-            friends_found = true;
+            account_info.store(&info);
         }
     }
+    account_info.follow_in_background(account_info_incoming);
     if !friends_found {
         friends.wait_in_background(friends_incoming);
     }
@@ -357,7 +373,7 @@ async fn receive_initial(
             Err(_) => return Err(Error::LicenseListTimeout),
         },
     };
-    Ok((licenses, friends))
+    Ok((licenses, friends, account_info))
 }
 
 fn licenses_from(list: CMsgClientLicenseList) -> Vec<License> {

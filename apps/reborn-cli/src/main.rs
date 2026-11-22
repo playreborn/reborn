@@ -193,7 +193,8 @@ enum Command {
         action: Option<FriendAction>,
         /// Instead of listing, record the friends list and persona answers as
         /// redacted test fixtures into this folder (SteamIDs and names
-        /// replaced).
+        /// replaced), and the account info Steam sent at logon with the
+        /// account's own name replaced (`account_info.bin`).
         #[arg(long)]
         record: Option<PathBuf>,
         /// Account to use (defaults to the last account that signed in).
@@ -1331,6 +1332,11 @@ async fn friends(account: Option<String>, record: Option<&Path>) -> Result<()> {
         std::fs::write(dir.join("friends_list.bin"), &recording.friends_list)?;
         for (index, bytes) in recording.persona_states.iter().enumerate() {
             std::fs::write(dir.join(format!("persona_state_{index}.bin")), bytes)?;
+        }
+        // Only the name field, replaced by `Player 1` (ADR 0056).
+        match session.record_account_info() {
+            Some(bytes) => std::fs::write(dir.join("account_info.bin"), bytes)?,
+            None => println!("Steam sent no account info in this session."),
         }
         println!(
             "Recorded the friends list and {} persona messages (redacted) into {}.",

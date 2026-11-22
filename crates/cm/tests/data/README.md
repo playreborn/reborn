@@ -13,6 +13,7 @@
 | `encrypted_app_ticket.bin` | `CMsgClientRequestEncryptedAppTicketResponse` (OK) for app 480 (Spacewar), which has an encryption key; empty userdata | 2026-11-20, first test account. Redacted: `encrypted_ticket` replaced by zeros of the same length (128), `crc_encryptedticket` set to 0; version and sizes kept. Checked by hand |
 | `ownership_ticket_not_owned.bin`, `encrypted_app_ticket_not_owned.bin` | Both answers for app 70 (Half-Life), which the account does not own: EResult 15 (AccessDenied), no ticket | 2026-11-20, first test account; nothing to redact. Checked by hand |
 | `appinfo_3419430.vdf` | App info of app 3419430 (Bongo Cat, free), text VDF as written by `reborn-cli appinfo` | 2026-11-20, test account, Reborn commit after `1af3fb1`; unchanged (public store data, no account data) |
+| `account_info.bin` | `CMsgClientAccountInfo` (EMsg 768) Steam sent unasked at logon, written by `reborn-cli friends --record` | 2026-11-22, test account, Reborn commit after `7fb99f2`; redacted by Reborn: `persona_name` replaced by `Player 1`, every other field (country, flags, authed computers, …) dropped. Checked by hand: 10 bytes, only field 1 = "Player 1"; no real name, country or ID |
 
 App info is public: it describes the app, not the account that asked for
 it. Still check every new file by hand before committing it (see

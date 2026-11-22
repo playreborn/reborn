@@ -1834,6 +1834,29 @@ impl ShimHost for Daemon {
         }
         ShimResponse::Accepted
     }
+
+    /// The persona name of the current Valve session (ADR 0056), from the
+    /// account info Valve sent unasked at logon; nothing is requested.
+    /// Never signs in. Never logged.
+    async fn persona_name(
+        &self,
+    ) -> Result<reborn_cm::PersonaName, reborn_shim_protocol::UnavailableReason> {
+        use reborn_shim_protocol::UnavailableReason;
+        match self.link().await {
+            Link::Connected => {}
+            Link::Offline => return Err(UnavailableReason::Offline),
+            Link::SignedOut => return Err(UnavailableReason::NotSignedIn),
+        }
+        let session = match self.session.try_lock() {
+            Ok(session) => session.clone(),
+            Err(_) => None,
+        };
+        let session = session.ok_or(UnavailableReason::Offline)?;
+        session
+            .persona_name()
+            .await
+            .ok_or(UnavailableReason::NotReceived)
+    }
 }
 
 /// The cloud folder a shim-mode run of `app_id` reads (ADR 0055):

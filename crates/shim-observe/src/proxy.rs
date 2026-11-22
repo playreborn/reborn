@@ -174,6 +174,11 @@ const READS: &[(&str, usize, Read)] = &[
     // `docs/shim/meanings.md`, experiment 14: candidate `GetResultItems`
     // writes a number of items at the address in `r9`.
     ("STEAMINVENTORY_INTERFACE_V003", 1, Read::OutputBytes("r9")),
+    // `docs/shim/meanings.md`, experiment 24: candidate `CreateLocalUser`
+    // writes the new pipe handle at the address in `rdx` (not account
+    // data; ADR 0053).
+    ("SteamClient018", 3, Read::OutputBytes("rdx")),
+    ("SteamClient019", 3, Read::OutputBytes("rdx")),
 ];
 
 /// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).

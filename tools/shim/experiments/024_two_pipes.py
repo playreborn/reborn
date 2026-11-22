@@ -78,7 +78,7 @@ KIND = {
     26: re.compile(r"^SteamController\d+$"),
     38: re.compile(r"^SteamInput\d+$"),
 }
-PLAN_COMMITTED = datetime(2099, 1, 1, 0, 0, 0)  # set to the final plan commit's time in a follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 14, 24, 36)  # commit 79db875 on loop/plan-11a (final plan)
 RESULT = re.compile(r"^\d+ ms ThreadId\(\d+\) (\S+?)#(\d+) result (\d+) (.*)$")
 STAND_IN = re.compile(r"replaced by stand-in (\d+) \(0x[0-9a-f]+\) for (\S+)$")
 low = observelog.low32

@@ -2654,7 +2654,8 @@ per-interface getters, 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
 The script rejects a log given twice, maps each log to its game through
 `starts.log` (`observelog.app_of`), needs one log of each game and
 rejects a log whose start (`observelog.start_of`) is earlier than the
-plan commit (`PLAN_COMMITTED`, set in a follow-up commit). It prints only
+plan commit (`PLAN_COMMITTED`: 2026-11-22 14:24:36 local time, commit
+`79db875` on `loop/plan-11a`). It prints only
 positions, small handle values, counts and match/MISMATCH.
 
 **Games to run:** Gravitas (1067310) and Dark Deception (332950), each

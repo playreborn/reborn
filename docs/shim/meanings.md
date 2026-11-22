@@ -1621,6 +1621,35 @@ one in size (24), app ID (bytes 0..4) and `EResult` (bytes 8..12), with
 A mismatch or "no Reborn answer" is recorded as such; nothing is
 changed in the shim to make it match without a new plan.
 
+**Result of experiment 30** (agent runs by the main session after the
+plan time 18:57:28, proxy built from PR #36's head `3d2e878`; `rebornd`
+signed in with the stored login while the official client ran; logs
+recorded by `run.sh`: `observe-52568` Cave Crawlers, `observe-59640`
+Gravitas, `observe-62168` Dark Deception): **match**, checked by the
+script.
+
+```text
+observe-52568.log (Cave Crawlers) A: 1 step-4b lines for callback 0x44d -> match
+observe-52568.log (Cave Crawlers) B: per 0x44d [1 shadow line(s): 1], 0 shadow lines without a 0x44d -> match
+observe-52568.log (Cave Crawlers) C: shadow notes {'match': 1} -> match
+observe-52568.log (Cave Crawlers): match
+observe-59640.log (Gravitas) A: 1 step-4b lines for callback 0x44d -> match
+observe-59640.log (Gravitas) B: per 0x44d [1 shadow line(s): 1], 0 shadow lines without a 0x44d -> match
+observe-59640.log (Gravitas) C: shadow notes {'match': 1} -> match
+observe-59640.log (Gravitas): match
+observe-62168.log (Dark Deception) A: 1 step-4b lines for callback 0x44d -> match
+observe-62168.log (Dark Deception) B: per 0x44d [1 shadow line(s): 1], 0 shadow lines without a 0x44d -> match
+observe-62168.log (Dark Deception) C: shadow notes {'match': 1} -> match
+observe-62168.log (Dark Deception): match
+experiment 30: match
+```
+
+As fixed beforehand: in three games the stats-received callback Reborn
+would deliver agrees with the official one in size, app ID and
+`EResult` (ADR 0055 stage 1). No logoff, kick or Steam Guard prompt
+(none in `rebornd`'s local log); `rebornd` was shut down afterwards. The
+"What stays open" items above stay open.
+
 ## Callback delivery: `Steam_BGetCallback`, `Steam_FreeLastCallback`, `Steam_GetAPICallResult` (loop iteration 9b)
 
 Pages read 2026-11-22, both opened without signing in:

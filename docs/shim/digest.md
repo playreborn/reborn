@@ -16,6 +16,9 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: experiment 30 **matched**: the stats shadow for callback
+  0x44d agreed with the official client in Cave Crawlers, Gravitas and
+  Dark Deception (size, app ID, result; Steam ID not compared). PR #39.
 - 2026-11-22: experiment 30 planned (loop iteration 14a, parallel agent,
   no runs): first live run of the 0x44d stats shadow in Cave Crawlers,
   Gravitas and Dark Deception; prediction: every step-4b 0x44d line gets

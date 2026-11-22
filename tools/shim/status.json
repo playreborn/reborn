@@ -253,11 +253,11 @@
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
     "0": [
       "candidate",
-      "RequestCurrentStats"
+      "RequestCurrentStats or StoreStats (start: RequestCurrentStats fits)"
     ],
     "10": [
       "candidate",
-      "StoreStats"
+      "StoreStats or RequestCurrentStats (close: StoreStats fits)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
@@ -269,7 +269,7 @@
   "SteamInput001": {
     "2": [
       "candidate",
-      "RunFrame"
+      "shape only: per-frame call like RunFrame"
     ]
   },
   "SteamFriends017": {

@@ -1015,7 +1015,9 @@ again 2026-11-22), `ISteamUser` (2026-11-21),
 <https://partner.steamgames.com/doc/api/ISteamFriends> (2026-11-22),
 `ISteamInput` (2026-11-22). Correction made before the runs: the first
 version of this list named pages that had not been re-read for these
-entries; each candidate below was then checked on its page. Each entry
+entries; `RequestUserStats` and the `ISteamFriends` entry were then
+checked on their pages, the other entries rest on the pages as read on
+the dates given. Each entry
 is a candidate unless an experiment below confirms it.
 
 - **`STEAMUSERSTATS_INTERFACE_VERSION012` positions 0 and 10:** position 0
@@ -1041,8 +1043,11 @@ is a candidate unless an experiment below confirms it.
   with the handles of connected controllers and returns how many; no
   controller was connected. Candidate: `GetConnectedControllers`.
 - **`SteamInput001` position 2:** every frame in four games, `rdx` an
-  address, the result register a leftover. Candidate: `RunFrame` (as for
-  `SteamInput006` position 3).
+  address, the result register a leftover. Only a guess from the shape:
+  a per-frame function like `RunFrame` of `SteamInput006` position 3.
+  `SteamInput001` is an older version than the one the `ISteamInput` page
+  describes, and the address in `rdx` is not explained by that; no page
+  backs this entry yet.
 - **`SteamUser023` position 1:** once early, no argument used, result 1.
   The `ISteamUser` page documents several functions without arguments
   that return true or false; whether the client is connected to Steam is
@@ -1087,6 +1092,10 @@ observe-8424.log A: position 0 at [63] ms, position 10 at [] ms -> MISMATCH
 observe-8424.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
 experiment 12: MISMATCH
 ```
+
+The games were closed about 86 to 89 seconds after the proxy started,
+not after about 30 seconds as planned (the waits of `run.sh` add up);
+no verdict depends on that.
 
 The script as committed reports **MISMATCH**, so nothing is confirmed
 (ADR 0051 needs a script-checked match). Why, without changing the

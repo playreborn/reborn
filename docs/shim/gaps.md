@@ -98,17 +98,17 @@ Positions recorded: 205; confirmed: 94; open: 111.
 | candidate | 14 | `SteamInput006` | 3 | RunFrame |
 | candidate | 11 | `SteamUser023` | 2 | GetSteamID |
 | candidate | 9 | `SteamClient020` | 34 | SetWarningMessageHook |
-| candidate | 7 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 0 | RequestCurrentStats |
+| candidate | 7 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 0 | RequestCurrentStats or StoreStats (start: RequestCurrentStats fits) |
 | candidate | 6 | `SteamClient021` | 32 | SetWarningMessageHook |
 | candidate | 5 | `SteamFriends017` | 0 | GetPersonaName |
 | candidate | 5 | `SteamUser020` | 2 | GetSteamID |
 | candidate | 5 | `SteamUser023` | 1 | BLoggedOn (or another no-argument bool) |
 | candidate | 5 | `SteamUtils009` | 9 | GetAppID |
 | candidate | 4 | `SteamController007` | 2 | RunFrame |
-| candidate | 4 | `SteamInput001` | 2 | RunFrame |
+| candidate | 4 | `SteamInput001` | 2 | shape only: per-frame call like RunFrame |
 | candidate | 4 | `SteamUtils009` | 14 | GetCurrentBatteryPower |
 | candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 0 | RequestCurrentStats or StoreStats |
-| candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 10 | StoreStats |
+| candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 10 | StoreStats or RequestCurrentStats (close: StoreStats fits) |
 | candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 15 | RequestUserStats |
 | candidate | 3 | `SteamClient023` | 30 | SetWarningMessageHook |
 | candidate | 3 | `SteamInput006` | 0 | Init |

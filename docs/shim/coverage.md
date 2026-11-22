@@ -60,7 +60,7 @@ Positions are listed in the order of their numbers.
 | `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | candidate: 0 GetPersonaName |
 | `SteamFriends018` | 1 | 6 9 36 | not known |
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
-| `SteamInput001` | 4 | 2 | candidate: 2 RunFrame |
+| `SteamInput001` | 4 | 2 | candidate: 2 shape only: per-frame call like RunFrame |
 | `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | candidate: 0 Init, 3 RunFrame, 6 GetConnectedControllers |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | not known |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
@@ -74,7 +74,7 @@ Positions are listed in the order of their numbers.
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
 | `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn (or another no-argument bool), 2 GetSteamID |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | candidate: 0 RequestCurrentStats or StoreStats, 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat; confirmed: 12 GetAchievementDisplayAttribute |
-| `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | candidate: 0 RequestCurrentStats, 10 StoreStats |
+| `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | candidate: 0 RequestCurrentStats or StoreStats (start: RequestCurrentStats fits), 10 StoreStats or RequestCurrentStats (close: StoreStats fits) |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 15 RequestUserStats |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | candidate: 9 GetAppID, 14 GetCurrentBatteryPower |
 | `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower |

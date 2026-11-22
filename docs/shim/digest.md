@@ -9,7 +9,7 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
-- 2026-11-22: loop iteration 3: eight new candidates (UserStats012 0/10,
+- 2026-11-22: loop iteration 3: seven new candidates and one narrowed (UserStats012 0/10,
   UserStats013 15, SteamInput006 0/6, SteamInput001 2, SteamUser023 1,
   SteamFriends017 0). Experiment 12 **mismatched** as scripted: the check
   applied each prediction to all six logs, not only to the games it named;

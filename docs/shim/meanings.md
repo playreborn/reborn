@@ -726,8 +726,9 @@ Status: positions 0 (`CreateSteamPipe`), 2 (`ConnectToGlobalUser`), 9
 (`GetISteamUtils`), 12 (`GetISteamGenericInterface`) and the
 per-interface `GetISteam…` positions for `SteamClient020`, `021` and
 `023`, and positions 4, 1, 23 (`ReleaseUser`, `BReleaseSteamPipe`,
-`BShutdownIfAllPipesClosed`) for `SteamClient020`, matched experiment 7
-and wait for the maintainer's OK (ADR 0044). Which handle is the pipe
+`BShutdownIfAllPipesClosed`) for `SteamClient020`, matched experiment 7;
+the maintainer gave the OK on 2026-11-22 (ADR 0044), so they are
+confirmed for these versions. Which handle is the pipe
 and which the user stays open (limit above).
 
 ## `STEAMAPPS_INTERFACE_VERSION008`
@@ -817,8 +818,11 @@ What the experiment shows is limited by the account: it cannot tell
 "DLC owned and installed" from "subscribed to the app" at position 7,
 and it rules the other no-argument functions out at position 0 only by
 their expected value for this account. Both stay candidates in that
-sense; position 7 is narrowed to two functions and position 0 to one,
-waiting for the maintainer's OK (ADR 0044).
+sense; position 7 is narrowed to two functions and position 0 to one; the
+maintainer gave the OK on 2026-11-22 (ADR 0044): position 0 is confirmed
+as `BIsSubscribed`, position 7 as one of `BIsDlcInstalled` and
+`BIsSubscribedApp` (the same answer for every DLC the account does not
+own).
 
 Evidence (excerpt; floating-point registers and the `rcx` note left
 out; Cave Crawlers, Plant Therapy, Dark Deception):
@@ -871,7 +875,8 @@ at 02:57:11):
 - (3) **Matches.** All 16 calls returned 1.
 
 Positions 5 and 6 of `SteamUtils010` matched `GetImageSize` and
-`GetImageRGBA` and wait for the maintainer's OK (ADR 0044). Only one game
+`GetImageRGBA`; the maintainer gave the OK on 2026-11-22 (ADR 0044), so
+they are confirmed for `SteamUtils010`. Only one game
 called them; whether the handles name avatars or other images is not
 known (the handles come from other interfaces, not covered here).
 

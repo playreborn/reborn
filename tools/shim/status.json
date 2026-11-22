@@ -280,7 +280,7 @@
   },
   "STEAMINVENTORY_INTERFACE_V003": {
     "6": [
-      "candidate",
+      "confirmed",
       "GetAllItems"
     ],
     "1": [
@@ -288,7 +288,7 @@
       "GetResultItems"
     ],
     "3": [
-      "candidate",
+      "confirmed",
       "GetResultTimestamp"
     ]
   }

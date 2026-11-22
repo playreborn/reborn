@@ -1206,3 +1206,22 @@ Cave Crawlers and Bongo Cat, each closed by a close request.
 Position 1 is recorded, not predicted (the item count it writes is read
 but not part of a prediction). Each log must be recorded by `run.sh` for
 its game in `starts.log`, one log per game.
+
+**Result of experiment 14** (agent runs after the plan was committed at
+08:33:53; logs recorded by `run.sh` in `starts.log`: `observe-31272`
+Cave Crawlers, `observe-47280` Bongo Cat): **match**, checked by the
+script.
+
+```text
+observe-31272.log (Cave Crawlers) A: 1 position-6 calls, handles [7] -> match
+observe-47280.log (Bongo Cat) A: 1 position-6 calls, handles [5] -> match
+observe-47280.log (Bongo Cat) B: 7 position-3 calls, result minus log time [-87, -87, -87, -87, -87, -87, -27] s -> match
+experiment 14: match
+```
+
+Cave Crawlers called position 6 once this time (seven times in its
+reference run). Under ADR 0051, positions 6 and 3 of
+`STEAMINVENTORY_INTERFACE_V003` are confirmed as `GetAllItems` and
+`GetResultTimestamp`; position 1 stays a candidate (`GetResultItems`).
+Not in the shim yet: it has no inventory object, and an honest answer
+needs the account's inventory from Valve's servers.

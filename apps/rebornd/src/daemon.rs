@@ -118,7 +118,6 @@ impl Jobs {
     }
 }
 
-/// A password sign-in that is still running (ADR 0014).
 /// The licensed app IDs of one Valve session.
 struct LicensedApps {
     /// The session they came from. A weak reference keeps the allocation,
@@ -134,6 +133,7 @@ impl LicensedApps {
     }
 }
 
+/// A password sign-in that is still running (ADR 0014).
 struct PendingSignIn {
     id: u64,
     /// Taken by the first `submit_guard_code`.

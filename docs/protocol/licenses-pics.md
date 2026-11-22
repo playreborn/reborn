@@ -42,9 +42,13 @@ How Reborn builds the library (`reborn-cm`, `src/session.rs`, `src/pics.rs`,
   exclude free licenses ("sub 0 is covered by NoCost") and always drops
   expired ones ("If expired, filter it out, regardless of the filter
   options"). SteamKit2 `ELicenseFlags`. Checked 2026-11-22.
-- **Verified:** the requests are the library's (live 2026-11-19); the
-  ownership use itself is not yet observed against the official client
-  (ADR 0055 stage 1, shadow mode).
+- **Verified:** the request kinds are the library's (live 2026-11-19),
+  but the library leaves package 0 out, so a package-info request that
+  includes package 0 has not been seen live, and there is no recorded
+  package-info fixture yet (needed before stage 1). The ownership use
+  itself is not yet observed against the official client (ADR 0055
+  stage 1, shadow mode). A running game keeps the snapshot of its launch
+  after a sign-out or account switch.
 
 ### Package info
 

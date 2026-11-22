@@ -1243,3 +1243,45 @@ Telling them apart needs another experiment. Lesson for the loop: before
 planning, list every function on the page with the recorded shape, not
 only the best fit. Not in the shim yet: it has no inventory object, and
 an honest answer needs the account's inventory from Valve's servers.
+
+## `STEAMREMOTESTORAGE_INTERFACE_VERSION016` position 13 (loop iteration 7)
+
+- **Recorded** (reference runs): Bongo Cat and Linsips called it once
+  early, the only `STEAMREMOTESTORAGE_INTERFACE_VERSION016` call of the
+  run, with a file name as text in `rdx` (`presets.json`,
+  `progress.dat`); the result was 0 both times. Neither file had been
+  written to the test account's cloud.
+- **Fit:** the same shape as position 13 of
+  `STEAMREMOTESTORAGE_INTERFACE_VERSION014` above (a file name, a
+  true/false result; there the result was 1 for a file that existed).
+  The page (<https://partner.steamgames.com/doc/api/ISteamRemoteStorage>)
+  documents several functions that take only a file name and return true
+  or false. Candidates as for 014: `FileExists`, `FilePersisted` or
+  `FileForget`.
+- **No experiment yet:** all three return false for a file that is not
+  there and true for one that is; telling them apart needs to see
+  whether a file is still synced after the call, which the proxy cannot
+  observe. `FileForget` changes what is synced, so a shim answer waits
+  until the meaning is confirmed.
+
+## UserStats: reading a value by name (loop iteration 7)
+
+Page: <https://partner.steamgames.com/doc/api/ISteamUserStats> (read
+2026-11-22 for experiment 12).
+
+- **`STEAMUSERSTATS_INTERFACE_VERSION012` position 6:** One's Own Exile
+  called it 16 times early with a name as text in `rdx` (for example
+  `Adornments`), `r8` an address, result 1; Fallout Shelter 35 times with
+  no text in `rdx`, result 0. Same shape as position 6 of
+  `STEAMUSERSTATS_INTERFACE_VERSION011` above. Candidates as there:
+  `GetAchievement`, `GetStat` or `GetGlobalStat`.
+- **`STEAMUSERSTATS_INTERFACE_VERSION013` position 5:** Cartapli called it
+  19 times within 5 ms at start, each with an achievement-like name as
+  text in `rdx` (`CLEAR_TUTORIAL_ACHIEVEMENT` and so on), `r8` an address,
+  `r9` the length of the name plus one (a leftover); 11 results were 1, 8
+  were 0. Bongo Cat called it once with `PET_1`, result 1. Candidates:
+  the page's functions that take a name and an output pointer and return
+  true or false: `GetAchievement`, `GetStat` (two kinds),
+  `GetAchievementAchievedPercent`. Not tested yet: telling them apart
+  needs the bytes written at `r8` (ADR 0043, 0053) and a game whose
+  achievement state is known.

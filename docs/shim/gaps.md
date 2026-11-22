@@ -12,9 +12,6 @@ Positions recorded: 205; confirmed: 98; open: 107.
 | not known | 3 | `SteamClient020` | 22 |  |
 | not known | 3 | `SteamClient021` | 22 |  |
 | not known | 3 | `SteamUtils010` | 34 |  |
-| not known | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 |  |
-| not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 |  |
-| not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 5 |  |
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 37 |  |
 | not known | 2 | `SteamClient023` | 21 |  |
 | not known | 2 | `SteamFriends017` | 3 |  |
@@ -111,6 +108,9 @@ Positions recorded: 205; confirmed: 98; open: 107.
 | candidate | 2 | `STEAMAPPS_INTERFACE_VERSION008` | 4 | GetCurrentGameLanguage or GetAvailableGameLanguages |
 | candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 | GetResultItems or SerializeResult |
 | candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 | GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) |
+| candidate | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 | FileExists, FilePersisted or FileForget |
+| candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | GetAchievement, GetStat or GetGlobalStat |
+| candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 5 | GetAchievement, GetStat or GetAchievementAchievedPercent |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |

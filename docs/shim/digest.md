@@ -9,6 +9,13 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 7: `STEAMREMOTESTORAGE_INTERFACE_VERSION016`
+  13 recorded as the same candidates as 014 13 (`FileExists`,
+  `FilePersisted` or `FileForget`); no experiment, the proxy cannot see
+  what is synced. ADR 0053 (maintainer): the agent adds proxy reads
+  itself with a review pass. PR #16 merged.
+  Also recorded as candidates: UserStats012 6 and UserStats013 5
+  (read a value by name: `GetAchievement`, `GetStat` and similar).
 - 2026-11-22: ADR 0052 (maintainer): no daily start cap, 1 minute between
   starts, 50 free games a day. PR #15.
 - 2026-11-22: loop iteration 6: `STEAMINVENTORY_INTERFACE_V003`: the proxy

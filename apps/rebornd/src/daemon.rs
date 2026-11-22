@@ -25,6 +25,8 @@ use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tracing::{info, warn};
 
+use crate::shim_server::{RunOwnership, ShimRun};
+
 /// How often the connection to Steam is checked (ADR 0025).
 const PROBE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -132,9 +134,9 @@ pub struct Daemon {
     next_sign_in: AtomicU64,
     /// Apps whose game process (started by us) is still running.
     running: Arc<Mutex<BTreeSet<u32>>>,
-    /// Process ID of each game process we started, with its app (for shim
-    /// sessions, ADR 0047).
-    launched: Arc<Mutex<BTreeMap<u32, u32>>>,
+    /// Process ID of each game process we started, with its app and, in
+    /// shim mode, its ownership data (for shim sessions, ADR 0047, 0055).
+    launched: Arc<Mutex<BTreeMap<u32, ShimRun>>>,
     /// Friends of the signed-in account with their latest persona, kept
     /// current by the watcher (initial list plus every change).
     friends: Arc<Mutex<BTreeMap<u64, FriendInfo>>>,
@@ -198,11 +200,11 @@ impl Daemon {
         lock(&self.running)
     }
 
-    /// The app we started the process `pid` for, while it runs (ADR 0047).
+    /// The run we started the process `pid` for, while it runs (ADR 0047).
     /// Under Proton and with launchers the game's own process can differ
     /// from the one we started; such games get no shim session yet.
-    pub fn launched_app(&self, pid: u32) -> Option<u32> {
-        lock(&self.launched).get(&pid).copied()
+    pub fn shim_run(&self, pid: u32) -> Option<ShimRun> {
+        lock(&self.launched).get(&pid).cloned()
     }
 
     fn pending_sign_in(&self) -> MutexGuard<'_, Option<PendingSignIn>> {
@@ -1016,6 +1018,21 @@ impl Daemon {
                 return error_response(&error);
             }
         };
+        let shim_mode = crate::shim_launch::enabled();
+        // In shim mode the run's ownership set, before the game starts
+        // (ADR 0055): without it the launch is refused, so the shim never
+        // answers ownership without Valve.
+        let ownership = if shim_mode {
+            match run_ownership(&session, &plan).await {
+                Ok(ownership) => Some(Arc::new(ownership)),
+                Err(error) => {
+                    self.forget_session_after(&error).await;
+                    return error_response(&error);
+                }
+            }
+        } else {
+            None
+        };
         // Missing saves from Steam Cloud first (ADR 0035). Never stops the
         // game: a conflict or an error is only reported.
         let restore = tokio::time::timeout(
@@ -1033,7 +1050,6 @@ impl Daemon {
         if let Some(result) = cloud_restore_result(restore) {
             self.emit(Event::CloudRestore { app_id, result });
         }
-        let shim_mode = crate::shim_launch::enabled();
         if shim_mode && let Err(message) = crate::shim_launch::enter() {
             return Response::Error {
                 message: format!("shim mode: {message}"),
@@ -1050,7 +1066,7 @@ impl Daemon {
         };
         self.running().insert(app_id);
         let pid = child.id();
-        lock(&self.launched).insert(pid, app_id);
+        lock(&self.launched).insert(pid, ShimRun { app_id, ownership });
         info!(app_id, program = %plan.executable.display(), proton = ?plan.proton, "game started");
         self.emit(Event::GameStarted {
             app_id,
@@ -1480,6 +1496,33 @@ fn persona_state(status: OwnStatus) -> PersonaState {
 
 /// Locks a mutex; a poisoned lock only means another thread panicked while
 /// holding it, the data is still usable.
+/// The ownership data a shim-mode run gets (ADR 0055): the apps the
+/// account owns, from the licence list of this Valve session
+/// ([`Session::owned_apps`], the request the library list makes), once
+/// per launch, and the DLC the app's info names. Nothing here is logged
+/// except counts.
+async fn run_ownership(
+    session: &Session,
+    plan: &reborn_core::launch::LaunchPlan,
+) -> Result<RunOwnership, CoreError> {
+    let owned = session.owned_apps().await?;
+    let ownership = ownership_from(owned.iter().map(|app| app.app_id), &plan.dlc_app_ids);
+    info!(
+        app_id = plan.app_id,
+        owned = ownership.owned.len(),
+        dlc = ownership.dlc.len(),
+        "shim mode: ownership for the run loaded"
+    );
+    Ok(ownership)
+}
+
+fn ownership_from(owned: impl IntoIterator<Item = u32>, dlc: &[u32]) -> RunOwnership {
+    RunOwnership {
+        owned: owned.into_iter().collect(),
+        dlc: dlc.iter().copied().collect(),
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -1995,6 +2038,22 @@ mod tests {
             daemon.handle(Request::SignOut).await,
             Response::Error { .. }
         ));
+    }
+
+    #[test]
+    fn run_ownership_keeps_owned_apps_and_named_dlc() {
+        let ownership = ownership_from([2_143_030, 480, 2_143_030], &[2_444_550, 2_444_553]);
+        assert_eq!(
+            ownership.owned,
+            BTreeSet::from([480, 2_143_030]),
+            "duplicates collapse"
+        );
+        assert_eq!(ownership.dlc, BTreeSet::from([2_444_550, 2_444_553]));
+    }
+
+    #[test]
+    fn a_daemon_knows_no_shim_run_before_a_launch() {
+        assert_eq!(Daemon::new().shim_run(4242), None);
     }
 
     #[test]

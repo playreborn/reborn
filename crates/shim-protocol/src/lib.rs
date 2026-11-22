@@ -5,6 +5,12 @@
 //! answers with [`DaemonMessage`]s; a request and its response share an
 //! `id`. The first exchange is [`Request::Hello`].
 //!
+//! Version 0.2 adds the first account-data request of ADR 0055 (stage 0):
+//! [`Request::AppOwnership`], answered with [`Response::Ownership`] or
+//! [`Response::Unavailable`]. The other messages of ADR 0055 (stats,
+//! cloud, events) follow in later stage-0 changes under the same version,
+//! before any release.
+//!
 //! This crate holds only message types and framing (MIT OR Apache-2.0), so
 //! the shim never depends on GPL crates (AGENTS.md section 3).
 #![forbid(unsafe_code)]
@@ -13,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// The protocol version in [`Request::Hello`]. A daemon refuses a shim
 /// with another major version.
-pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 1 };
+pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 2 };
 
 /// A protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +51,13 @@ pub enum Request {
         /// The game's process ID.
         pid: u32,
     },
+    /// Whether the account owns an app (ADR 0055). Only the session's own
+    /// app and the DLC its app info names are answered; any other app ID
+    /// gets [`UnavailableReason::NotAllowed`].
+    AppOwnership {
+        /// The app asked about.
+        app_id: u32,
+    },
 }
 
 /// A line the daemon sends: a response to a request (events follow in
@@ -73,6 +86,33 @@ pub enum Response {
         /// Why the daemon refused.
         reason: RefusalReason,
     },
+    /// The answer to [`Request::AppOwnership`]: whether the account owns
+    /// the app, from the licence list of the current Valve session.
+    Ownership {
+        /// Whether the app is owned.
+        owned: bool,
+    },
+    /// The daemon cannot give the real answer to a request. The shim never
+    /// makes one up (ADR 0055, "Honest failure").
+    Unavailable {
+        /// Why, for the shim's log.
+        reason: UnavailableReason,
+    },
+}
+
+/// Why the daemon cannot answer a request (ADR 0055).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    /// No Valve session.
+    NotSignedIn,
+    /// The connection to Valve is lost and the answer needs it.
+    Offline,
+    /// Not this session's business: no session on this connection, or an
+    /// app other than the session's own app and its DLC.
+    NotAllowed,
+    /// The data is larger than the protocol allows.
+    TooLarge,
 }
 
 /// Values the shim keeps for the whole run.
@@ -189,7 +229,7 @@ mod tests {
         let line = encode(&message)?;
         assert_eq!(
             line,
-            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":1},\"pid\":4242}}\n"
+            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242}}\n"
         );
         assert_eq!(decode::<ShimMessage>(&line)?, message);
         Ok(())
@@ -211,8 +251,73 @@ mod tests {
         })?;
         assert_eq!(
             line,
-            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":1},\"app_id\":2143030}}\n"
+            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":2},\"app_id\":2143030}}\n"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ownership_messages_round_trip_as_one_line() -> Result<(), FrameError> {
+        let request = ShimMessage {
+            id: 2,
+            request: Request::AppOwnership { app_id: 2_444_550 },
+        };
+        let line = encode(&request)?;
+        assert_eq!(
+            line,
+            "{\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":2444550}}\n"
+        );
+        assert_eq!(decode::<ShimMessage>(&line)?, request);
+
+        let owned = DaemonMessage::Response {
+            id: 2,
+            response: Response::Ownership { owned: true },
+        };
+        let line = encode(&owned)?;
+        assert_eq!(
+            line,
+            "{\"id\":2,\"response\":{\"type\":\"ownership\",\"owned\":true}}\n"
+        );
+        assert_eq!(decode::<DaemonMessage>(&line)?, owned);
+
+        for reason in [
+            UnavailableReason::NotSignedIn,
+            UnavailableReason::Offline,
+            UnavailableReason::NotAllowed,
+            UnavailableReason::TooLarge,
+        ] {
+            let message = DaemonMessage::Response {
+                id: 9,
+                response: Response::Unavailable { reason },
+            };
+            assert_eq!(decode::<DaemonMessage>(&encode(&message)?)?, message);
+        }
+        assert_eq!(
+            encode(&DaemonMessage::Response {
+                id: 9,
+                response: Response::Unavailable {
+                    reason: UnavailableReason::NotAllowed
+                },
+            })?,
+            "{\"id\":9,\"response\":{\"type\":\"unavailable\",\"reason\":\"not_allowed\"}}\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_0_1_hello_still_gets_a_session() -> Result<(), FrameError> {
+        // Minor versions only add messages, so a 0.1 shim keeps working.
+        let message: ShimMessage = decode(
+            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":1},\"pid\":7}}",
+        )?;
+        let Request::Hello { version, pid } = message.request else {
+            panic!("not a hello: {message:?}");
+        };
+        assert_eq!(pid, 7);
+        assert!(matches!(
+            answer_hello(version, Some(480)),
+            Response::Session(_)
+        ));
         Ok(())
     }
 

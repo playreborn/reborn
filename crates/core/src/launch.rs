@@ -61,6 +61,12 @@ pub struct LaunchPlan {
     pub proton: Option<String>,
     /// Directory to create before starting (Proton's per-app data).
     pub create_dir: Option<PathBuf>,
+    /// The DLC app IDs the app info names for its depots
+    /// (`depots/<id>/dlcappid`, [`reborn_cm::DepotInfo::dlc_app_id`]),
+    /// sorted, without duplicates. The shim may ask about the ownership of
+    /// these and of the app itself, nothing else (ADR 0055). DLC without a
+    /// depot is not in this list: no sourced field names them yet.
+    pub dlc_app_ids: Vec<u32>,
 }
 
 /// Resolves a launch for an installed app: reads its appmanifest, loads the
@@ -295,7 +301,22 @@ pub fn plan_from(
         option: option.clone(),
         proton: None,
         create_dir: None,
+        dlc_app_ids: dlc_app_ids(details),
     })
+}
+
+/// The DLC app IDs named by the app's depots, on any platform, sorted and
+/// without duplicates; never the app itself.
+fn dlc_app_ids(details: &AppDetails) -> Vec<u32> {
+    let mut ids: Vec<u32> = details
+        .depots
+        .iter()
+        .filter_map(|depot| depot.dlc_app_id)
+        .filter(|&id| id != details.app_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// Starts the planned process with no stdin/stdout/stderr attached.
@@ -527,8 +548,35 @@ mod tests {
             executable: PathBuf::from("definitely-missing-reborn-test.exe"),
             proton: None,
             create_dir: None,
+            dlc_app_ids: Vec::new(),
         };
         assert!(matches!(spawn(&plan), Err(CoreError::MissingExecutable(_))));
+    }
+
+    #[test]
+    fn the_plan_names_the_dlc_of_the_app_depots() {
+        let depot = |depot_id, dlc_app_id| reborn_cm::DepotInfo {
+            depot_id,
+            dlc_app_id,
+            ..reborn_cm::DepotInfo::default()
+        };
+        let mut details = app(vec![option(0, "Game.exe", "")]);
+        details.depots = vec![
+            depot(481, None),
+            depot(483, Some(700)),
+            depot(482, Some(600)),
+            depot(484, Some(700)),
+            depot(485, Some(480)),
+        ];
+        let plan = plan_from(
+            &details,
+            Path::new("game"),
+            &platform("windows"),
+            PUBLIC_BRANCH,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.dlc_app_ids, [600, 700]);
     }
 
     fn proton(name: &str, official: bool) -> ProtonInstall {

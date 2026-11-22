@@ -16,6 +16,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0055 stage 0, first part (parallel agent, no runs):
+  shim protocol 0.2 with `AppOwnership`, `Ownership` and `Unavailable`;
+  `rebornd` loads the run's ownership set at a shim-mode launch (refused
+  without it) and answers only the game and the DLC its depots name,
+  everything else `NotAllowed`. The shim does not ask yet. Stats, cloud,
+  events and shadow sessions are later stage-0 work.
 - 2026-11-22: loop iteration 11a (planned by a parallel agent, run by the
   main session): experiment 24 **matched** (Gravitas, Dark Deception):
   `SteamClient018`/`019` positions 0, 1, 2, 3 (`CreateLocalUser`, read

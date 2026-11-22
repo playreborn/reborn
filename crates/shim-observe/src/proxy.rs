@@ -178,6 +178,19 @@ const READS: &[(&str, usize, Read)] = &[
     // `docs/shim/meanings.md`, experiment 14: candidate `GetResultItems`
     // writes a number of items at the address in `r9`.
     ("STEAMINVENTORY_INTERFACE_V003", 1, Read::OutputBytes("r9")),
+    // `docs/shim/meanings.md`, experiment 26 (ADR 0053): UGC query results
+    // and preview URLs (public Workshop data; the owner's Steam ID lies far
+    // beyond the 16 bytes read).
+    ("STEAMUGC_INTERFACE_VERSION020", 5, Read::OutputBytes("r9")),
+    ("STEAMUGC_INTERFACE_VERSION020", 9, Read::OutputBytes("r9")),
+    // Experiment 26 (ADR 0053): a file size the candidate writes.
+    (
+        "STEAMREMOTESTORAGE_INTERFACE_VERSION016",
+        19,
+        Read::OutputBytes("r8"),
+    ),
+    // Experiment 26 (ADR 0056 decision 1): the start of a call result.
+    ("SteamUtils010", 13, Read::OutputBytes("r8")),
     // `docs/shim/meanings.md`, experiment 24: candidate `CreateLocalUser`
     // writes the new pipe handle at the address in `rdx` (not account
     // data; ADR 0053).

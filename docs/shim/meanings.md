@@ -2183,3 +2183,221 @@ As the plan fixed beforehand, under ADR 0051:
 Not in the shim yet. `SetRichPresence`, `GetFriendCount` and
 `GetFriendByIndex` wait for the maintainer even then (account and friends
 data).
+
+## More callbacks: 703 and 0x44e (loop iteration 10a)
+
+Pages read 2026-11-22, both opened without signing in:
+<https://partner.steamgames.com/doc/api/ISteamUtils> (callback structs,
+`GetAPICallResult`, `IsAPICallCompleted`, `GetAPICallFailureReason`) and
+<https://partner.steamgames.com/doc/api/ISteamUserStats> (callback and call
+result structs; which functions trigger `UserStatsStored_t`; which
+functions return `SteamAPICall_t`). No page gives a callback's numeric
+identifier or a struct's packing.
+
+**Logs looked at** (step 4d logs recorded by `run.sh`, raw logs stay
+local): those of experiment 19 (`observe-51204`, `observe-12256`,
+`observe-51224`, `observe-25680`, `observe-52912`), the runs after it
+(`observe-51828` Dark Deception, `observe-55256` UNBEATABLE [white
+label], `observe-55108` Linsips, `observe-50768` Cartapli : Fold Quest,
+`observe-42892` Please, Touch The Artwork 2, `observe-29128` Fallout
+Shelter), and the experiment 20 and 21 logs of Cave Crawlers. Payload
+bytes were compared inside scripts only; nothing below quotes them.
+
+**Packing.** Experiment 21 found the fields of 0x44d 4-byte packed (the
+Steam ID at 12 to 20) and left the size 24 unexplained. Natural alignment
+is therefore not assumed: a size below rules a struct out only if the
+struct cannot fit in the recorded size under any packing. The predictions
+rest on content and timing.
+
+### 703 (0x2bf): candidate `SteamAPICallCompleted_t`
+
+- **Recorded:** 703 callbacks (size 16) in Bongo Cat (6), Coin Maker (12),
+  Fallout Shelter (29), Cartapli (4), Please, Touch The Artwork 2 (3) and
+  Linsips (1). In all but Linsips each 703 window held one
+  `Steam_GetAPICallResult` call. Its `r9` depended on where its `rdx`
+  came from: a handle returned earlier by
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 (candidate
+  `RequestUserStats`) came with `r9` 24 (Bongo Cat, Cartapli); one from
+  `…VERSION013` positions 22 and 37 and from `…VERSION012` position 23
+  with 16; one from `…VERSION012` position 29 with 24; one from
+  `STEAMINVENTORY_INTERFACE_V003` position 26 with 8. Handles with no
+  earlier source in the log came with 32 or 792.
+- **Contradicts experiment 19's E in a game outside its run set:**
+  Linsips (`observe-55108`) freed its one 703 callback without calling
+  `Steam_GetAPICallResult`; a 0x44d callback came in the next poll. E
+  ("every 703 window holds exactly one") held in the five games of
+  experiment 19, but is not a rule for every game: a game may ignore a
+  703.
+- **Every callback on the `ISteamUtils` page** (LOOP step 3; fields as the
+  page lists them): `CheckFileSignature_t` (one enum),
+  `GamepadTextInputDismissed_t` (`bool`, `uint32`), `LowBatteryPower_t`
+  (`uint8`), and `FloatingGamepadTextInputDismissed_t`, `IPCountry_t`,
+  `AppResumingFromSuspend_t` and `SteamShutdown_t` (no fields): none
+  fills 16 bytes under any packing. `SteamAPICallCompleted_t`
+  (`m_hAsyncCall` `SteamAPICall_t`, `m_iCallback` `int`, `m_cubParam`
+  `uint32`) has 16 bytes with a 64-bit handle under 4-byte packing and
+  natural alignment alike (8 + 4 + 4, no padding either way; the 64 bits
+  are derived from the recorded `rdx` values, experiment 19, not read on
+  a page). Callbacks of other pages could also have 16 bytes; F rules out
+  every struct that does not hold, at 0..8, the handle the game then
+  passes to `Steam_GetAPICallResult` and, at 12..16, the size it passes.
+- **`Steam_GetAPICallResult` against the other `ISteamUtils` functions
+  that take a call handle:** `IsAPICallCompleted` (handle, failure flag)
+  and `GetAPICallFailureReason` (handle) take no size; F (bytes 12..16 =
+  `r9` in every call) rules them out, as experiment 19 planned.
+
+### 0x44e (1102): candidate `UserStatsStored_t`
+
+- **Recorded:** Cave Crawlers (`…VERSION011`) called position 10 three
+  times (about 1.2 and 2.4 seconds after start, the first right after
+  position 4, candidate `SetStat`); three 0x44e callbacks followed, 7,
+  139 and 137 ms after the call of the same rank. Bongo Cat
+  (`…VERSION013`) called position 9 five times (four within 2 ms at about
+  1.45 s, one at about 61 s); five 0x44e callbacks followed, 1 to 7 ms
+  after. All eight had size 16, bytes 0..4 the game's app ID, bytes 4..8
+  zero, bytes 8..12 equal to 1, bytes 12..16 zero. No 0x44e in any log
+  without those calls. Both trigger positions returned 1 and had no text
+  argument. (`…VERSION012` position 10, confirmed `StoreStats` in
+  experiment 13, was seen only at close in logs from before step 4d;
+  those games polled no callback after it, so they cannot test 0x44e.)
+- **Every callback and call result struct on the `ISteamUserStats` page**
+  (LOOP step 3):
+  - `UserStatsStored_t` (`m_nGameID` `uint64`, `m_eResult`): fits the
+    content (game ID, then result); the page says `StoreStats` and
+    `IndicateAchievementProgress` trigger it; both return `bool`.
+  - `GlobalStatsReceived_t` and `GlobalAchievementPercentagesReady_t`
+    (the same two fields): fit the content too; the page names them as
+    call results of `RequestGlobalStats` and
+    `RequestGlobalAchievementPercentages`, which return `SteamAPICall_t`.
+    C rules them out: the trigger returns exactly 1, not a 64-bit handle
+    (every recorded handle used the upper 32 bits), and no
+    `GetAPICallResult` comes between trigger and callback.
+  - `UserStatsReceived_t`: is 0x44d (experiment 21).
+  - `UserAchievementStored_t` (`uint64`, `bool`, a name of
+    `k_cchStatNameMax` chars, two `uint32`): needs at least
+    8 + 1 + 1 + 4 + 4 = 18 bytes, more than 16 under any packing.
+  - `UserAchievementIconFetched_t` (`CGameID`, a name, `bool`, `int`):
+    bytes 8..12 would start the name; B (byte 8 is 1, bytes 9..12 zero)
+    leaves no name.
+  - `UserStatsUnloaded_t` (`m_steamIDUser` only): B (bytes 4..8 zero)
+    rules it out; the upper half of the Steam ID is not zero (experiment
+    21, B).
+  - `LeaderboardFindResult_t`, `LeaderboardScoresDownloaded_t`,
+    `LeaderboardScoreUploaded_t`, `LeaderboardUGCSet_t`,
+    `NumberOfCurrentPlayers_t`: call results of `SteamAPICall_t`
+    functions (C), and none starts with a game ID (B).
+  - Callbacks of other pages with a game ID and a result, triggered by the
+    same call, are not ruled out (as in experiment 20).
+- **The trigger positions:** the page names only `StoreStats` (no
+  arguments) and `IndicateAchievementProgress` (an achievement name and
+  two numbers) as triggering `UserStatsStored_t`; D (no text argument)
+  rules out the second. Candidates: `…VERSION011` position 10 and
+  `…VERSION013` position 9 `StoreStats`. `rdx` was 24 in all five Bongo
+  Cat calls; read as a leftover, since `StoreStats` takes no argument.
+
+### The other recorded numbers
+
+304, 336, 1222, 1281, 4700, 4701, 4702, 1040011, 1040015, 1040044,
+1080000 and 1080001: **no candidate** in this iteration. No page gives
+numeric identifiers, and none of them follows a call whose meaning is
+confirmed closely enough to point at one struct (4700 to 4702 come near
+the stats calls of Cave Crawlers and Bongo Cat, 304 and 336 in pairs about
+2.5 s after start in Cave Crawlers, 1222 and 1281 only in games that also
+have 703). Their payloads are not asked for.
+
+### Experiment 22 (planned 2026-11-22, before the runs)
+
+**Needs `PAYLOAD_LISTED`:** 703 (0x2bf). Reason: F, G and H compare its
+payload bytes with the registers of `Steam_GetAPICallResult` and with
+results of earlier calls. Per the `ISteamUtils` page it carries a call
+handle, a callback number and a size: no Steam ID, name, ticket, token or
+password (ADR 0054). Added by the main session before the runs.
+
+**Predictions** (`tools/shim/experiments/022_api_call_completed.py`; a
+703 window is the time from a 703 header to the next
+`Steam_FreeLastCallback` call on the same thread, experiment 19):
+
+- P: every 703 callback has size 16 and its first payload bytes logged.
+- F: for every window with a `Steam_GetAPICallResult` call, payload bytes
+  0..8 equal its `rdx` (all 64 bits) and bytes 12..16 the low 32 bits of
+  its `r9`; at least 10 windows checked across all logs; a log with 50 or
+  more such calls (the proxy logs only the first 50) is a mismatch.
+- G: every 703 whose bytes 0..8 equal a result of an earlier
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 call has bytes 8..12
+  = 1101 (0x44d, `UserStatsReceived_t`) and bytes 12..16 = 24; checked at
+  least once in each of Bongo Cat, Cartapli and Linsips (Linsips calls no
+  `GetAPICallResult`, so G links through position 15's result, not
+  `rdx`).
+- H: windows whose `GetAPICallResult` handle came from the same interface
+  position all carry one number in bytes 8..12 (the script prints only
+  how many numbers per position).
+
+**Games to run:** Bongo Cat (3419430), Coin Maker Simulator Demo
+(5191630), Fallout Shelter (588430), Cartapli : Fold Quest (4314560),
+Linsips (4301370); one fresh log each, all five needed, each run to its
+first screen and closed by a close request.
+
+**What a full match confirms:**
+
+- callback 703 is `SteamAPICallCompleted_t`: bytes 0..8 the call handle,
+  8..12 the callback number of the finished result, 12..16 its size (F,
+  G);
+- `Steam_GetAPICallResult` is `GetAPICallResult`, with `rdx` the call
+  handle and `r9` the buffer size (F rules out `IsAPICallCompleted` and
+  `GetAPICallFailureReason`);
+- `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 is `RequestUserStats`:
+  its result is a call handle that finishes as `UserStatsReceived_t` (G);
+  the only other `SteamAPICall_t` function on the page that takes Steam
+  IDs, `DownloadLeaderboardEntriesForUsers`, finishes as
+  `LeaderboardScoresDownloaded_t`.
+
+**What stays a candidate:** the numbers in bytes 8..12 for the other
+source positions (H only shows one per position); the arguments on the
+stack (expected number, failure flag), which are not logged; experiment
+19's parameter order inference beyond `rdx` and `r9`; whether `rcx` is the
+pipe or the user handle.
+
+### Experiment 23 (planned 2026-11-22, before the runs)
+
+0x44e is already in `PAYLOAD_LISTED` (experiment 20); nothing new to list.
+
+**Predictions** (`tools/shim/experiments/023_stats_stored.py`; trigger:
+`…VERSION011` position 10 in Cave Crawlers, `…VERSION013` position 9 in
+Bongo Cat):
+
+- A: the trigger is called at least once and there are exactly as many
+  0x44e callbacks as trigger calls; paired in order, each callback comes
+  0 to 1000 ms after its call; none before the first call.
+- B: every 0x44e has size 16, bytes 0..4 the app ID, bytes 4..8 zero,
+  bytes 8..12 = 1 (`k_EResultOK`). Bytes 12..16 are not predicted.
+- C: every trigger call returns exactly 1, and no `Steam_GetAPICallResult`
+  call lies between a trigger call and its callback.
+- D: no trigger call has a text argument.
+
+**Games to run:** Cave Crawlers (2143030) and Bongo Cat (3419430); one
+fresh log each, both needed (the Bongo Cat run of experiment 22 can serve
+both scripts). Risk: if Bongo Cat calls position 9 just before the close
+request and exits before polling again, A mismatches.
+
+**What a full match confirms:**
+
+- callback 0x44e (1102) is `UserStatsStored_t`: 16 bytes, the app ID in
+  0..4 and zero in 4..8 (the game ID), the result in 8..12 (A to D rule
+  out the other structs of the page, as listed above);
+- `…VERSION011` position 10 and `…VERSION013` position 9 are `StoreStats`
+  (D rules out the page's only other trigger of `UserStatsStored_t`).
+
+**What stays a candidate:** bytes 12..16 (zero in every recording, not
+explained, like the last four bytes of 0x44d); whether 0x44e ever carries
+another result code; a struct of another page with the same content and
+trigger.
+
+**Freshness (both scripts):** a log whose `start` line in `starts.log` is
+earlier than `PLAN_COMMITTED` is rejected; both scripts hold the commit
+time of the final plan on `loop/plan-10a` (local time, as `run.sh` writes
+`starts.log`), set in a follow-up commit.
+
+**Already seen:** run on the existing logs with the plan time lifted,
+experiment 23 gives "match" and experiment 22 "MISMATCH" (703 payload
+bytes not logged yet). The predictions were written from these logs, so
+they are not the test; only fresh runs after the plan commit are.

@@ -28,7 +28,6 @@ Positions recorded: 205; confirmed: 107; open: 98.
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 22 |  |
 | not known | 1 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 |  |
 | not known | 1 | `STEAMUGC_INTERFACE_VERSION016` | 67 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 10 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 14 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 15 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 2 |  |
@@ -39,7 +38,6 @@ Positions recorded: 205; confirmed: 107; open: 98.
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 1 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 3 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 8 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 9 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 22 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 39 |  |
 | not known | 1 | `SteamClient018` | 0 |  |
@@ -99,6 +97,8 @@ Positions recorded: 205; confirmed: 107; open: 98.
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 10 | StoreStats |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 9 | StoreStats |
 | candidate | 1 | `SteamFriends017` | 36 | narrowed: GetLargeFriendAvatar (experiment 17) |
 | candidate | 1 | `SteamFriends017` | 37 | RequestUserInformation, HasFriend or another (Steam ID, 0) call |
 | candidate | 1 | `SteamFriends017` | 44 | ClearRichPresence or GetPersonaName |

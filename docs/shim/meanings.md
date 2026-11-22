@@ -2460,7 +2460,7 @@ trigger.
 **Freshness (both scripts):** a log whose `start` line in `starts.log` is
 earlier than `PLAN_COMMITTED` is rejected; both scripts hold the commit
 time of the final plan on `loop/plan-10a` (local time, as `run.sh` writes
-`starts.log`), set in the follow-up commit. The first plan time (13:26:55) is superseded by this revised plan.
+`starts.log`): 2026-11-22 13:39:41 (commit `3185f1f`). The first plan time (13:26:55) is superseded by this revised plan.
 
 **Already seen:** run on the existing logs with the plan time lifted,
 experiment 23 gives "match" on `observe-52912` and `observe-51224` and

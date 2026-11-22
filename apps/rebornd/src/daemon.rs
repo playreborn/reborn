@@ -200,6 +200,10 @@ pub struct Daemon {
     jobs: Mutex<Jobs>,
     job_added: Notify,
     shutdown: Notify,
+    /// Tests that must never sign in set this: [`Daemon::session`] then
+    /// panics before the keyring or Valve is touched (AGENTS.md section 6).
+    #[cfg(test)]
+    forbid_sign_in: AtomicBool,
 }
 
 impl Daemon {
@@ -230,6 +234,8 @@ impl Daemon {
             }),
             job_added: Notify::new(),
             shutdown: Notify::new(),
+            #[cfg(test)]
+            forbid_sign_in: AtomicBool::new(false),
         }
     }
 
@@ -322,6 +328,11 @@ impl Daemon {
         if let Some(session) = cached.as_ref() {
             return Ok(Arc::clone(session));
         }
+        #[cfg(test)]
+        assert!(
+            !self.forbid_sign_in.load(Ordering::SeqCst),
+            "this test must not sign in (keyring, Valve)"
+        );
         let session =
             match tokio::time::timeout(SIGN_IN_TIMEOUT, reborn_core::account::sign_in(None))
                 .await
@@ -2363,8 +2374,11 @@ mod tests {
             option: None,
         };
 
-        // No session: anything past the notice would have to sign in.
-        let daemon = Daemon::new();
+        // No session, and signing in panics: if the notice ever moved
+        // behind the session, this test fails without touching the
+        // keyring or Valve.
+        let daemon = Arc::new(Daemon::new());
+        daemon.forbid_sign_in.store(true, Ordering::SeqCst);
         let response = daemon
             .launch_with(request(480), None, false, Some(&notices))
             .await;
@@ -2385,6 +2399,22 @@ mod tests {
         };
         assert!(message.contains("10"), "{message}");
         assert!(!notice_dir.exists());
+
+        // The guard itself: a confirmed launch goes on to the session,
+        // which panics instead of signing in.
+        let past_notice = {
+            let daemon = Arc::clone(&daemon);
+            let notices = notices.clone();
+            let request = request(480);
+            tokio::spawn(async move {
+                daemon
+                    .launch_with(request, None, true, Some(&notices))
+                    .await
+            })
+            .await
+        };
+        assert!(past_notice.is_err_and(|error| error.is_panic()));
+        assert!(notices.seen(480).unwrap(), "stored before the launch");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

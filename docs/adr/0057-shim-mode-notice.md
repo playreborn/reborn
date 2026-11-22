@@ -89,3 +89,6 @@ Option 2.
   deleting `shim-notice-seen`.
 - If the confirmation cannot be stored, the launch still goes on (the
   user just confirmed); the next launch asks again.
+- If the config folder cannot be found at all, shim mode refuses the
+  launch with an error, since there is nowhere to look up or store the
+  confirmation.

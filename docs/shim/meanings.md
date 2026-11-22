@@ -1474,9 +1474,9 @@ experiment 21: match
 Under ADR 0051:
 
 - callback number **0x44d (1101)** is confirmed as `UserStatsReceived_t`:
-  24 bytes, the game ID in bytes 0 to 8 (its low 32 bits the app ID),
-  the result (`EResult`) in 8 to 12, the user's Steam ID in 12 to 20, 4
-  bytes of leftover at the end;
+  24 bytes, the app ID in bytes 0 to 4 (bytes 4 to 8, the rest of the
+  game ID, were not checked), the result (`EResult`) in 8 to 12, and in
+  12 to 20 the same 8 bytes in every game, read as the user's Steam ID;
 - position 0 of `STEAMUSERSTATS_INTERFACE_VERSION011` is confirmed as
   `RequestCurrentStats` (the page: its result arrives as
   `UserStatsReceived_t`; `StoreStats` answers with `UserStatsStored_t`).
@@ -1484,3 +1484,17 @@ Under ADR 0051:
 Not in the shim yet: it does not deliver callbacks (experiment 19, loop
 iteration 9b, plans that protocol), and the stats themselves have to come
 from Valve's servers through `rebornd`.
+
+**Review findings (before merge):**
+
+- The size list in the plan assumed natural alignment (8 + 4 + 4 padding
+  + 8 = 24). With the Steam ID at 12 to 20 the fields take 20 bytes; why
+  the size is 24 (4 bytes at the end that differ between games) is not
+  explained by the observation. The 16-byte candidates for 0x44e rest on
+  the same assumption and are only a guess until 0x44e is tested.
+- Prediction B only shows the same 8 bytes in three games. Before the
+  shim writes this field, an experiment compares bytes 12 to 20 with the
+  account's own Steam ID seen elsewhere in the same log (printing only
+  match or mismatch).
+- Scripts from now on also reject logs recorded before their plan
+  commit (`LOOP.md`).

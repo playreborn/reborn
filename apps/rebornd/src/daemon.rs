@@ -282,14 +282,27 @@ impl Daemon {
         if let Some(session) = cached.as_ref() {
             return Ok(Arc::clone(session));
         }
-        let session = tokio::time::timeout(SIGN_IN_TIMEOUT, reborn_core::account::sign_in(None))
-            .await
-            .map_err(|_| CoreError::SignInTimeout)??;
+        let session =
+            match tokio::time::timeout(SIGN_IN_TIMEOUT, reborn_core::account::sign_in(None))
+                .await
+                .map_err(|_| CoreError::SignInTimeout)
+                .and_then(|result| result)
+            {
+                Ok(session) => session,
+                Err(error) => {
+                    if signs_out(&error) {
+                        self.signed_out.store(true, Ordering::SeqCst);
+                        drop(cached);
+                        self.session_ready.notify_waiters();
+                    }
+                    return Err(error);
+                }
+            };
         let session = Arc::new(session);
         info!(account = session.account(), "signed in to Steam");
         *cached = Some(Arc::clone(&session));
-        drop(cached);
         self.signed_out.store(false, Ordering::SeqCst);
+        drop(cached);
         self.session_ready.notify_waiters();
         self.watch_friends(Arc::clone(&session));
         Ok(session)
@@ -415,10 +428,17 @@ impl Daemon {
         // Set before the session is dropped, so a shim's stats request
         // never sees "signed out" during a reconnect.
         self.reconnecting.store(reconnect, Ordering::SeqCst);
-        if !reconnect {
-            self.signed_out.store(true, Ordering::SeqCst);
+        {
+            let mut session = self.session.lock().await;
+            *session = None;
+            if !reconnect {
+                self.signed_out.store(true, Ordering::SeqCst);
+            }
         }
-        *self.session.lock().await = None;
+        if !reconnect {
+            // Waiting shim stats requests see "signed out" at once.
+            self.session_ready.notify_waiters();
+        }
         if let Some(task) = lock(&self.friends_watch).take() {
             task.abort();
         }
@@ -438,9 +458,16 @@ impl Daemon {
         }
         let reconnected = self.reconnect().await;
         if !reconnected {
-            self.signed_out.store(true, Ordering::SeqCst);
+            let session = self.session.lock().await;
+            if session.is_none() {
+                self.signed_out.store(true, Ordering::SeqCst);
+            }
+            drop(session);
         }
         self.reconnecting.store(false, Ordering::SeqCst);
+        if !reconnected {
+            self.session_ready.notify_waiters();
+        }
         if !reconnected {
             return;
         }
@@ -728,9 +755,25 @@ impl Daemon {
 
     /// Forgets the session after a Steam error, so the next request signs
     /// in again (the connection may have dropped).
+    /// A rejected or missing login also counts as signed out (ADR 0055:
+    /// waiting shim stats requests then stop at once).
     async fn forget_session_after(&self, error: &CoreError) {
-        if matches!(error, CoreError::Steam(_) | CoreError::TokenRejected(_)) {
-            *self.session.lock().await = None;
+        let forget = matches!(error, CoreError::Steam(_) | CoreError::TokenRejected(_));
+        let sign_out = signs_out(error);
+        if !forget && !sign_out {
+            return;
+        }
+        {
+            let mut session = self.session.lock().await;
+            if forget {
+                *session = None;
+            }
+            if sign_out && session.is_none() {
+                self.signed_out.store(true, Ordering::SeqCst);
+            }
+        }
+        if sign_out {
+            self.session_ready.notify_waiters();
         }
     }
 
@@ -910,8 +953,11 @@ impl Daemon {
             Some(Ok(session)) => {
                 info!(%account, "signed in to Steam");
                 let session = Arc::new(session);
-                *self.session.lock().await = Some(Arc::clone(&session));
-                self.signed_out.store(false, Ordering::SeqCst);
+                {
+                    let mut current = self.session.lock().await;
+                    *current = Some(Arc::clone(&session));
+                    self.signed_out.store(false, Ordering::SeqCst);
+                }
                 self.session_ready.notify_waiters();
                 self.watch_friends(session);
                 self.emit(Event::SignedIn {
@@ -971,8 +1017,9 @@ impl Daemon {
             return error_response(&error);
         }
         *session = None;
-        drop(session);
         self.signed_out.store(true, Ordering::SeqCst);
+        drop(session);
+        self.session_ready.notify_waiters();
         self.forget_friends();
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
@@ -1632,8 +1679,17 @@ impl StatsBackend for Daemon {
         let notified = self.session_ready.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        if matches!(self.session.try_lock(), Ok(session) if session.is_some()) {
-            return;
+        // Return at once when a session exists, or when `link()` would now
+        // say SignedOut (a sign-out between the caller's `link()` and
+        // `enable()` above notified nobody). Only that exact case: while a
+        // reconnect runs or the lock is busy, `link()` says Offline, and
+        // returning then would make the caller loop without waiting.
+        let signed_out =
+            !self.reconnecting.load(Ordering::SeqCst) && self.signed_out.load(Ordering::SeqCst);
+        match self.session.try_lock() {
+            Ok(session) if session.is_some() => return,
+            Ok(_) if signed_out => return,
+            _ => {}
         }
         let _ = tokio::time::timeout(longest, notified).await;
     }
@@ -1655,6 +1711,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether an error means there is no usable login any more (rejected or
+/// missing token, no account), so the account counts as signed out.
+fn signs_out(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::TokenRejected(_) | CoreError::NotSignedIn(_) | CoreError::NoAccount
+    )
 }
 
 fn error_response(error: &CoreError) -> Response {
@@ -2249,6 +2314,87 @@ mod tests {
         // reconnect, so no sign-in or keyring is touched) signs out.
         assert!(!Lost::LoggedOff(6).allows_reconnect());
         daemon.connection_lost(Lost::LoggedOff(6)).await;
+        assert_eq!(daemon.link().await, Link::SignedOut);
+    }
+
+    #[tokio::test]
+    async fn a_sign_out_already_done_ends_the_wait_at_once() {
+        // Signed out before the wait starts (no notify will come): the wait
+        // returns at once, so the caller's next `link()` sees SignedOut.
+        let daemon = Daemon::new();
+        assert_eq!(daemon.link().await, Link::SignedOut);
+        let waited = tokio::time::timeout(
+            Duration::from_secs(1),
+            daemon.wait_for_session(Duration::from_secs(300)),
+        )
+        .await;
+        assert!(waited.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_wait_does_not_end_early_while_offline() {
+        // While a reconnect runs, or the session lock is busy, `link()`
+        // says Offline; the wait must then really wait (no loop without
+        // waiting), even with the signed-out flag set.
+        let daemon = Daemon::new();
+        daemon.reconnecting.store(true, Ordering::SeqCst);
+        assert_eq!(daemon.link().await, Link::Offline);
+        let short = Duration::from_millis(200);
+        let started = Instant::now();
+        daemon.wait_for_session(short).await;
+        assert!(started.elapsed() >= short);
+
+        daemon.reconnecting.store(false, Ordering::SeqCst);
+        let held = daemon.session.lock().await;
+        let started = Instant::now();
+        daemon.wait_for_session(short).await;
+        assert!(started.elapsed() >= short);
+        drop(held);
+    }
+
+    /// Runs `action` while a shim stats request waits for a session, and
+    /// whether the wait ended early (instead of after its 300 s).
+    async fn wakes_a_waiting_request(daemon: &Daemon, action: impl Future<Output = ()>) -> bool {
+        let both = async {
+            tokio::join!(daemon.wait_for_session(Duration::from_secs(300)), async {
+                // Let the wait register first.
+                for _ in 0..3 {
+                    tokio::task::yield_now().await;
+                }
+                action.await;
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), both)
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_lost_login_signs_out_and_wakes_waiting_requests() {
+        // A missing or rejected login counts as signed out, and waiting
+        // shim stats requests are woken to see it at once.
+        for error in [
+            CoreError::NotSignedIn("test".to_owned()),
+            CoreError::NoAccount,
+        ] {
+            let daemon = Daemon::new();
+            daemon.signed_out.store(false, Ordering::SeqCst);
+            assert_eq!(daemon.link().await, Link::Offline);
+            assert!(wakes_a_waiting_request(&daemon, daemon.forget_session_after(&error)).await);
+            assert_eq!(daemon.link().await, Link::SignedOut);
+        }
+        // Other errors only forget: still waiting for a session.
+        let daemon = Daemon::new();
+        daemon.signed_out.store(false, Ordering::SeqCst);
+        daemon.forget_session_after(&CoreError::SignInTimeout).await;
+        assert_eq!(daemon.link().await, Link::Offline);
+    }
+
+    #[tokio::test]
+    async fn steam_ending_the_session_wakes_waiting_requests() {
+        let daemon = Daemon::new();
+        daemon.signed_out.store(false, Ordering::SeqCst);
+        assert!(wakes_a_waiting_request(&daemon, daemon.connection_lost(Lost::LoggedOff(6))).await);
         assert_eq!(daemon.link().await, Link::SignedOut);
     }
 

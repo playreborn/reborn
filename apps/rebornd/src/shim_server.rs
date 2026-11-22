@@ -149,28 +149,42 @@ where
             debug!("closing shim connection after a bad line");
             break;
         };
-        // Only requests whose answer is still open count: one answered
-        // from the run's cache is sent at once.
-        let open = reply.stats.as_ref().is_some_and(|stats| {
-            matches!(*stats.borrow(), StatsState::Idle | StatsState::Fetching)
-        });
-        if open {
-            waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
-            if waiting.len() >= MAX_WAITING {
-                debug!("closing shim connection with too many open stats requests");
-                break;
-            }
-        }
-        if outgoing.send(reply.line).is_err() {
-            break;
-        }
-        if let Some(stats) = reply.stats {
-            let outgoing = outgoing.clone();
-            waiting.push(tokio::spawn(async move {
-                if let Some(line) = event_line(stats).await {
-                    let _ = outgoing.send(line);
+        let Reply { line: reply, stats } = reply;
+        match stats.map(|stats| (decided_event_line(&stats), stats)) {
+            None => {
+                if outgoing.send(reply).is_err() {
+                    break;
                 }
-            }));
+            }
+            // Already decided (the run's cache, or failed): the event, if
+            // any, follows the response at once; nothing waits.
+            Some((Some(event), _)) => {
+                if outgoing.send(reply).is_err() {
+                    break;
+                }
+                if let Some(event) = event
+                    && outgoing.send(event).is_err()
+                {
+                    break;
+                }
+            }
+            // Still open: a task waits for the event. Only these count.
+            Some((None, stats)) => {
+                waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
+                if waiting.len() >= MAX_WAITING {
+                    debug!("closing shim connection with too many open stats requests");
+                    break;
+                }
+                if outgoing.send(reply).is_err() {
+                    break;
+                }
+                let outgoing = outgoing.clone();
+                waiting.push(tokio::spawn(async move {
+                    if let Some(line) = event_line(stats).await {
+                        let _ = outgoing.send(line);
+                    }
+                }));
+            }
         }
     }
     // The shim is gone: nobody waits for its events any more. A fetch that
@@ -187,6 +201,22 @@ where
 async fn event_line(stats: watch::Receiver<StatsState>) -> Option<String> {
     let event = event_when_received(stats).await?;
     encode(&DaemonMessage::Event { event }).ok()
+}
+
+/// For a run whose stats are already decided: `Some` with the event line
+/// (`None` inside for a failed run, which sends no event). `None` while
+/// the answer is still open.
+fn decided_event_line(stats: &watch::Receiver<StatsState>) -> Option<Option<String>> {
+    match &*stats.borrow() {
+        StatsState::Idle | StatsState::Fetching => None,
+        StatsState::Received(event) => Some(
+            encode(&DaemonMessage::Event {
+                event: event.clone(),
+            })
+            .ok(),
+        ),
+        StatsState::Failed(_) => Some(None),
+    }
 }
 
 /// What the daemon writes back for one line.
@@ -837,6 +867,34 @@ mod tests {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         next(&mut lines).await;
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_stats_answers_need_no_waiting() {
+        // Once the run's stats are in, every request gets `Accepted` and
+        // the event right behind it, without counting against the cap.
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        let (mut lines, mut write, served) = connect(&valve);
+        write
+            .write_all(hello(200, PROTOCOL_VERSION).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        next(&mut lines).await;
+        for _ in 0..(MAX_WAITING * 2) {
+            write
+                .write_all(request_stats().as_bytes())
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+            assert!(next(&mut lines).await.contains("accepted"));
+            assert!(next(&mut lines).await.contains("stats_received"));
+        }
+        assert_eq!(valve.fetches(), 1);
         drop((lines, write));
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(5), served)

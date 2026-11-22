@@ -332,7 +332,7 @@ async fn fetch_with_retries<B: StatsBackend>(
                     }
                     // The session is there, its lock was only busy: no
                     // backoff, just a short pause.
-                    Link::Connected => backend.wait_for_session(LOCK_BUSY_PAUSE).await,
+                    Link::Connected => backend.sleep(LOCK_BUSY_PAUSE).await,
                     Link::Offline => {
                         backend.wait_for_session(retry_delay(waits)).await;
                         waits += 1;
@@ -634,21 +634,29 @@ pub mod tests {
 
     #[tokio::test]
     async fn a_busy_session_lock_is_not_backed_off() {
-        // Connected, but the lock was busy once: a short pause, no backoff.
+        // Connected, but the lock was busy once: a real short pause (a
+        // sleep, not a wait for a session, which returns at once while a
+        // session exists), no backoff.
         let fake = Fake::new(
             Link::Connected,
             vec![Err(FetchError::NoSession), Ok(recorded())],
         );
+        fake.sleep_gate
+            .forget_permits(fake.sleep_gate.available_permits());
         let stats = Arc::new(RunStats::default());
         let (_, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
         let receiver = receiver.unwrap_or_else(|| panic!("no receiver"));
-        assert!(event_when_received(receiver).await.is_some());
+        run_tasks().await;
+        // Held in the pause: the second fetch has not run.
+        assert_eq!(fake.fetches(), 0);
         assert_eq!(
-            *fake.session_waits.lock().unwrap_or_else(|p| p.into_inner()),
+            *fake.sleeps.lock().unwrap_or_else(|p| p.into_inner()),
             [LOCK_BUSY_PAUSE]
         );
+        fake.sleep_gate.add_permits(1);
+        assert!(event_when_received(receiver).await.is_some());
         assert!(
-            fake.sleeps
+            fake.session_waits
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .is_empty()

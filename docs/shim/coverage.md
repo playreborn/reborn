@@ -57,10 +57,10 @@ Positions are listed in the order of their numbers.
 | `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 22 BShutdownIfAllPipesClosed, 23 GetISteam… (per interface), 25 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 31 GetISteam… (per interface), 32 GetISteam… (per interface), 33 GetISteam… (per interface), 34 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface); candidate: 30 SetWarningMessageHook |
 | `SteamController007` | 4 | 2 | candidate: 2 RunFrame |
 | `SteamController008` | 14 | 2 | candidate: 2 RunFrame |
-| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | candidate: 0 GetPersonaName |
-| `SteamFriends018` | 1 | 6 9 36 | not known |
+| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | candidate: 0 GetPersonaName or ClearRichPresence, 3 GetFriendCount, 4 GetFriendByIndex, 36 GetLargeFriendAvatar, 37 RequestUserInformation, HasFriend or another (Steam ID, 0) call, 43 SetRichPresence, 44 ClearRichPresence or GetPersonaName |
+| `SteamFriends018` | 1 | 6 9 36 | candidate: 6 a text by Steam ID (GetFriendPersonaName, GetPlayerNickname and others), 9 one of many Steam ID functions returning 0, 36 RequestUserInformation, HasFriend or another (Steam ID, 0) call |
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
-| `SteamInput001` | 4 | 2 | candidate: 2 shape only: per-frame call like RunFrame |
+| `SteamInput001` | 4 | 2 | candidate: 2 RunFrame-like per-frame call (no page for this version; rdx not explained) |
 | `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | confirmed: 0 Init; candidate: 3 RunFrame, 6 GetConnectedControllers |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle); confirmed: 3 GetResultTimestamp |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
@@ -69,10 +69,10 @@ Positions are listed in the order of their numbers.
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 3 | 13 (BC, LS); 22 (CA) | candidate: 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 1 | 3 | not known |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
-| `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID |
-| `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 2 GetSteamID |
+| `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID, 12 GetVoiceOptimalSampleRate |
+| `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 1 BLoggedOn, another no-argument bool, GetHSteamUser or others (one call), 2 GetSteamID |
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
-| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn (or another no-argument bool), 2 GetSteamID |
+| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | confirmed: 0 RequestCurrentStats, 12 GetAchievementDisplayAttribute; candidate: 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats, 10 StoreStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 15 RequestUserStats |

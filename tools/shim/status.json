@@ -226,12 +226,20 @@
     "2": [
       "candidate",
       "GetSteamID"
+    ],
+    "12": [
+      "candidate",
+      "GetVoiceOptimalSampleRate"
     ]
   },
   "SteamUser021": {
     "2": [
       "candidate",
       "GetSteamID"
+    ],
+    "1": [
+      "candidate",
+      "BLoggedOn, another no-argument bool, GetHSteamUser or others (one call)"
     ]
   },
   "SteamUser022": {
@@ -247,7 +255,7 @@
     ],
     "1": [
       "candidate",
-      "BLoggedOn (or another no-argument bool)"
+      "BLoggedOn, another no-argument bool or GetHSteamUser"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
@@ -277,13 +285,37 @@
   "SteamInput001": {
     "2": [
       "candidate",
-      "shape only: per-frame call like RunFrame"
+      "RunFrame-like per-frame call (no page for this version; rdx not explained)"
     ]
   },
   "SteamFriends017": {
     "0": [
       "candidate",
-      "GetPersonaName"
+      "GetPersonaName or ClearRichPresence"
+    ],
+    "3": [
+      "candidate",
+      "GetFriendCount"
+    ],
+    "4": [
+      "candidate",
+      "GetFriendByIndex"
+    ],
+    "36": [
+      "candidate",
+      "GetLargeFriendAvatar"
+    ],
+    "37": [
+      "candidate",
+      "RequestUserInformation, HasFriend or another (Steam ID, 0) call"
+    ],
+    "43": [
+      "candidate",
+      "SetRichPresence"
+    ],
+    "44": [
+      "candidate",
+      "ClearRichPresence or GetPersonaName"
     ]
   },
   "STEAMINVENTORY_INTERFACE_V003": {
@@ -304,6 +336,20 @@
     "13": [
       "candidate",
       "a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others)"
+    ]
+  },
+  "SteamFriends018": {
+    "6": [
+      "candidate",
+      "a text by Steam ID (GetFriendPersonaName, GetPlayerNickname and others)"
+    ],
+    "9": [
+      "candidate",
+      "one of many Steam ID functions returning 0"
+    ],
+    "36": [
+      "candidate",
+      "RequestUserInformation, HasFriend or another (Steam ID, 0) call"
     ]
   }
 }

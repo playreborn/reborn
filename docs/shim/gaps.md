@@ -14,10 +14,7 @@ Positions recorded: 205; confirmed: 101; open: 104.
 | not known | 3 | `SteamUtils010` | 34 |  |
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 37 |  |
 | not known | 2 | `SteamClient023` | 21 |  |
-| not known | 2 | `SteamFriends017` | 3 |  |
-| not known | 2 | `SteamFriends017` | 4 |  |
 | not known | 2 | `SteamGameServer012` | 0 |  |
-| not known | 2 | `SteamUser020` | 12 |  |
 | not known | 2 | `SteamUtils009` | 16 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 2 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 5 |  |
@@ -71,17 +68,9 @@ Positions recorded: 205; confirmed: 101; open: 104.
 | not known | 1 | `SteamClient019` | 26 |  |
 | not known | 1 | `SteamClient019` | 34 |  |
 | not known | 1 | `SteamClient019` | 38 |  |
-| not known | 1 | `SteamFriends017` | 36 |  |
-| not known | 1 | `SteamFriends017` | 37 |  |
-| not known | 1 | `SteamFriends017` | 43 |  |
-| not known | 1 | `SteamFriends017` | 44 |  |
-| not known | 1 | `SteamFriends018` | 6 |  |
-| not known | 1 | `SteamFriends018` | 9 |  |
-| not known | 1 | `SteamFriends018` | 36 |  |
 | not known | 1 | `SteamGameServer012` | 7 |  |
 | not known | 1 | `SteamMatchMakingServers002` | 10 |  |
 | not known | 1 | `SteamNetworking005` | 7 |  |
-| not known | 1 | `SteamUser021` | 1 |  |
 | not known | 1 | `SteamUtils010` | 4 |  |
 | not known | 1 | `SteamUtils010` | 10 |  |
 | not known | 1 | `SteamUtils010` | 17 |  |
@@ -93,11 +82,11 @@ Positions recorded: 205; confirmed: 101; open: 104.
 | candidate | 11 | `SteamUser023` | 2 | GetSteamID |
 | candidate | 9 | `SteamClient020` | 34 | SetWarningMessageHook |
 | candidate | 6 | `SteamClient021` | 32 | SetWarningMessageHook |
-| candidate | 5 | `SteamFriends017` | 0 | GetPersonaName |
+| candidate | 5 | `SteamFriends017` | 0 | GetPersonaName or ClearRichPresence |
 | candidate | 5 | `SteamUser020` | 2 | GetSteamID |
-| candidate | 5 | `SteamUser023` | 1 | BLoggedOn (or another no-argument bool) |
+| candidate | 5 | `SteamUser023` | 1 | BLoggedOn, another no-argument bool or GetHSteamUser |
 | candidate | 4 | `SteamController007` | 2 | RunFrame |
-| candidate | 4 | `SteamInput001` | 2 | shape only: per-frame call like RunFrame |
+| candidate | 4 | `SteamInput001` | 2 | RunFrame-like per-frame call (no page for this version; rdx not explained) |
 | candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 15 | RequestUserStats |
 | candidate | 3 | `SteamClient023` | 30 | SetWarningMessageHook |
 | candidate | 3 | `SteamInput006` | 6 | GetConnectedControllers |
@@ -108,8 +97,19 @@ Positions recorded: 205; confirmed: 101; open: 104.
 | candidate | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 | a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 5 | GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
+| candidate | 2 | `SteamFriends017` | 3 | GetFriendCount |
+| candidate | 2 | `SteamFriends017` | 4 | GetFriendByIndex |
+| candidate | 2 | `SteamUser020` | 12 | GetVoiceOptimalSampleRate |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |
+| candidate | 1 | `SteamFriends017` | 36 | GetLargeFriendAvatar |
+| candidate | 1 | `SteamFriends017` | 37 | RequestUserInformation, HasFriend or another (Steam ID, 0) call |
+| candidate | 1 | `SteamFriends017` | 43 | SetRichPresence |
+| candidate | 1 | `SteamFriends017` | 44 | ClearRichPresence or GetPersonaName |
+| candidate | 1 | `SteamFriends018` | 6 | a text by Steam ID (GetFriendPersonaName, GetPlayerNickname and others) |
+| candidate | 1 | `SteamFriends018` | 9 | one of many Steam ID functions returning 0 |
+| candidate | 1 | `SteamFriends018` | 36 | RequestUserInformation, HasFriend or another (Steam ID, 0) call |
+| candidate | 1 | `SteamUser021` | 1 | BLoggedOn, another no-argument bool, GetHSteamUser or others (one call) |
 | candidate | 1 | `SteamUser022` | 2 | GetSteamID |

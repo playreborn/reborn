@@ -107,6 +107,26 @@ def app_of(path):
     return None
 
 
+def started_at(path):
+    """When `run.sh` started the game whose log this is: the time text
+    (`YYYY-MM-DD HH:MM:SS`, local time) of the last `start` line for the
+    log's app before its `log` line in `starts.log`, or None. The last
+    matching `log` line wins, as in `app_of`."""
+    name = Path(path).name
+    try:
+        lines = open(log_dir() / "starts.log", encoding="utf-8").read().splitlines()
+    except OSError:
+        return None
+    last_start, found = {}, None
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 4 and parts[2] == "start":
+            last_start[parts[3]] = f"{parts[0]} {parts[1]}"
+        elif len(parts) == 5 and parts[2] == "log" and parts[4] == name:
+            found = last_start.get(parts[3])
+    return found
+
+
 def first_steam_client(path) -> str:
     """The `SteamClient…` version (other than 017) the game asked for."""
     for raw in open(path, encoding="utf-8", errors="replace"):

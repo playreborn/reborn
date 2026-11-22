@@ -1760,3 +1760,361 @@ and thread before the next poll; `Steam_GetAPICallResult` only while a
 candidate" stay candidates. Not in the shim yet: the shim's
 `Steam_BGetCallback` still aborts; delivering callbacks needs their
 contents, which come from `rebornd`.
+
+## `SteamUser`, `SteamFriends`, `SteamController` and `SteamInput` (loop iteration 9a)
+
+Pages read 2026-11-22, each opened without signing in:
+<https://partner.steamgames.com/doc/api/ISteamUser> (its constants name
+`SteamUser019`), <https://partner.steamgames.com/doc/api/ISteamFriends>
+(its constants name `SteamFriends015`; games asked for `017` and `018`),
+<https://partner.steamgames.com/doc/api/ISteamController> (its constants
+name `SteamController007`) and
+<https://partner.steamgames.com/doc/api/ISteamInput>. No page describes
+`SteamUser020` to `023`, `SteamFriends017`/`018`, `SteamController008`,
+`SteamInput001` or `SteamInput006`; as before, a page gives the meaning of
+a function, never a position. Recordings: the reference runs of
+`tools/shim/games.json`, read with `tools/shim/observelog.py`. Steam IDs in
+registers were compared inside scripts only; no value of one is written
+here. Planning only: no game was run for this section.
+
+### `SteamUser020` to `023` position 2: candidate `GetSteamID`, no experiment
+
+- **Recorded:** all 20 games, once to 50 logged times; in every call the
+  result was the address `rdx` held, an address on the game's stack that
+  changes between call sites.
+- **Every function on the page, by shape** (LOOP step 3):
+  - returns a class through the caller's address, the recorded shape:
+    `GetSteamID` (`CSteamID`), the only one;
+  - return a number, enum, true/false or handle in the result register,
+    which would not equal a fresh stack address in every call:
+    `BeginAuthSession`, `BIsBehindNAT`, `BIsPhoneIdentifying`,
+    `BIsPhoneRequiringVerification`, `BIsPhoneVerified`,
+    `BIsTwoFactorEnabled`, `BLoggedOn`, `BSetDurationControlOnlineState`,
+    `DecompressVoice`, `GetAuthSessionTicket`, `GetAuthTicketForWebApi`,
+    `GetAvailableVoice`, `GetDurationControl`, `GetEncryptedAppTicket`,
+    `GetGameBadgeLevel`, `GetHSteamUser`, `GetPlayerSteamLevel`,
+    `GetUserDataFolder`, `GetVoice`, `GetVoiceOptimalSampleRate`,
+    `InitiateGameConnection`, `RequestEncryptedAppTicket`,
+    `RequestStoreAuthURL`, `UserHasLicenseForApp`;
+  - take a Steam ID first, which `rdx` would then hold as a value (as
+    `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 shows), not a stack
+    address: `AdvertiseGame`, `EndAuthSession`;
+  - return nothing, so the result register is a leftover:
+    `CancelAuthTicket`, `StartVoiceRecording`, `StopVoiceRecording`,
+    `TerminateGameConnection`, `TrackAppUsageEvent`.
+- **Why no experiment:** the functions without a result are ruled out only
+  by the bytes the call writes to the address in `rdx`, which would be the
+  test account's Steam ID. ADR 0043 and 0053 do not allow a read entry for
+  a call whose candidate hands back an account identifier. A script that
+  compares that value with later Steam ID arguments (for example
+  `SteamFriends017` position 36 in Please, Touch The Artwork 2), printing
+  only match or mismatch, needs its own ADR and the maintainer.
+
+### `SteamUser023` and `SteamUser021` position 1: candidates, no experiment
+
+- **Recorded:** `SteamUser023` position 1 once or twice early in Bongo Cat,
+  An Arcade Full of Cats, One's Own Exile, A Park Full of Cats and Fallout
+  Shelter, result 1; `rdx` held 0x18 or 1. `SteamUser021` position 1 once in
+  HoloCure, `rdx` an address in the heap, result 1.
+- **Every function on the page that fits a result of 1:** the no-argument
+  true/false checks `BLoggedOn`, `BIsBehindNAT`, `BIsPhoneIdentifying`,
+  `BIsPhoneRequiringVerification`, `BIsPhoneVerified`,
+  `BIsTwoFactorEnabled`; `GetHSteamUser` (the user handle; the result of
+  `ConnectToGlobalUser` was 1 in the runs of experiment 7);
+  `GetPlayerSteamLevel` and `GetGameBadgeLevel` (a level of 1);
+  `BSetDurationControlOnlineState` (true when set); `StartVoiceRecording`
+  and `StopVoiceRecording` (a leftover of 1). With 0x18 or 1 in `rdx`,
+  functions that write through a pointer in `rdx` (`GetAvailableVoice`) or
+  read a text from it (`GetAuthTicketForWebApi`, `RequestStoreAuthURL`)
+  would fault, so they are out for `023`; for `021` (one call, `rdx` a heap
+  address) they are not, and `GetAuthTicketForWebApi` returns a ticket
+  handle, so no read is planned for that position.
+- **Why no experiment:** `BLoggedOn` and `GetHSteamUser` both return 1 for
+  a signed-in client; only a run with the client offline would tell them
+  apart, which changes the sign-in state (stop and ask, `LOOP.md`).
+
+### `SteamUser020` position 12: candidate `GetVoiceOptimalSampleRate`
+
+- **Recorded:** Cave Crawlers (reference run and two agent runs) and Outcore
+  called it once early; the result was the same number every time, from
+  11025 to 48000 (the value is not written here: until the meaning is
+  settled it could be the account's Steam level), `rdx` 0xf in Cave
+  Crawlers and a stack address in Outcore.
+- **Every function on the page, by shape** (the arguments in Cave Crawlers
+  were 0xf, a heap address and 0x33a):
+  - return a number without needing a valid pointer:
+    `GetVoiceOptimalSampleRate` (uint32, the voice decoder's native rate;
+    the page gives 11025 to 48000 as the decoder's range),
+    `GetPlayerSteamLevel`, `GetGameBadgeLevel`, `GetHSteamUser`,
+    `GetDurationControl` (a call handle), `UserHasLicenseForApp` (an enum;
+    `rdx` would be a Steam ID), `GetVoice(bWantCompressed, …)` (an enum;
+    its second argument, `r8`, is the destination buffer), the true/false
+    functions;
+  - need a valid pointer in `rdx`, which 0xf is not:
+    `InitiateGameConnection`, `GetAuthSessionTicket`,
+    `GetAuthTicketForWebApi`, `GetAvailableVoice`, `DecompressVoice`,
+    `GetUserDataFolder`, `GetEncryptedAppTicket`, `RequestEncryptedAppTicket`,
+    `RequestStoreAuthURL`, `BeginAuthSession`;
+  - return nothing, so the result register is a leftover:
+    `StartVoiceRecording`, `StopVoiceRecording`, `CancelAuthTicket`,
+    `EndAuthSession`, `AdvertiseGame`, `TerminateGameConnection`,
+    `TrackAppUsageEvent`;
+  - `GetSteamID` returns through the address in `rdx` (0xf).
+- **Ruled out by the prediction below:** the true/false functions (the
+  value is not 0 or 1), `GetHSteamUser` (the result is compared with the
+  user handle), `GetDurationControl` (a call handle; those seen in
+  `Steam_GetAPICallResult` are 64-bit values, not the same small number in
+  two games and three runs), `GetGameBadgeLevel` (the page bounds it: "the
+  regular badge (max level 5) and the foil badge (max level 1)"),
+  `GetSteamID` (0xf is not writable).
+- **Residual judgement (for the review):** `GetPlayerSteamLevel` has no
+  upper limit on the page; it is ruled out only because a Steam level of
+  at least 11025 for the test account is not credible. `UserHasLicenseForApp`
+  (0xf is not a Steam ID) and `GetVoice` (it would write voice data into
+  the heap buffer in `r8`) return enums whose values were not checked on
+  the page; they are ruled out only because an enum value of at least
+  11025 is not credible. The void functions are ruled out only because a
+  leftover that is the same value in the decoder's range in two games and
+  three runs is not credible. So a match
+  of experiment 18 records position 12 as **narrowed** to
+  `GetVoiceOptimalSampleRate`, not as confirmed.
+
+### `SteamFriends017` and `SteamFriends018`
+
+- **Recorded** (reference runs):
+  - `017` position 43, Cave Crawlers: 14 logged calls, `rdx` a key as text
+    (`steam_display`, `status`, `steam_player_group`,
+    `steam_player_group_size`), `r8` a value as text (for example
+    `#Status`, `Main Menu`) in 12 of them, result 1. Position 44 came
+    directly before the first call of each group (no argument used, result
+    an address in the heap).
+  - `017` position 3, Please, Touch The Artwork 2 (once) and Fallout
+    Shelter (13 times): `rdx` 4, result a small number. Position 4 followed:
+    `rdx` an address on the stack and the result that same address, `r8`
+    0, 1, 2, … below the position 3 result, `r9` 4.
+  - `017` position 36, Please, Touch The Artwork 2: `rdx` a Steam ID; the
+    first call (right after `SteamUser023` position 2) returned a small
+    number that was then given to `SteamUtils010` positions 5 and 6
+    (`GetImageSize`, `GetImageRGBA`, confirmed; `r9` of the latter 0x21100,
+    a 184 by 184 by 4 byte buffer); the next calls, with the Steam IDs from
+    position 4, returned -1 or a positive handle. After each -1 came position 37
+    with the same Steam ID and `r8` 0, result 0.
+  - `017` position 0 (Paper Lily, An Arcade Full of Cats, Dark Deception,
+    UNBEATABLE, A Park Full of Cats): no argument used, result an address
+    in the heap.
+  - `018`, Bongo Cat, once each right after `SteamUser023` position 2, `rdx`
+    a Steam ID: position 36 (`r8` 0) result 0, position 6 result an address
+    in the heap, position 9 result 0.
+- **Candidates, from the page (all 74 functions listed there checked by
+  shape):**
+  - **Position 43: `SetRichPresence`.** The only function on the page that
+    takes two texts. An empty value removes the key (page), which fits the
+    calls whose `r8` was not logged as text. Every other function taking a
+    text has it together with a Steam ID, an app ID or an enum
+    (`ActivateGameOverlay…`, `InviteUserToGame`, `ReplyToFriendMessage`,
+    `SendClanChatMessage`, `GetFriendRichPresence`).
+  - **Position 3: `GetFriendCount`, position 4: `GetFriendByIndex`.** 4 is
+    `k_EFriendFlagImmediate` on the page. `GetFriendByIndex(iFriend,
+    iFriendFlags)` returns a `CSteamID` through the caller's address (`rdx`),
+    with the index in `r8` and the flags in `r9`. Functions of the same
+    shape: `GetCoplayFriendCount`/`GetCoplayFriend` and
+    `GetClanCount`/`GetClanByIndex` take no flags, so `rdx` of position 3
+    and `r9` of position 4 would both be leftovers, equal to each other in
+    every call; `GetFriendsGroupMembersCount(friendsGroupID)` has no index
+    function returning a `CSteamID`; `GetFriendFromSourceByIndex`,
+    `GetClanOfficerByIndex` and `GetChatMemberByIndex` would have a Steam ID
+    in `r8`, not 0, 1, 2. **Residual judgement (for the review):**
+    `GetClanCount`/`GetClanByIndex` and `GetCoplayFriendCount`/`GetCoplayFriend`
+    are excluded only because a leftover in `rdx` and `r9` would not be 4
+    every time; the prediction checks that `r9` follows `rdx` of position 3,
+    which a script can check, but that the 4 is an argument is a judgement.
+  - **Position 36: `GetLargeFriendAvatar`.** Only the three avatar
+    functions return an image handle for `GetImageSize`/`GetImageRGBA`;
+    only the large one documents -1 ("not loaded yet"). **Residual
+    judgement:** the page gives 32 by 32 (small), 64 by 64 (medium) and
+    128 by 128 (large) pixels, but the recorded buffer (184 by 184 by 4
+    bytes) already contradicts the page's size for the large one, so the
+    sizes on the page are not a reliable test. The prediction's buffer size
+    larger than 64 by 64 by 4 bytes is kept, but it rules out the small and
+    medium functions only by judgement. A -1 result, seen in the reference
+    run, is not required (avatars may now be cached) and the script does
+    not report whether one occurred, so a match records position 36 as
+    **narrowed** to `GetLargeFriendAvatar`, not as confirmed.
+  - **Position 37 and `018` position 36** (Steam ID and 0 in, 0 out):
+    `RequestUserInformation(steamID, false)` ("false means that we already
+    have all the details") fits the call after a -1 avatar, but so do
+    `HasFriend` (flags 0), `BHasEquippedProfileItem`, `IsUserInSource`,
+    `IsClanChatAdmin`, `GetFriendGamePlayed` and `GetClanActivityCounts`
+    with a null pointer, `SetInGameVoiceSpeaking` (no result), and every
+    function that takes only a Steam ID and returns 0 when `r8` is a
+    leftover. No experiment.
+  - **`018` position 6** (Steam ID in, heap address out): the functions
+    taking a Steam ID that return text: `GetFriendPersonaName`,
+    `GetPlayerNickname`, `GetClanName`, `GetClanTag`,
+    `GetFriendPersonaNameHistory`, `GetFriendRichPresenceKeyByIndex`
+    (`r8` as an index); `GetFriendRichPresence` would need a key as text in
+    `r8`. Several return account data; no read, no experiment.
+  - **`018` position 9** (Steam ID in, 0 out): every function on the page
+    that takes a Steam ID and returns a number, enum or true/false can
+    return 0 (for example `GetFriendRelationship`, `GetFriendPersonaState`,
+    `GetFriendSteamLevel`, `GetFriendCoplayTime`, the avatar functions,
+    `IsClanPublic`). No candidate stands out; no experiment.
+  - **Positions 0 and 44** (no argument, heap address out): the page has
+    one function without arguments that returns text, `GetPersonaName`,
+    and one without arguments and without a result, `ClearRichPresence`,
+    whose leftover can be an address. Position 44 coming directly before
+    each group of `SetRichPresence` calls fits `ClearRichPresence`; nothing
+    recorded rules out either for either position. Telling them apart
+    needs the result text, which for `GetPersonaName` is account data
+    (ADR 0043). No experiment.
+
+### `SteamController007`/`008` position 2 and `SteamInput001` position 2 / `SteamInput006` position 3: `RunFrame`
+
+- **Recorded:** in all 18 games with these objects, the `SteamInput` call
+  came first and was followed directly, on the same thread, by the
+  `SteamController` call, about once per frame, mostly directly before a
+  run of `Steam_BGetCallback` calls. `rdx` was 0, except `SteamInput006` in
+  Baldi's Basics and HoloCure (1 in calls the games make themselves after
+  `Init`) and `SteamInput001`, where `rdx` held one address per game. In
+  most games both calls returned one and the same register value
+  (0x7ffcea7d4dc0 in most, 0 in Chronigma); in Baldi's Basics and HoloCure
+  the two differed.
+- **Every function on the pages with the shape** (no argument or a
+  true/false argument, called every frame):
+  - `ISteamController` (34 functions): `RunFrame` (no result; "performed
+    automatically by SteamAPI_RunCallbacks"), `Init` and `Shutdown`
+    ("always returns true"). The other 31 take a controller handle, a name
+    or an output pointer; with 0 in `rdx` those that return a value would
+    return a handle, a count, a struct through `rdx` (0, which would
+    fault) or true/false, and the void ones (`ActivateActionSet`,
+    `ActivateActionSetLayer`, `DeactivateActionSetLayer`,
+    `DeactivateAllActionSetLayers`, `StopAnalogActionMomentum`,
+    `SetLEDColor`, `TriggerHapticPulse`, `TriggerRepeatedHapticPulse`,
+    `TriggerVibration`) act on one controller.
+  - `ISteamInput` (48 functions): `RunFrame(bReservedValue)` (no result,
+    also "performed automatically by SteamAPI_RunCallbacks"),
+    `EnableDeviceCallbacks` (no argument, no result),
+    `EnableActionEventCallbacks(pCallback)` (no result; 0 in `rdx` would be
+    a null callback), and the true/false functions `BNewDataAvailable`,
+    `BWaitForData`, `Init` (confirmed as position 0 of `006`), `Shutdown`;
+    the void ones that act on one controller are as above
+    (`ActivateActionSet`, `ActivateActionSetLayer`,
+    `DeactivateActionSetLayer`, `DeactivateAllActionSetLayers`,
+    `StopAnalogActionMomentum`, `SetLEDColor`, `Legacy_TriggerHapticPulse`,
+    `Legacy_TriggerRepeatedHapticPulse`, `TriggerSimpleHapticEvent`,
+    `TriggerVibration`, `TriggerVibrationExtended`,
+    `SetDualSenseTriggerEffect`); the rest return a value and take a
+    handle, a name or a pointer.
+- **What rules them out** (experiment 16):
+  - A: a true/false function sets the lowest result byte to 0 or 1 in every
+    call, so one call with another lowest byte rules out all of them.
+  - D: no other position of the two interfaces is called in the game. Both
+    pages say `Init` "must be called when starting use of" the interface,
+    and a per-controller function needs a handle from
+    `GetConnectedControllers` or `GetControllerForGamepadIndex` (other
+    positions); a game that calls neither cannot be acting on a controller
+    or setting up action callbacks every frame. That, and B (the pair
+    comes directly before the callback pump) and C (the same leftover from
+    both), fit the pages' statement that `SteamAPI_RunCallbacks` runs
+    `RunFrame` on both interfaces.
+  - **Residual judgement (for the review):** the void functions
+    (`EnableDeviceCallbacks`, `EnableActionEventCallbacks(NULL)` and the
+    per-controller ones called with handle 0) return a leftover just like
+    `RunFrame` would, so they are ruled out by D and the `Init` rule, not
+    by a byte a script reads.
+- **`SteamInput001`:** no page describes that version, and the address in
+  `rdx` is not explained by `RunFrame(bool)` (its lowest byte, 0xd0 or 0xc0,
+  is not 1). A match records `SteamInput001` position 2 only as
+  **narrowed** to a `RunFrame`-like per-frame call, not as confirmed.
+
+### Experiment 16 (planned 2026-11-22, before the runs)
+
+Agent runs (`tools/shim/run.sh <app id>`, each closed by a close request
+after about 30 seconds or more) of Cave Crawlers, Dark Deception and
+UNBEATABLE [white label] (`SteamController007` + `SteamInput001`) and of
+Bongo Cat, Linsips and Cartapli : Fold Quest (`SteamController008` +
+`SteamInput006`). No input.
+
+**Predictions** (`tools/shim/experiments/016_run_frame.py`), for each game,
+C the `SteamController` call and I the `SteamInput` call:
+
+- A: C and I are each logged at least 20 times, and each returns, in at
+  least one call, a lowest byte other than 0 and 1.
+- B: every logged I call is followed directly, on its thread, by a C call,
+  and at least 10 of these pairs are followed directly by
+  `Steam_BGetCallback`.
+- C: within a game, all logged C and I calls return one and the same value.
+- D: within a game, no other position of the game's `SteamController` and
+  `SteamInput` versions is called.
+
+All six games are needed, one log each, recorded by `run.sh` in
+`starts.log` and started at or after the plan commit (the script has its
+time). A match confirms `SteamController007`/`008` position 2 and
+`SteamInput006` position 3 as `RunFrame` (with the residual judgement
+above, for the review) and narrows `SteamInput001` position 2.
+
+### Experiment 17 (planned 2026-11-22, before the runs)
+
+Agent runs of Cave Crawlers, Please, Touch The Artwork 2 and Fallout
+Shelter, each closed by a close request after about 30 seconds or more. No
+input; the calls predicted came within the first 3 seconds in the reference
+runs (the Cave Crawlers main menu sets its rich presence at about 2
+seconds).
+
+**Predictions** (`tools/shim/experiments/017_friends.py`):
+
+- A (Cave Crawlers): `SteamFriends017` position 43 is called; every call
+  has a text in `rdx` and returns true; at least one also has a text in
+  `r8`.
+- B (Please, Touch The Artwork 2; Fallout Shelter): position 3 is called,
+  always with 4 in `rdx`; position 4 is called, every call after a
+  position 3 call, returning its `rdx`, with `r9` equal to `rdx` of the
+  latest position 3 call and `r8` from 0 to below that call's result.
+- C (Please, Touch The Artwork 2): position 36 is called; every result is
+  -1, 0 or positive, at least one is positive, and every positive result is
+  later given to `SteamUtils010` position 5 and to position 6 with a buffer
+  larger than 64 by 64 by 4 bytes.
+
+Friend counts, indices, Steam IDs and avatar results are compared inside
+the script; for parts B and C only match or mismatch is printed (no call
+counts, no handle counts, no result kinds, which could reveal the friend
+count). All three games are needed, one log each, started at or after the
+plan commit. A match confirms position 43 as `SetRichPresence` and
+positions 3 and 4 as `GetFriendCount` and `GetFriendByIndex` (with the
+residual judgement above, for the review), and narrows position 36 to
+`GetLargeFriendAvatar`.
+
+**Implementing** `SetRichPresence`, `GetFriendCount` and `GetFriendByIndex`
+in the shim waits for the maintainer, even after a match: they act on or
+hand out account and friends data (ADR 0051 keeps actions on the account
+and friends with the maintainer).
+
+### Experiment 18 (planned 2026-11-22, before the runs)
+
+An agent run of Cave Crawlers (it can be the run of experiments 16 and 17).
+
+**Prediction** (`tools/shim/experiments/018_voice_sample_rate.py`):
+`SteamUser020` position 12 is called; every call returns one and the same
+value from 11025 to 48000 (upper 32 bits zero), different from the user
+handle `SteamClient020` position 2 returned. The script prints only that
+verdict, not the value (it could be the account's Steam level). The log
+must be started at or after the plan commit. Because of the residual
+judgement above, a match records position 12 only as **narrowed** to
+`GetVoiceOptimalSampleRate`, not as confirmed.
+
+**Before the runs:** while planning, the three scripts were tried on the
+reference logs and on earlier agent runs (`observe-48520`, `observe-31272`,
+`observe-42504`, `observe-9812`, `observe-54100`, `observe-47280`) to check
+that they read the logs correctly; those logs are not evidence for these
+experiments, which are evaluated only on runs made after this plan is
+committed. Each script rejects a log whose `start` line in `starts.log`
+(read with the new `observelog.started_at`) is earlier than the plan commit
+time written into the script (`LOOP.md`). No proxy read (`READS`) or
+callback payload entry is added.
+
+**Corrections from the review (before any run):** prediction D added to
+experiment 16; parts B and C of experiment 17 print only match or
+mismatch; experiment 18 prints no value; the residual judgements and the
+"narrowed" outcomes above were written down; the void functions and
+`GetVoice` were added to the list for position 12, and `GetGameBadgeLevel`
+is ruled out by the page's limits (5 and 1).

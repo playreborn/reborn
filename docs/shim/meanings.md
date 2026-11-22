@@ -831,3 +831,56 @@ out; Cave Crawlers, Plant Therapy, Dark Deception):
 77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 call 1 rcx=0x1c27dc40a40 rdx=0x1 r8=0x7ffffffffffffffc r9=0x13
 77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 return 1 rax=0x1
 ```
+
+## `SteamUtils010` positions 5 and 6: candidates `GetImageSize`, `GetImageRGBA`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUtils>, read
+  again 2026-11-22 (it names `SteamUtils009`; candidate only for 010, as
+  for `GetAppID`).
+- **Recorded:** Please, Touch The Artwork 2, stage 3 run: four pairs, each
+  first position 5 then position 6 with the same small number in `rdx`
+  (3, 3, 11, 10). Position 5 got two stack addresses 8 bytes apart in
+  `r8` and `r9`; position 6 got a heap address in `r8` and `0x21100` =
+  135424 in `r9`; both returned 1.
+- **Fit:** the page documents a function that takes an image handle and
+  two places for width and height and reports success, and one that
+  takes the same handle, a buffer and the buffer's size and fills it
+  with the image as RGBA; the page says to size the buffer as width ×
+  height × 4. 135424 = 184 × 184 × 4.
+
+### Experiment 9 (planned 2026-11-22, before the runs)
+
+Two agent runs of Please, Touch The Artwork 2 to its first screen.
+
+**Predictions:**
+
+1. Every call of position 6 follows a call of position 5 with the same
+   `rdx` (low 32 bits), with no other position 5 or 6 call in between.
+2. The size in `r9` of every position 6 call is a multiple of 4, and a
+   quarter of it is a square number (a square image, as an avatar or an
+   icon is; a non-square image would not break the meaning, only this
+   prediction, and is noted).
+3. Both return 1 in their lowest byte.
+
+**Result of experiment 9** (two agent runs after the plan was committed
+at 02:57:11):
+
+- (1) **Matches.** In both runs four pairs, each position 5 then position
+  6 with the same handle (3, 10, 3, 11), nothing in between.
+- (2) **Matches.** Every position 6 call had `r9` = 135424 = 4 × 184².
+- (3) **Matches.** All 16 calls returned 1.
+
+Positions 5 and 6 of `SteamUtils010` matched `GetImageSize` and
+`GetImageRGBA` and wait for the maintainer's OK (ADR 0044). Only one game
+called them; whether the handles name avatars or other images is not
+known (the handles come from other interfaces, not covered here).
+
+Evidence (excerpt; floating-point registers and the `rcx` note left
+out):
+
+```text
+2055 ms ThreadId(1) SteamUtils010#5 call 1 rcx=0x26739b502e0 rdx=0x3 r8=0xf1ee58df40 r9=0xf1ee58df38
+2055 ms ThreadId(1) SteamUtils010#5 return 1 rax=0x1
+2055 ms ThreadId(1) SteamUtils010#6 call 1 rcx=0x26739b502e0 rdx=0x3 r8=0x26738c10020 r9=0x21100
+2056 ms ThreadId(1) SteamUtils010#6 return 1 rax=0x1
+```

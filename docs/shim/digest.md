@@ -9,6 +9,10 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 2: UserStats 011/012 position 0 recorded as
+  candidates (`RequestCurrentStats` or `StoreStats`, no experiment yet);
+  experiment 11 matched (4 games): `SteamClient021` 4/1/23 and
+  `SteamClient023` 4/1/22 are the close calls; added to the shim.
 - 2026-11-22: loop iteration 1: `SteamUtils010` 14 confirmed as
   `GetCurrentBatteryPower` (experiment 10, 3 games, 238 calls, all 255 on
   AC power); `SteamUtils009` 14 stays a candidate (Outcore not run).

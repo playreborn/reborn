@@ -798,3 +798,36 @@ and of An Arcade Full of Cats, Dark Deception and A Park Full of Cats
 2. Every call of position 0 returns 1 in its lowest byte.
 
 A call that breaks 1 or 2 is a mismatch.
+
+**Result of experiment 8** (agent runs after the plan was committed at
+02:34:20):
+
+- (1) **Matches.** Cave Crawlers asked about 2444550 again (result 0).
+  Plant Therapy went through eight app IDs again and again (2544540,
+  2664530, 2783580, 2997420, 3078370, 3308530, 3406390, 3761200; every
+  logged call returned 0), and A Park Full of Cats asked twice about
+  2673390 (result 0). The store page of each of these nine IDs, read one
+  at a time on 2026-11-22, says it is DLC of exactly the game that asked
+  (for example "Plant Therapy: Cat Art Pack", "A Park Full of Cats:
+  Haunted Ride").
+- (2) **Matches.** Position 0 returned 1 in An Arcade Full of Cats, Dark
+  Deception and A Park Full of Cats.
+
+What the experiment shows is limited by the account: it cannot tell
+"DLC owned and installed" from "subscribed to the app" at position 7,
+and it rules the other no-argument functions out at position 0 only by
+their expected value for this account. Both stay candidates in that
+sense; position 7 is narrowed to two functions and position 0 to one,
+waiting for the maintainer's OK (ADR 0044).
+
+Evidence (excerpt; floating-point registers and the `rcx` note left
+out; Cave Crawlers, Plant Therapy, Dark Deception):
+
+```text
+1168 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#7 call 1 rcx=0x29e9db90520 rdx=0x254d06 r8=0x29d5718d8c0 r9=0xd
+1168 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#7 return 1 rax=0x0
+98 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#7 call 2 rcx=0x1a1e0620a60 rdx=0x28a852 r8=0x19f169acf00 r9=0x3c
+98 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#7 return 2 rax=0x0
+77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 call 1 rcx=0x1c27dc40a40 rdx=0x1 r8=0x7ffffffffffffffc r9=0x13
+77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 return 1 rax=0x1
+```

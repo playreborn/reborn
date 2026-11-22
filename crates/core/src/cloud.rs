@@ -134,7 +134,8 @@ pub async fn compare_app_cloud(
     app_id: u32,
     library: Option<&Path>,
 ) -> Result<CloudReport, CoreError> {
-    let app = AppCloud::load(session, app_id, library).await?;
+    let app_info = session.app_info_text(app_id).await?;
+    let app = AppCloud::load(session, app_id, library, &app_info).await?;
     let resolve = |root: &str| app.resolve(root);
     let place = app.place(&resolve);
     Ok(CloudReport {
@@ -255,7 +256,21 @@ pub async fn restore_missing_saves(
     app_id: u32,
     library: Option<&Path>,
 ) -> Result<RestoreOutcome, CoreError> {
-    let app = AppCloud::load(session, app_id, library).await?;
+    let app_info = session.app_info_text(app_id).await?;
+    restore_missing_saves_with(session, app_id, library, &app_info).await
+}
+
+/// [`restore_missing_saves`] with the app info text already fetched
+/// ([`Session::app_info_text`]), so a caller that needs the app info for
+/// something else too (the shim's cloud quota, ADR 0055) asks Valve for it
+/// only once.
+pub async fn restore_missing_saves_with(
+    session: &Session,
+    app_id: u32,
+    library: Option<&Path>,
+    app_info: &str,
+) -> Result<RestoreOutcome, CoreError> {
+    let app = AppCloud::load(session, app_id, library, app_info).await?;
     // Planned in its own scope: the folder lookup is not `Send` and must be
     // gone before the downloads are awaited.
     let planned = {
@@ -314,9 +329,9 @@ impl AppCloud {
         session: &Session,
         app_id: u32,
         library: Option<&Path>,
+        app_info: &str,
     ) -> Result<Self, CoreError> {
-        let text = session.app_info_text(app_id).await?;
-        let document = vdf::parse(&text)
+        let document = vdf::parse(app_info)
             .map_err(|error| reborn_cm::Error::AppInfo(app_id, error.to_string()))?;
         let found = cloud_config(&document);
         let files = session.cloud_files(app_id).await?;

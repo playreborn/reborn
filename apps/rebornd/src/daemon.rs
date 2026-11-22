@@ -13,10 +13,10 @@ use reborn_cm::{
     Relationship, Session,
 };
 use reborn_core::CoreError;
-use reborn_core::cloud::{RestoreBlocked, RestoreOutcome, restore_missing_saves};
+use reborn_core::cloud::{RestoreBlocked, RestoreOutcome, restore_missing_saves_with};
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
-use reborn_core::run_cloud::{RunCloud, cloud_quota};
+use reborn_core::run_cloud::{RunCloud, quota_from_app_info};
 use reborn_ipc::protocol::{
     AchievementInfo, ChatMessageInfo, ChatText, CloudRestoreResult, Event, FriendInfo,
     FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState,
@@ -1184,15 +1184,34 @@ impl Daemon {
         };
         let shim_mode = crate::shim_launch::enabled();
         // Missing saves from Steam Cloud first (ADR 0035). Never stops the
-        // game: a conflict or an error is only reported.
-        let restore = tokio::time::timeout(
-            CLOUD_RESTORE_LIMIT,
-            restore_missing_saves(&session, app_id, request.library.as_deref()),
-        )
-        .await;
-        let restore = match restore {
+        // game: a conflict or an error is only reported. The app info is
+        // fetched once, for the restore and, in shim mode, for the cloud
+        // quota (ADR 0055); both share the restore's time limit.
+        let deadline = tokio::time::Instant::now() + CLOUD_RESTORE_LIMIT;
+        let too_long = || "Steam Cloud took too long".to_owned();
+        let app_info = match tokio::time::timeout_at(deadline, session.app_info_text(app_id)).await
+        {
             Ok(result) => result.map_err(|error| error.to_string()),
-            Err(_) => Err("Steam Cloud took too long".to_owned()),
+            Err(_) => Err(too_long()),
+        };
+        let restore = match &app_info {
+            Ok(app_info) => {
+                match tokio::time::timeout_at(
+                    deadline,
+                    restore_missing_saves_with(
+                        &session,
+                        app_id,
+                        request.library.as_deref(),
+                        app_info,
+                    ),
+                )
+                .await
+                {
+                    Ok(result) => result.map_err(|error| error.to_string()),
+                    Err(_) => Err(too_long()),
+                }
+            }
+            Err(message) => Err(message.clone()),
         };
         if let Err(message) = &restore {
             warn!(app_id, %message, "restoring cloud saves failed");
@@ -1222,16 +1241,25 @@ impl Daemon {
             None
         };
         // In shim mode the run's cloud folder (ADR 0055), with the size
-        // limit from the app's quota: one more app info request per
-        // shim-mode launch. An app without a quota has no cloud and gets
-        // no folder (its reads are refused). Reads only, so far.
+        // limit from the app's quota, read from the app info fetched above
+        // (no further request). Without that app info the launch is
+        // refused, like without the ownership set. An app without a quota
+        // has no cloud and gets no folder (its reads are refused). Reads
+        // only, so far.
         let cloud = if shim_mode {
-            match run_cloud(&session, app_id).await {
+            let cloud = match &app_info {
+                Ok(app_info) => {
+                    run_cloud(&session, app_id, app_info).map_err(|error| error.to_string())
+                }
+                Err(message) => Err(message.clone()),
+            };
+            match cloud {
                 Ok(cloud) => cloud.map(Arc::new),
-                Err(error) => {
+                Err(message) => {
                     crate::shim_launch::leave();
-                    self.forget_session_after(&error).await;
-                    return error_response(&error);
+                    return Response::Error {
+                        message: format!("shim mode: cannot read the app's cloud quota: {message}"),
+                    };
                 }
             }
         } else {
@@ -1810,9 +1838,14 @@ impl ShimHost for Daemon {
 
 /// The cloud folder a shim-mode run of `app_id` reads (ADR 0055):
 /// `<Reborn data>/cloud/<account ID>/<app ID>/`, limited by the app's
-/// quota; `None` for an app without one. Creates nothing.
-async fn run_cloud(session: &Session, app_id: u32) -> Result<Option<RunCloud>, CoreError> {
-    let Some(limit) = cloud_quota(session, app_id).await? else {
+/// quota (from `app_info`, already fetched); `None` for an app without
+/// one. Creates nothing.
+fn run_cloud(
+    session: &Session,
+    app_id: u32,
+    app_info: &str,
+) -> Result<Option<RunCloud>, CoreError> {
+    let Some(limit) = quota_from_app_info(app_id, app_info)? else {
         return Ok(None);
     };
     let data_dir = settings::data_dir()?;

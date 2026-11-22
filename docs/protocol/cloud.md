@@ -110,12 +110,24 @@ response types are in steam-vent-proto-steam
   (their separate shadow folder comes with stage 1) get `NotAllowed`.
   Names are checked like install paths (no `..`, no absolute paths or
   drive letters, no unsafe characters or device names) and must have no
-  root token (`%...%`) and at most 1024 bytes; no symlink is followed,
-  neither below the Reborn data folder nor inside the run's folder; a
-  folder is not a file. All of these get `NotAllowed`, as does a read
-  error (ADR 0055 names no other reason). A file larger than the app's
-  quota (at most 16 MiB) gets `TooLarge`. A shim-mode launch reads the
-  app info once more for the quota (public data).
+  root token (`%...%`) and at most 1024 bytes; no symlink (on Windows
+  also no junction) is followed, neither below the Reborn data folder
+  nor inside the run's folder; a folder is not a file. The last part is
+  opened without following a link (Windows: `FILE_FLAG_OPEN_REPARSE_POINT`
+  and a reparse-point check on the handle; Unix: device and inode must
+  match the checked file), so a link swapped in after the check is
+  refused. All of these get `NotAllowed`, as does a read error (ADR 0055
+  names no other reason). A file larger than the app's quota (at most
+  16 MiB) gets `TooLarge`.
+- **Limits:** the threat is another process of the same user changing
+  the folder during a read. A *folder* on the way swapped for a link
+  between check and open is not caught (std has no handle-relative open);
+  the write stage must use handle-relative opens. Hard links are regular
+  files and are not detected.
+- **Requests:** none per call. The quota comes from the app info that the
+  launch already fetches for restoring saves (ADR 0035): one fetch for
+  both, under the restore's time limit. In shim mode, a launch whose app
+  info cannot be fetched is refused, like one without the ownership set.
 - **Logs:** only sizes and the refusal reason, never names or contents;
   `Debug` of the file data shows only its length.
 - **Not yet:** the base file (SHA-1, size, time of the last downloaded
@@ -125,8 +137,10 @@ response types are in steam-vent-proto-steam
 - **Source:** ADR 0055 ("Protocol messages", "What is cached, and
   where", "Cloud"); no Valve protocol is involved.
 - **Verified:** unit tests in `crates/core` and `apps/rebornd` with
-  temporary folders (traversal, absolute names, root tokens, symlinks on
-  systems that allow making them, other accounts and apps, quota, a
+  temporary folders (traversal, absolute names, root tokens, streams and
+  device names, folder links (junctions on Windows), file symlinks on
+  systems that allow making them, a link swapped in before the open,
+  other accounts and apps, quota, a
   200 000-byte answer over a served in-memory connection); no live run.
 
 ## Known, not implemented

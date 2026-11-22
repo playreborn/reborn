@@ -715,7 +715,9 @@ mod tests {
     #[test]
     fn utils_009_accepts_the_warning_hook_and_never_calls_it() {
         static CALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        extern "C" fn hook(_severity: i32, _text: *const c_char) {
+        // Any executable function of the "game"; the hook's arguments
+        // were never recorded, so this claims no shape.
+        extern "C" fn hook() {
             CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         assert_eq!(

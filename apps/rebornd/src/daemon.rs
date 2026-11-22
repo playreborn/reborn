@@ -2317,6 +2317,41 @@ mod tests {
         assert_eq!(daemon.link().await, Link::SignedOut);
     }
 
+    #[tokio::test]
+    async fn a_sign_out_already_done_ends_the_wait_at_once() {
+        // Signed out before the wait starts (no notify will come): the wait
+        // returns at once, so the caller's next `link()` sees SignedOut.
+        let daemon = Daemon::new();
+        assert_eq!(daemon.link().await, Link::SignedOut);
+        let waited = tokio::time::timeout(
+            Duration::from_secs(1),
+            daemon.wait_for_session(Duration::from_secs(300)),
+        )
+        .await;
+        assert!(waited.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_wait_does_not_end_early_while_offline() {
+        // While a reconnect runs, or the session lock is busy, `link()`
+        // says Offline; the wait must then really wait (no loop without
+        // waiting), even with the signed-out flag set.
+        let daemon = Daemon::new();
+        daemon.reconnecting.store(true, Ordering::SeqCst);
+        assert_eq!(daemon.link().await, Link::Offline);
+        let short = Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        daemon.wait_for_session(short).await;
+        assert!(started.elapsed() >= short);
+
+        daemon.reconnecting.store(false, Ordering::SeqCst);
+        let held = daemon.session.lock().await;
+        let started = std::time::Instant::now();
+        daemon.wait_for_session(short).await;
+        assert!(started.elapsed() >= short);
+        drop(held);
+    }
+
     /// Runs `action` while a shim stats request waits for a session, and
     /// whether the wait ended early (instead of after its 300 s).
     async fn wakes_a_waiting_request(daemon: &Daemon, action: impl Future<Output = ()>) -> bool {

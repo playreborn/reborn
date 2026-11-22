@@ -258,12 +258,20 @@
     "10": [
       "confirmed",
       "StoreStats"
+    ],
+    "6": [
+      "candidate",
+      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
     "15": [
       "candidate",
       "RequestUserStats"
+    ],
+    "5": [
+      "candidate",
+      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ]
   },
   "SteamInput001": {
@@ -290,6 +298,12 @@
     "3": [
       "confirmed",
       "GetResultTimestamp"
+    ]
+  },
+  "STEAMREMOTESTORAGE_INTERFACE_VERSION016": {
+    "13": [
+      "candidate",
+      "a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others)"
     ]
   }
 }

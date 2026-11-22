@@ -70,7 +70,7 @@ GAMES = {
     332950: "Dark Deception",
 }
 UTILS, SERVER = "SteamUtils009", "SteamGameServer012"
-PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in a follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 20, 53, 50)  # commit e3e6e6f on loop/plan-15a (final plan, after review)
 EXECUTABLE = "after rdx: executable (outside steamclient64)"
 STACK = re.compile(r"^stack: slot 6 low 32 bits (\d+|not readable), slot 7 text (yes|no|not readable)$")
 

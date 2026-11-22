@@ -2468,3 +2468,66 @@ experiment 22 "MISMATCH" (703 payload bytes not logged yet). In an older
 Bongo Cat log (`observe-47280`) three 703 callbacks fell between a
 trigger call and its 0x44e; C checks those through their payload bytes. The predictions were written from these logs, so
 they are not the test; only fresh runs after the plan commit are.
+
+**Results of experiments 22 and 23** (agent runs by the main session after
+the plan time 13:39:41, with 703 listed in `PAYLOAD_LISTED`; logs recorded
+by `run.sh` in `starts.log`: `observe-42296` Bongo Cat (used for both),
+`observe-11744` Coin Maker Simulator Demo, `observe-12404` Fallout
+Shelter, `observe-22200` Cartapli : Fold Quest, `observe-45668` Linsips,
+`observe-20708` Cave Crawlers): both **match**, checked by the scripts.
+
+```text
+observe-42296.log (Bongo Cat) P: 6 callbacks 703, 6 with payload bytes -> match
+observe-42296.log (Bongo Cat) F: 6 windows with GetAPICallResult checked, 6 equal, 6 calls logged -> match
+observe-42296.log (Bongo Cat) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+observe-11744.log (Coin Maker Simulator Demo) P: 13 callbacks 703, 13 with payload bytes -> match
+observe-11744.log (Coin Maker Simulator Demo) F: 13 windows with GetAPICallResult checked, 13 equal, 13 calls logged -> match
+observe-11744.log (Coin Maker Simulator Demo) G: 0 callbacks 703 for a position-15 handle, 0 with number 1101 and size 24 -> match
+observe-12404.log (Fallout Shelter) P: 29 callbacks 703, 29 with payload bytes -> match
+observe-12404.log (Fallout Shelter) F: 29 windows with GetAPICallResult checked, 29 equal, 29 calls logged -> match
+observe-12404.log (Fallout Shelter) G: 0 callbacks 703 for a position-15 handle, 0 with number 1101 and size 24 -> match
+observe-22200.log (Cartapli : Fold Quest) P: 4 callbacks 703, 4 with payload bytes -> match
+observe-22200.log (Cartapli : Fold Quest) F: 4 windows with GetAPICallResult checked, 4 equal, 4 calls logged -> match
+observe-22200.log (Cartapli : Fold Quest) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+observe-45668.log (Linsips) P: 1 callbacks 703, 1 with payload bytes -> match
+observe-45668.log (Linsips) F: 0 windows with GetAPICallResult checked, 0 equal, 0 calls logged -> match
+observe-45668.log (Linsips) G: 1 callbacks 703 for a position-15 handle, 1 with number 1101 and size 24 -> match
+F across all logs: 52 windows checked (at least 10) -> match
+    H: STEAMINVENTORY_INTERFACE_V003 position 26: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION012 position 23: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION012 position 29: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 15: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 22: 1 number(s)
+    H: STEAMUSERSTATS_INTERFACE_VERSION013 position 37: 1 number(s)
+H: 6 source positions, one number each -> match
+experiment 22: match
+```
+
+```text
+observe-20708.log (Cave Crawlers) A: 3 calls of position 10, 3 callbacks 0x44e, gaps [4, 126, 124] ms -> match
+observe-20708.log (Cave Crawlers) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-20708.log (Cave Crawlers) C: 3 of 3 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-20708.log (Cave Crawlers) D: 0 trigger calls with a text argument -> match
+observe-20708.log (Cave Crawlers) E: 3 of 3 trigger calls with a lowest rdx byte other than 0 and 1 -> match
+observe-42296.log (Bongo Cat) A: 7 calls of position 9, 7 callbacks 0x44e, gaps [6, 7, 7, 7, 0, 1, 0] ms -> match
+observe-42296.log (Bongo Cat) B: size, app ID, zero bytes 4..8 and result 1 in every callback -> match
+observe-42296.log (Bongo Cat) C: 7 of 7 results a bool true, 0 callbacks 703 in between (0 without payload bytes, 0 announcing 1102) -> match
+observe-42296.log (Bongo Cat) D: 0 trigger calls with a text argument -> match
+observe-42296.log (Bongo Cat) E: 7 of 7 trigger calls with a lowest rdx byte other than 0 and 1 -> match
+experiment 23: match
+```
+
+As the plans fixed beforehand, under ADR 0051:
+
+- confirmed: callback 703 is `SteamAPICallCompleted_t` (handle in 0..8,
+  callback number in 8..12, size in 12..16); `Steam_GetAPICallResult` is
+  `GetAPICallResult` (`rdx` the handle, `r9` the buffer size);
+  `STEAMUSERSTATS_INTERFACE_VERSION013` position 15 is `RequestUserStats`;
+- confirmed: callback 0x44e (1102) is `UserStatsStored_t` (among the
+  structs of the `ISteamUserStats` page); `…VERSION011` position 10 and
+  `…VERSION013` position 9 are `StoreStats`, under the stated assumption
+  that a `bool` argument arrives as 0 or 1 in the lowest byte of `rdx`;
+- the "What stays a candidate" items above stay candidates.
+
+Linsips again freed its 703 without `Steam_GetAPICallResult` (F: 0
+windows), as in the correction note of the 9b section.

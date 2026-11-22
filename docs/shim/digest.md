@@ -16,6 +16,13 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 10a (planned by a parallel agent, run by the
+  main session): experiments 22 and 23 **matched** (6 games). Callback 703
+  is `SteamAPICallCompleted_t`, `Steam_GetAPICallResult` is
+  `GetAPICallResult`, UserStats013 15 is `RequestUserStats`; callback 1102
+  is `UserStatsStored_t`, UserStats011 10 and 013 9 are `StoreStats`
+  (assuming a `bool` arrives as 0 or 1). 703 listed in `PAYLOAD_LISTED`.
+  PR #25.
 - 2026-11-22: loop iteration 10a (plan, parallel agent): experiments 22
   (703 = `SteamAPICallCompleted_t`) and 23 (0x44e = `UserStatsStored_t`,
   the trigger positions `StoreStats`) planned, not run yet. Correction

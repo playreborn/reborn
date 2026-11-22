@@ -184,8 +184,8 @@
       "GetAchievementDisplayAttribute"
     ],
     "10": [
-      "candidate",
-      "StoreStats or ResetAllStats"
+      "confirmed",
+      "StoreStats"
     ],
     "4": [
       "candidate",
@@ -278,12 +278,12 @@
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
     "15": [
-      "candidate",
+      "confirmed",
       "RequestUserStats"
     ],
     "9": [
-      "candidate",
-      "StoreStats or ResetAllStats"
+      "confirmed",
+      "StoreStats"
     ],
     "5": [
       "candidate",

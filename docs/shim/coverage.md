@@ -11,8 +11,8 @@ Status: **confirmed** (experiment matched, maintainer's OK), **candidate**
 
 The tables are generated from the local raw logs (one stage 3 run per
 game, 64-bit Windows, 2026-11-21; the maintainer's Cave Crawlers run is
-experiment 1, which went into a game; Fallout Shelter, HoloCure and Dark
-Deception ran with `GetAppID` answered by Reborn, ADR 0046). "Recorded by: agent" means an AI
+experiment 1, which went into a game; the games recorded from 2026-11-22 on ran
+with `GetAppID` answered by Reborn, ADR 0046). "Recorded by: agent" means an AI
 agent on the maintainer's computer under ADR 0044 and 0045. Every game
 also asked `CreateInterface` for `SteamClient017` and made no calls
 through it.
@@ -38,6 +38,9 @@ through it.
 | Fallout Shelter (588430) | FS | `SteamClient021` | agent |
 | HoloCure - Save the Fans! (2420510) | HC | `SteamClient020` | agent |
 | Dark Deception (332950) | DD | `SteamClient019` | agent |
+| UNBEATABLE [white label] (1290490) | UB | `SteamClient020` | agent |
+| A Park Full of Cats (2610090) | PK | `SteamClient021` | agent |
+| Cartapli : Fold Quest (4314560) | CA | `SteamClient023` | agent |
 
 ## Positions by interface version
 
@@ -46,35 +49,35 @@ Positions are listed in the order of their numbers.
 
 | Interface version | Games | Positions called | Status |
 | --- | --- | --- | --- |
-| `STEAMAPPS_INTERFACE_VERSION008` | 9 | 7 (CC, PT, OC); 4 (LS, FS); 0 (AC, GR, DD); 6 7 (PY) | not known |
+| `STEAMAPPS_INTERFACE_VERSION008` | 10 | 7 (CC, PT, OC); 4 (LS, FS); 0 (AC, GR, DD); 6 7 (PY); 0 7 (PK) | not known |
 | `SteamClient018` | 1 | 0 1 2 3 4 5 6 7 9 12 23 34 | not known |
 | `SteamClient019` | 1 | 0 1 2 3 4 5 6 7 9 12 23 26 34 38 | not known |
-| `SteamClient020` | 8 | 0 1 2 4 5 12 23 34 (CC, OC, HC); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (BB, PT); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (PL, PY); 0 2 5 12 34 (TW) | 12 and per-interface positions hand out objects by version text (`objects.md`); rest not known |
-| `SteamClient021` | 5 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE) | as for 020 |
-| `SteamClient023` | 2 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM); 0 1 2 4 5 12 22 30 (LS) | as for 020 |
-| `SteamController007` | 3 | 2 | not known |
-| `SteamController008` | 12 | 2 | not known |
-| `SteamFriends017` | 6 | 43 44 (CC); 0 (PL, AC, DD); 3 4 36 37 (PT); 3 4 (FS) | not known |
+| `SteamClient020` | 9 | 0 1 2 4 5 12 23 34 (CC, OC, HC); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (BB, PT); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (PL, PY); 0 2 5 12 34 (TW); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 30 31 34 35 36 37 38 39 40 (UB) | 12 and per-interface positions hand out objects by version text (`objects.md`); rest not known |
+| `SteamClient021` | 6 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE, PK) | as for 020 |
+| `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | as for 020 |
+| `SteamController007` | 4 | 2 | not known |
+| `SteamController008` | 14 | 2 | not known |
+| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | not known |
 | `SteamFriends018` | 1 | 6 9 36 | not known |
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
-| `SteamInput001` | 3 | 2 | not known |
-| `SteamInput006` | 12 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS); 0 3 6 (BB, CH, HC) | not known |
+| `SteamInput001` | 4 | 2 | not known |
+| `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | not known |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | not known |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | 0 `FileWrite`, 1 `FileRead`, 15 `GetFileSize`: confirmed; 13: candidate; rest not known |
-| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 2 | 13 | not known |
+| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 3 | 13 (BC, LS); 22 (CA) | not known |
 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 1 | 3 | not known |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
-| `SteamUser020` | 4 | 2 12 (CC, OC); 2 (GR, DD) | not known |
+| `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | not known |
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | not known |
 | `SteamUser022` | 1 | 2 | not known |
-| `SteamUser023` | 9 | 1 2 (BC, AC, OE, FS); 2 (CM, LS, PT, PY, CH) | not known |
+| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | not known |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | 12 `GetAchievementDisplayAttribute`: confirmed; 4, 6: candidates; rest not known |
-| `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | 0 (PT, TW, HC); 0 10 (AC); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | not known |
-| `STEAMUSERSTATS_INTERFACE_VERSION013` | 3 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS) | not known |
-| `SteamUtils009` | 4 | 9 14 (CC, OC); 9 16 (GR); 9 14 16 (DD) | 9 `GetAppID`: candidate; rest not known |
-| `SteamUtils010` | 13 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | 9 `GetAppID`: confirmed, answered by Reborn (experiments 4, 5); rest not known |
+| `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | not known |
+| `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | not known |
+| `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | 9 `GetAppID`: candidate; rest not known |
+| `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | 9 `GetAppID`: confirmed, answered by Reborn (experiments 4, 5); rest not known |
 
 Beyond these, the exported entry points (`entry-points.md`) and the
 callback numbers seen through `Steam_BGetCallback` are needed by every
@@ -82,10 +85,10 @@ game; their meanings are not known yet either.
 
 ## What this shows so far
 
-- Every one of the 17 games calls position 9 of `SteamUtils`
+- Every one of the 20 games calls position 9 of `SteamUtils`
   (`GetAppID`, confirmed for `SteamUtils010`) and position 2 of
   `SteamUser` (in four versions).
-- Twelve or more of the 17 use `SteamUtils010` (positions 9 and 14),
+- Twelve or more of the 20 use `SteamUtils010` (positions 9 and 14),
   `SteamController008` (2) and `SteamInput006` (3): the best next
   targets after `GetAppID`.
 - These games use 4 to 10 interface versions each; most positions they

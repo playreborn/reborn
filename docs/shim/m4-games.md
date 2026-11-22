@@ -43,6 +43,9 @@ EULA; under ADR 0044 the maintainer accepts it, not the agent.
 | 1854430 | How Fish Is Made | yes | not listed | not listed | 750 MB | reached its main menu with the proxy armed but loaded no Steam library at all (agent run, 2026-11-22); whether it uses Steam later needs playing |
 | 1712830 | Baldi's Basics Classic Remastered | added | yes | yes | 600 MB | recorded (stage 3, agent) |
 | 332950 | Dark Deception | added | yes | yes | 1 GB (7.9 GB download) | recorded (stage 3, agent; `SteamClient019`) after the maintainer answered the first-start Windows prompt |
+| 1290490 | UNBEATABLE [white label] | added | yes | yes | 2 GB | recorded (stage 3, agent) |
+| 2610090 | A Park Full of Cats | added | yes | yes | 600 MB | recorded (stage 3, agent); its very first start after installing ended by itself after about 0.1 s of Steam calls, three later runs (one without, two with `GetAppID` answered by Reborn) ran normally; cause not known |
+| 4314560 | Cartapli : Fold Quest | added | yes | yes | 1 GB | recorded (stage 3, agent) |
 | 897330 | Coloring Pixels | added | yes | yes | 500 MB | 32-bit (`steam_api.dll`), so for M5; its settings window was clicked through by the agent (ADR 0049) |
 | 588430 | Fallout Shelter | added | yes | yes | 2 GB | EULA accepted by the maintainer; recorded (stage 3, agent) |
 | 319630 | Life is Strange - Episode 1 | added | yes | yes | 5 GB | EULA accepted by the maintainer; 32-bit, so for M5 |
@@ -64,7 +67,7 @@ owned; online PvP, no single-player listed). Added and installed, but
 (2178380), Travellin Cats in Paris (2313250), Cube Escape: Paradox
 (909080).
 
-With these, 21 candidates are listed: 17 recorded by now; How Fish Is Made uses no Steam calls up to its menu; Coloring Pixels, Life is Strange and Higurashi are 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
+With these, 21 candidates are listed: 20 recorded by now; How Fish Is Made uses no Steam calls up to its menu; Coloring Pixels, Life is Strange and Higurashi are 32-bit (M5). The maintainer picks the final 20. Free games are a practical start for agent
 runs; the plan asks for widespread games, so the maintainer may want
 paid single-player games on the final list too.
 

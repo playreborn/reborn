@@ -143,7 +143,7 @@ Events (daemon → shim):
 
 - `StatsReceived { result, achievement_names }`: the `EResult` from
   Valve, and for `GetAchievementDisplayAttribute("name")` the display
-  name of each achievement in the language below. Stat values and unlock
+  name of each achievement in the language chosen below. Stat values and unlock
   state are **not** sent while the readers (`…012` 6, `…013` 5) are
   candidates; they are added by the amendment that confirms one.
 - `StatsStored { result }`: the `EResult` of the store.
@@ -183,6 +183,13 @@ against the session of ADR 0047: one launched process, one app.
 | `FileRead` (`…014` 1) | `CloudRead`; returns the number of bytes copied into the game's buffer, at most the buffer size the game passed |
 | `FileWrite` (`…014` 0) | `CloudWrite`; returns true when the file is written in the run's cloud folder |
 | `…014` 13, `…016` 13, readers, setters, `RequestUserStats`, tickets, language | **stop** (candidates, or not decided here) |
+
+**Language of achievement names.** The recorded key `name` is the
+achievement's name in the player's language, but which language the
+game expects is not observed (`GetCurrentGameLanguage` at `…008` 4 is a
+candidate). The proposal: a Reborn setting, and English
+(`FALLBACK_LANGUAGE` in `achievements.rs`) until that setting exists;
+the maintainer decides (decision 8).
 
 **An empty `StoreStats`.** With no confirmed setter, a game that reaches
 `StoreStats` has changed nothing through the shim. The proposal: the
@@ -336,6 +343,19 @@ Games for the three-game rule, from `docs/shim/m4-games.md`:
 All runs use the secondary test account (ADR 0044), which owns these
 free games and no DLC; telling the two candidates at position 7 apart
 needs a DLC that is owned, which the account does not have.
+
+### Open for the maintainer
+
+1. Accept this ADR as a whole (it touches red lines 3, 4 and 8).
+2. Red line 4: change "Reborn never writes stats" (ADR 0029,
+   `achievements.rs`) to "only when the game asks".
+3. `AppOwnership` for any app ID, or only for the game and its DLC.
+4. An empty `StoreStats`: answer OK locally, or stop the game.
+5. Cloud in shim mode without upload, saves local only, with a notice.
+6. Shadow mode with `rebornd` signed in while the official client runs
+   on the same account.
+7. The games for the three-game rule (above).
+8. The language of achievement names.
 
 ## Consequences
 

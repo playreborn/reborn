@@ -44,9 +44,9 @@
 //! The connection to `rebornd` (`session`, ADR 0047 and ADR 0055): a
 //! reader thread per connection routes responses by `id` to the waiting
 //! request and events (such as `StatsReceived`) to a queue no callback
-//! reads yet. Every exchange waits at most 10 s; a stalled daemon, an
-//! answer for no open request or a broken line ends the connection for
-//! the run, and the call that needed it stops the process with the reason
+//! reads yet. Every connect and exchange waits at most 10 s; a stalled
+//! daemon, an answer for no open request or a broken line ends the
+//! connection for the run, and the call that needed it stops the process with the reason
 //! ("rebornd did not answer in time"). Only a lost connection is
 //! reconnected, once per run, and only reads are sent again on it.
 #![allow(unsafe_code)]

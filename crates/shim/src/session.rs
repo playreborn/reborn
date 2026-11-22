@@ -39,7 +39,19 @@
 //! daemon is still there but no longer in step with the shim, the request
 //! may still be in its hands, and waiting a second time would only freeze
 //! the game longer. After the reconnect is used, a request that needs the
-//! daemon fails, and its caller stops the game.
+//! daemon fails, and its caller stops the game. A lost write uses up the
+//! reconnect too, although it is not sent again: the shim does not know
+//! whether the write was done, so its caller stops the game, and nothing
+//! is left to reconnect for. The reconnect runs under the same lock as the
+//! request that found the loss, so it can hold that lock for up to three
+//! bounded waits (connect, `Hello`, the request sent again; about 30 s at
+//! most, usually far less), and other game threads that need the daemon
+//! wait that long.
+//!
+//! **Bounded connect.** Opening the socket also waits at most
+//! [`ANSWER_TIMEOUT`] (interprocess's `ConnectWaitMode::Timeout`; its
+//! default waits without bound, for example for a busy named pipe), for
+//! the first connect and for the reconnect.
 //!
 //! **Only reads are sent again.** A request whose line was already sent
 //! when the connection was lost may have reached `rebornd`. Only
@@ -76,9 +88,16 @@ pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 /// The session, asked for once; `None` if there is none.
 static SESSION: OnceLock<Option<Session>> = OnceLock::new();
 
+/// The events of the run, outside [`LINK`] so that [`take_events`] never
+/// waits behind an exchange in flight.
+static EVENTS: LazyLock<EventQueue> = LazyLock::new(EventQueue::default);
+
 /// The connection the session was given on, for later requests.
-static LINK: LazyLock<Mutex<Link>> =
-    LazyLock::new(|| Mutex::new(Link::new(Box::new(open_socket), ANSWER_TIMEOUT)));
+static LINK: LazyLock<Mutex<Link>> = LazyLock::new(|| {
+    let mut link = Link::new(Box::new(open_socket), ANSWER_TIMEOUT);
+    link.events = EVENTS.clone();
+    Mutex::new(link)
+});
 
 /// The session with `rebornd`, connecting on first use.
 pub fn get() -> Option<&'static Session> {
@@ -111,7 +130,7 @@ pub fn request(request: Request) -> Result<Response, RequestError> {
 /// [`Link`].
 #[allow(dead_code)] // the 0x44d consumer comes with the stats callbacks
 pub fn take_events() -> Vec<Event> {
-    lock(&LINK).take_events()
+    lock(&EVENTS).drain(..).collect()
 }
 
 /// Whether `request` may be sent again on a new connection after the old
@@ -202,9 +221,19 @@ impl LineReceiver for SocketReceiver {
     }
 }
 
+/// How the shim socket is opened: waiting at most [`ANSWER_TIMEOUT`] for
+/// `rebornd` to take the connection.
+fn connect_options(
+    name: interprocess::local_socket::Name<'_>,
+) -> interprocess::local_socket::ConnectOptions<'_> {
+    interprocess::local_socket::ConnectOptions::new()
+        .name(name)
+        .wait_mode(interprocess::ConnectWaitMode::Timeout(ANSWER_TIMEOUT))
+}
+
 /// Opens the shim socket.
 fn open_socket() -> std::io::Result<Transport> {
-    let stream = Arc::new(Stream::connect(socket_name()?)?);
+    let stream = Arc::new(connect_options(socket_name()?).connect_sync()?);
     Ok(Transport {
         sender: Box::new(SocketSender(stream.clone())),
         receiver: Box::new(SocketReceiver(BufReader::new(SharedStream(stream)))),
@@ -255,6 +284,10 @@ enum Status {
 impl Status {
     fn error(&self) -> RequestError {
         match self {
+            // Not reached: a waiting request only wakes without an answer
+            // after `Routes::end`, which leaves `Open`, and an exchange
+            // starts only on an open connection. Still an error, never an
+            // answer, if it ever is.
             Status::Open => RequestError::OutOfStep("no answer on an open connection"),
             Status::Lost(why) => RequestError::Connection(std::io::Error::other(why.clone())),
             Status::OutOfStep(why) => RequestError::OutOfStep(why),
@@ -537,7 +570,9 @@ impl Link {
         }
     }
 
-    /// The events received since the last call, oldest first.
+    /// The events received since the last call, oldest first (for tests;
+    /// the shim reads the run's queue with [`take_events`]).
+    #[cfg(test)]
     pub fn take_events(&self) -> Vec<Event> {
         lock(&self.events).drain(..).collect()
     }
@@ -1061,6 +1096,61 @@ mod tests {
                 ]
             ]
         );
+    }
+
+    #[test]
+    fn the_socket_connect_waits_at_most_the_answer_timeout() {
+        let name = socket_name().expect("name");
+        let options = format!("{:?}", connect_options(name));
+        assert!(
+            options.contains(&format!("Timeout({ANSWER_TIMEOUT:?})")),
+            "{options}"
+        );
+    }
+
+    #[test]
+    fn a_connect_that_times_out_gives_no_session_and_no_reconnect_answer() {
+        // What `open_socket` returns when `rebornd` does not take the
+        // connection in time.
+        fn timed_out() -> std::io::Result<Transport> {
+            Err(std::io::ErrorKind::TimedOut.into())
+        }
+        let mut link = Link::new(Box::new(timed_out), PATIENT);
+        assert!(link.start().is_err(), "no session");
+
+        // The reconnect: the first connect works, the second times out.
+        let opened = Arc::new(AtomicUsize::new(0));
+        let fake = Fake::new(|_| None);
+        let inner = fake.opener();
+        let count = opened.clone();
+        let mut link = Link::new(
+            Box::new(move || {
+                if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    inner()
+                } else {
+                    timed_out()
+                }
+            }),
+            PATIENT,
+        );
+        assert!(matches!(link.start(), Ok(Some(_))));
+        let error = link.request(&OWNERSHIP, APP).expect_err("no answer");
+        assert!(
+            matches!(&error, RequestError::Connection(inner) if inner.kind() == std::io::ErrorKind::TimedOut),
+            "{error}"
+        );
+        assert_eq!(opened.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn events_can_be_taken_while_an_exchange_waits() {
+        // `take_events` reads `EVENTS`, not the link, so it does not wait
+        // for the lock an exchange holds.
+        let guard = lock(&LINK);
+        lock(&EVENTS).push_back(stats_event());
+        let events = take_events();
+        drop(guard);
+        assert!(events.contains(&stats_event()));
     }
 
     #[test]

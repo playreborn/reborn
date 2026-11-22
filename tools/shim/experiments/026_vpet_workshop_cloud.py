@@ -114,7 +114,7 @@ R = "STEAMREMOTESTORAGE_INTERFACE_VERSION016"
 LOGGED = 50
 EVIDENCE_MS = 1_800_000
 REFERENCE = "observe-52912.log"  # Cave Crawlers, experiment 18
-PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 19, 14, 46)  # commit a4fb521 on loop/plan-13a (final plan)
 
 OUT = re.compile(r"after (rdx|r8|r9)->\[([0-9a-f ]+)\]")
 

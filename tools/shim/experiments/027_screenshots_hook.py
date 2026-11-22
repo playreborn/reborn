@@ -49,7 +49,7 @@ GAMES = {
 }
 X = "STEAMSCREENSHOTS_INTERFACE_VERSION003"
 WINDOW_MS = 10_000
-PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 19, 14, 46)  # commit a4fb521 on loop/plan-13a (final plan)
 
 
 def numbers(path, start=None, end=None):

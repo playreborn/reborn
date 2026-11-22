@@ -3558,3 +3558,29 @@ mismatch (not logged: no `READS` entry yet). Experiment 27: A to D match
 for Pixel Puzzles; HoloCure's reference run has no `starts.log` line, so
 the script cannot take it. The predictions were written from these logs,
 so they are not the test; only fresh runs after the plan commit are.
+
+**Result of experiment 27** (agent runs by the main session after the
+plan time 19:14:46; logs recorded by `run.sh`: `observe-63496` HoloCure,
+`observe-55924` Pixel Puzzles Ultimate; Pixel Puzzles did not exit on the
+close request and was closed by the maintainer with Alt+F4, no forced
+kill): **match**, checked by the script.
+
+```text
+baseline: 20 reference logs without STEAMSCREENSHOTS_INTERFACE_VERSION003, 18 callback numbers
+observe-63496.log (HoloCure - Save the Fans!) A: 1 calls of position 3, other positions [] -> match
+observe-63496.log (HoloCure - Save the Fans!) B: lowest rdx byte 1 -> match
+observe-63496.log (HoloCure - Save the Fans!) C: result neither a bool nor a 32-bit value -> match
+observe-63496.log (HoloCure - Save the Fans!) D: callback numbers in the 10000 ms after the call not in the baseline: [] -> match
+observe-63496.log (HoloCure - Save the Fans!): match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) A: 1 calls of position 3, other positions [] -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) B: lowest rdx byte 1 -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) C: result neither a bool nor a 32-bit value -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) D: callback numbers in the 10000 ms after the call not in the baseline: [] -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles): match
+experiment 27: match
+```
+
+As fixed beforehand, a match only narrows:
+`STEAMSCREENSHOTS_INTERFACE_VERSION003` position 3 is recorded as
+"narrowed: `HookScreenshots` (experiment 27)"; `TriggerScreenshot` is
+argued against, not ruled out (the page gives no callback numbers).

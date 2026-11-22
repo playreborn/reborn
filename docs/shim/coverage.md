@@ -72,7 +72,7 @@ Positions are listed in the order of their numbers.
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 4 | 13 (BC, LS); 22 (CA); 0 18 19 (VP) | candidate: 0 FileWrite, 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others), 18 GetFileCount, 19 GetFileNameAndSize |
-| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 2 | 3 | candidate: 3 HookScreenshots(true) or TriggerScreenshot |
+| `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 2 | 3 | candidate: 3 narrowed: HookScreenshots (experiment 27) |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
 | `STEAMUGC_INTERFACE_VERSION020` | 2 | 2 4 5 9 12 77 (VP); 74 (PP) | candidate: 2 CreateQueryAllUGCRequest, 4 SendQueryUGCRequest, 5 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 9 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 12 GetQueryUGCStatistic, 77 a PublishedFileId_t function returning false or 0 (GetItemInstallInfo, GetItemDownloadInfo, GetItemState and others) |
 | `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 18) |

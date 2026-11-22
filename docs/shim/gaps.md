@@ -69,7 +69,7 @@ Of these, called by the M4 games: 205; confirmed: 130; open: 75.
 | candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 | GetResultItems or SerializeResult |
 | candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 | GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) |
 | candidate | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 | a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
-| candidate | 2 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 | HookScreenshots(true) or TriggerScreenshot |
+| candidate | 2 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 | narrowed: HookScreenshots (experiment 27) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
 | candidate | 2 | `SteamUser020` | 12 | narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |

@@ -503,7 +503,7 @@
   "STEAMSCREENSHOTS_INTERFACE_VERSION003": {
     "3": [
       "candidate",
-      "HookScreenshots(true) or TriggerScreenshot"
+      "narrowed: HookScreenshots (experiment 27)"
     ]
   },
   "STEAMUGC_INTERFACE_VERSION020": {

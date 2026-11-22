@@ -729,3 +729,72 @@ per-interface `GetISteam…` positions for `SteamClient020`, `021` and
 `BShutdownIfAllPipesClosed`) for `SteamClient020`, matched experiment 7
 and wait for the maintainer's OK (ADR 0044). Which handle is the pipe
 and which the user stays open (limit above).
+
+## `STEAMAPPS_INTERFACE_VERSION008`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamApps>, read
+  2026-11-22; its constants name `STEAMAPPS_INTERFACE_VERSION008`, the
+  version the recorded games asked for.
+- **Recording:** the games of `coverage.md` that called it: positions 7
+  (Cave Crawlers, Please, Touch The Artwork 2, Outcore, Plant Therapy), 6
+  (Plant Therapy), 4 (Linsips, Fallout Shelter) and 0 (An Arcade Full of
+  Cats, Gravitas, Dark Deception, A Park Full of Cats).
+- These are ownership calls. Under ADR 0046 their answers always come
+  from Valve's servers through `rebornd`, never from the proxy or the
+  shim on their own; a meaning here only says what is asked.
+
+### Position 7: candidates `BIsDlcInstalled`, `BIsSubscribedApp`
+
+- **Recorded:** `rdx` an app ID that is not the game's own: 2444550 in
+  Cave Crawlers, 2544540 in Plant Therapy. Their store pages, read
+  2026-11-22, say they are DLC of exactly these games ("Cave Crawlers:
+  Expedition Pass", "Plant Therapy: Queens"). The result was 0. The test
+  account owns no DLC (`reborn-cli library --all`, 2026-11-22).
+- **Fit:** the page documents functions that take one app ID and return
+  true or false: whether a DLC is owned and installed, whether the user
+  is subscribed to an app, and whether an app is installed. For a DLC
+  that is neither owned nor installed all three give false; telling the
+  first two apart needs a DLC that is owned but not installed, which the
+  test account does not have. `BIsAppInstalled` fits less well, since
+  the game asks about its own DLC.
+
+### Position 6: candidates `BIsSubscribedApp`, `BIsAppInstalled`
+
+- **Recorded:** once in Plant Therapy, `rdx` 2505120, the game's own app
+  ID; result 1.
+- **Fit:** the same three functions; for the game itself, owned and
+  installed, "subscribed" and "installed" both give true, while "DLC
+  owned and installed" makes little sense for a base game.
+
+### Position 0: candidate `BIsSubscribed`
+
+- **Recorded:** once at start; `rdx` 1, `r8` a value that is not an
+  address (`0x7ffffffffffffffc`); result 1.
+- **Fit:** the page documents several functions without arguments that
+  return true or false. For a game the account owns permanently, only
+  "subscribed to the current app" is expected to be true; "from a free
+  weekend", "from family sharing", "cyber cafe", "low violence" and "VAC
+  banned" are expected to be false for the test account.
+
+### Position 4: candidates `GetCurrentGameLanguage`, `GetAvailableGameLanguages`
+
+- **Recorded:** once at start in Linsips and Fallout Shelter; result an
+  address inside `steamclient64.dll`'s range.
+- **Fit:** the page documents two functions without arguments that
+  return text: the language the user set, and the comma-separated list
+  of the game's languages. Telling them apart needs the text at the
+  result (ADR 0043); not planned yet.
+
+### Experiment 8 (planned 2026-11-22, before the runs)
+
+Agent runs (ADR 0044) of Cave Crawlers and Plant Therapy (position 7),
+and of An Arcade Full of Cats, Dark Deception and A Park Full of Cats
+(position 0), each to the first screen.
+
+**Predictions:**
+
+1. Every call of position 7 has in `rdx` an app ID whose store page says
+   it is DLC of that game, and the result is 0 (the account owns no DLC).
+2. Every call of position 0 returns 1 in its lowest byte.
+
+A call that breaks 1 or 2 is a mismatch.

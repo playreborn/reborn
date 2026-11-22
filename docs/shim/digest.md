@@ -16,6 +16,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: shim session follow-up from the review of PR #42 (parallel
+  agent, no runs): the socket connect waits at most `ANSWER_TIMEOUT`
+  (`ConnectWaitMode::Timeout`) for the first connect and the reconnect;
+  the event queue lives outside the link lock, so taking events never
+  waits behind an exchange; docs on how long the reconnect can hold the
+  lock and that a lost write uses it up.
 - 2026-11-22: shim session follow-up from the review of PR #35 (parallel
   agent, no runs): a reader thread per connection routes responses by
   `id` and queues events (`StatsReceived`; no 0x44d yet); every exchange,

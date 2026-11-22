@@ -10,9 +10,9 @@ registry were not touched.
 
 ## Method
 
-- Store pages read on 2026-11-22, one page at a time (19 store fetches
+- Store pages read on 2026-11-22, one page at a time (21 store fetches
   in total: two filtered store searches for free single-player games
-  with Steam Workshop or stats, then 17 app pages, plus two
+  with Steam Workshop or stats, then 19 app pages, plus two
   web searches). No sign-in, no scraping loop, no SDK file.
 - Evidence comes only from the store page: the feature list (Steam
   Workshop, Steam Cloud, Steam Leaderboards, Stats, Steam Achievements),

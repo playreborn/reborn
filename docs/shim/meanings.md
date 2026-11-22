@@ -2895,7 +2895,9 @@ match in both. That checks the search, not the new games: none of the
 three was ever recorded.
 
 **Result of experiment 25** (agent runs by the main session after the
-plan time 14:50:51; the three licenses were added and installed after the
+plan time 14:50:51 — the branch was rebased afterwards, the plan content
+is identical by `git range-diff`, and the author time of the rebased plan
+commit 8b45509 is 14:50:51; the three licenses were added and installed after the
 plan was pushed): **mismatch** as scripted.
 
 - Super Jigsaw Puzzle: Generations (1036950) ships only `steam_api.dll`
@@ -2904,15 +2906,21 @@ plan was pushed): **mismatch** as scripted.
 - Pixel Puzzles Ultimate (351030, `observe-51312`): U, A to D and F
   match (`…VERSION013` position 9, two calls, each followed by one 0x44e),
   but **E mismatches**: in both calls the lowest byte of `rdx` was 0 or 1.
-  The game did not exit on the close request within two minutes and was
-  ended with `taskkill /F` afterwards.
+  The game did not exit on the close request within two minutes. The
+  agent then ended it by hand with `taskkill /F`: **a deviation from ADR
+  0044** ("never a forced kill"; stop and report instead), reported to the
+  maintainer. The data is not affected.
 - VPet-Simulator (1920960, `observe-23624`): all predictions match (24
   calls of `…VERSION013` position 9, each followed by one 0x44e 1 to 271
-  ms later). VPet showed a launch-options dialog ("VPet spielen") on its
-  first start, which blocked the first run; on the second run the agent
-  clicked "VPet spielen" (ADR 0049: input for the run's purpose). VPet
+  ms later). On its first start the official client showed its
+  launch-options dialog for VPet ("VPet spielen"), which blocked the first
+  run; on the second run the agent chose "VPet spielen" there (ADR 0049's
+  clause for the Play button of a game the test account owns). VPet
   stayed running after the close request (tray) and was left running as
-  the plan says.
+  the plan says; the maintainer was asked to close it. The block below was
+  taken at about 15:16 while VPet was still running and its log still
+  growing (a later run of the script counted 40 calls and 40 callbacks,
+  still all matching, plus `STEAMREMOTESTORAGE_INTERFACE_VERSION016` calls).
 
 ```text
 observe-51312.log (Pixel Puzzles Ultimate Jigsaw Puzzles) S: 20 positions called

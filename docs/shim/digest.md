@@ -20,6 +20,8 @@ first, so the maintainer can read a day's work quickly and stop anything.
   scripted (Super Jigsaw is 32-bit; Pixel Puzzles' E: `rdx` 0/1 at
   `StoreStats`). VPet-Simulator matched fully and is the third recorded
   `StoreStats` game for ADR 0055. Three free games added and installed.
+  Deviation: Pixel Puzzles was ended with a forced kill (ADR 0044 says
+  never); VPet stayed running in the tray (maintainer asked to close it).
   PR #29.
 - 2026-11-22: experiment 25 planned (parallel agent, no runs): first
   recordings of VPet-Simulator (1920960), Pixel Puzzles Ultimate Jigsaw

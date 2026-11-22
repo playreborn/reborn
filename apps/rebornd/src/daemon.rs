@@ -21,6 +21,7 @@ use reborn_core::run_cloud_fill::{
     CdnFetch, CloudAnswer as FillAnswer, CloudChoice as FillChoice, FillOutcome, ShownConflict,
     fill_run_cloud,
 };
+use reborn_core::shadow_cloud::{ShadowFill, fill_shadow_folder};
 use reborn_ipc::protocol::{
     AchievementInfo, ChatMessageInfo, ChatText, CloudAnswer, CloudChoice, CloudConflictFile,
     CloudRestoreResult, Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
@@ -32,7 +33,7 @@ use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tracing::{info, warn};
 
 use crate::shim_server::{RunOwnership, ShimHost, ShimRun};
-use crate::shim_shadow::ShadowSessions;
+use crate::shim_shadow::{FILL_COOLDOWN, FillGate, Gated, ShadowSessions};
 use crate::shim_stats::{FetchError, Link, RunStats, StatsBackend};
 
 /// How often the connection to Steam is checked (ADR 0025).
@@ -163,6 +164,9 @@ pub struct Daemon {
     /// Read-only shadow sessions for processes `reborn-observe arm`
     /// registered (ADR 0055); dropped whenever the Valve session ends.
     shadows: ShadowSessions,
+    /// Shadow cloud fills: one at a time, at most one per minute
+    /// (`shim_shadow::FillGate`, red line 8).
+    shadow_fills: FillGate,
     /// The app IDs the licences of one Valve session grant, loaded on the
     /// first shim-mode launch of that session (ADR 0055: one licence list
     /// per daemon session). Tied to the session it came from: a new
@@ -214,6 +218,7 @@ impl Daemon {
             running: Arc::new(Mutex::new(BTreeSet::new())),
             launched: Arc::new(Mutex::new(BTreeMap::new())),
             shadows: ShadowSessions::default(),
+            shadow_fills: FillGate::default(),
             licensed_apps: tokio::sync::Mutex::new(None),
             friends: Arc::new(Mutex::new(BTreeMap::new())),
             friends_loaded: Arc::new(AtomicBool::new(false)),
@@ -1832,7 +1837,9 @@ impl ShimHost for Daemon {
     /// behind a sign-in: without a session it is refused (`NotSignedIn`,
     /// or `Offline` while one is being made). Loading the licence list may
     /// ask Valve once per Valve session (cached as for shim-mode launches);
-    /// only its size is logged.
+    /// only its size is logged. Then the shadow folder for cloud reads is
+    /// filled once ([`shadow_cloud`]); its failure only leaves the cloud
+    /// reads refused.
     async fn register_shadow(&self, app_id: u32) -> reborn_shim_protocol::Response {
         use reborn_shim_protocol::{Response as ShimResponse, UnavailableReason};
         let unavailable = |reason| ShimResponse::Unavailable { reason };
@@ -1855,10 +1862,32 @@ impl ShimHost for Daemon {
                 return unavailable(UnavailableReason::Offline);
             }
         };
+        // The shadow folder for cloud reads (ADR 0055, stage 1), filled
+        // once for this registration. Without it the registration still
+        // stands: ownership and stats are compared, cloud reads refused.
+        let fill = async {
+            let app_info = session
+                .app_info_text(app_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let data_dir = settings::data_dir().map_err(|error| error.to_string())?;
+            fill_shadow_folder(&session, &data_dir, app_id, &app_info)
+                .await
+                .map_err(|error| error.to_string())
+        };
+        let cloud = shadow_cloud(
+            &self.shadow_fills,
+            FILL_COOLDOWN,
+            CLOUD_RESTORE_LIMIT,
+            app_id,
+            fill,
+        )
+        .await
+        .map(Arc::new);
         // No DLC: the shadow session answers only the game itself
         // (`shim_shadow`).
         self.shadows
-            .register(app_id, ownership_from(&licensed, &[]));
+            .register_with_cloud(app_id, ownership_from(&licensed, &[]), cloud);
         // The Valve session may have ended while the list loaded; its
         // stop must not miss this registration.
         let current = matches!(
@@ -1894,6 +1923,65 @@ impl ShimHost for Daemon {
             .persona_name()
             .await
             .ok_or(UnavailableReason::NotReceived)
+    }
+}
+
+/// The shadow folder a shadow session of `app_id` reads (ADR 0055, stage
+/// 1), filled by `fill` (`reborn_core::shadow_cloud`: one app info, one
+/// cloud listing and the bounded downloads, all reads) through `gate`: one
+/// fill at a time, none within `cooldown` of the last one, dropped after
+/// `limit`. `None` for an app without a cloud quota, during the cooldown,
+/// or when anything fails (only the error kind and counts are logged,
+/// never names). Never touches the official client's folders or a
+/// shim-mode run's folder.
+async fn shadow_cloud(
+    gate: &FillGate,
+    cooldown: Duration,
+    limit: Duration,
+    app_id: u32,
+    fill: impl Future<Output = Result<Option<(RunCloud, ShadowFill)>, String>>,
+) -> Option<RunCloud> {
+    let fill = match gate.run(cooldown, limit, fill).await {
+        Gated::Ran(fill) => fill,
+        Gated::TimedOut => {
+            warn!(
+                app_id,
+                "shadow mode: filling the shadow cloud folder took too long"
+            );
+            return None;
+        }
+        Gated::Cooldown => {
+            warn!(
+                app_id,
+                "shadow mode: a shadow cloud fill started less than a minute ago; \
+                 no new fill, cloud reads are not compared"
+            );
+            return None;
+        }
+    };
+    match fill {
+        Ok(Some((shadow, fill))) => {
+            info!(
+                app_id,
+                written = fill.written,
+                skipped = fill.skipped,
+                failed = fill.failed,
+                limit = shadow.limit(),
+                "shadow mode: shadow cloud folder filled"
+            );
+            Some(shadow)
+        }
+        Ok(None) => {
+            info!(
+                app_id,
+                "shadow mode: the app has no cloud quota; no shadow folder"
+            );
+            None
+        }
+        Err(message) => {
+            warn!(app_id, %message, "shadow mode: cannot fill the shadow cloud folder");
+            None
+        }
     }
 }
 
@@ -2641,6 +2729,43 @@ mod tests {
     #[test]
     fn a_daemon_knows_no_shim_run_before_a_launch() {
         assert_eq!(Daemon::new().shim_run(4242), None);
+    }
+
+    #[tokio::test]
+    async fn the_shadow_folder_comes_through_the_fill_gate() {
+        let gate = FillGate::default();
+        let long = Duration::from_secs(60);
+        let app = 2_143_030;
+        let folder = || RunCloud::shadow(std::path::Path::new("data"), 1, app, 10);
+        // A fill that ends gives its folder.
+        let filled = shadow_cloud(&gate, Duration::ZERO, long, app, async {
+            Ok(Some((folder(), ShadowFill::default())))
+        })
+        .await;
+        assert_eq!(filled, Some(folder()));
+        // No quota, a failure, a timeout: no folder.
+        let none = shadow_cloud(&gate, Duration::ZERO, long, app, async { Ok(None) }).await;
+        assert_eq!(none, None);
+        let failed = shadow_cloud(&gate, Duration::ZERO, long, app, async {
+            Err("offline".to_owned())
+        })
+        .await;
+        assert_eq!(failed, None);
+        let slow = shadow_cloud(
+            &gate,
+            Duration::ZERO,
+            Duration::from_millis(20),
+            app,
+            std::future::pending(),
+        )
+        .await;
+        assert_eq!(slow, None);
+        // Within the cooldown the fill is not even started.
+        let cooled = shadow_cloud(&gate, long, long, app, async {
+            panic!("filled during the cooldown")
+        })
+        .await;
+        assert_eq!(cooled, None);
     }
 
     #[tokio::test]

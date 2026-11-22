@@ -106,8 +106,8 @@ response types are in steam-vent-proto-steam
   bytes from the start), each `None` for a missing file. No Valve
   request per call; nothing is written, created or uploaded.
 - **Rules:** a connection without a session, a run not started in shim
-  mode, an app whose app info has no `ufs` `quota`, and shadow sessions
-  (their separate shadow folder comes with stage 1) get `NotAllowed`.
+  mode, an app whose app info has no `ufs` `quota`, and a shadow session
+  without a shadow folder (below) get `NotAllowed`.
   Names are checked like install paths (no `..`, no absolute paths or
   drive letters, no unsafe characters or device names) and must have no
   root token (`%...%`) and at most 1024 bytes; no symlink (on Windows
@@ -213,6 +213,58 @@ response types are in steam-vent-proto-steam
   cloud: every L/C/B case, both choices, failed downloads, skipped and
   refused names, junctions on the way, damaged base) and `apps/rebornd`
   (conflict and failure answers); no live run.
+
+### Shadow folder for shadow sessions (`rebornd`, ADR 0055 stage 1)
+
+- **What:** a shadow session (`reborn-observe arm --app`, the official
+  client runs the game) gets `CloudFileSize` and `CloudRead` answered
+  from its own **shadow folder**,
+  `<Reborn data>/shadow-cloud/<account ID>/<app ID>/`, with the same name
+  and link checks as the run's cloud folder (ADR 0055: "`CloudRead`
+  against a separate shadow folder"; "Shadow runs use a separate shadow
+  folder that no game writes to"). The observation proxy compares the
+  official `GetFileSize` and `FileRead` results with these answers
+  (`docs/shim/meanings.md`).
+- **Filled:** once per registration (`reborn_core::shadow_cloud`), by
+  `rebornd` when `arm` registers the app: the app info (for the quota;
+  an app without one gets no shadow folder), one listing ("List an app's
+  files" above), the old shadow folder of this account and app removed
+  (only a shadow folder, after checking that no part of its path is a
+  link), then one download ("Download a file" above: listed URL, at most
+  the listed size, SHA-1 checked, never overwriting) for each file whose
+  name a game can pass through the API (no root token, a safe relative
+  path), at most the quota, at most 64 files and 64 MiB in all. All of
+  it is reads from Valve's side, under the 30-second limit of the cloud
+  restore. A failure leaves the registration standing (ownership and
+  stats are still compared) and the cloud reads refused (`NotAllowed`).
+- **Up front, a stated deviation:** ADR 0055 counts "a download of each
+  file the proxy compares". Which files a game reads is known only while
+  it runs, and the proxy must not make the game wait for a download, so
+  the fill downloads every file a game could read through the API before
+  the game starts, within the bounds above. For Cave Crawlers that is the
+  same two files.
+- **Limits in `rebornd` (red line 8):** fills run one at a time, and a
+  new fill starts at most one minute after the last one started
+  (ADR 0052's minute between game starts), whatever the account or app;
+  a `RegisterShadow` within that minute registers without a shadow folder
+  (cloud reads not compared) and asks Valve for nothing. A failed or
+  timed-out fill counts too.
+- **Kept:** the shadow folder stays on disk after the run, until the next
+  fill of the same account and app replaces it; it holds copies of the
+  user's cloud saves below Reborn's data folder.
+- **Never:** writes in the official client's `userdata` folder, in the
+  run's cloud folder or to the cloud; uploads; requests per call.
+- **Requests (red line 8):** per shadow run, one app info, one listing
+  (at most 20 pages) and at most 64 downloads (64 MiB), on top of the
+  official client's own traffic; at most one fill a minute.
+- **Logs:** counts only (written, skipped, failed) and the quota; never
+  names or contents.
+- **Source:** ADR 0055 ("Amendments", "What is cached, and where", "Rate
+  limits", "Staged rollout" stage 1); the listing and download as above.
+- **Verified:** unit tests with temporary folders and a fake download
+  (which files are chosen, the bound, clearing only a shadow folder and
+  never through a link, a stale file removed before the fill, a shadow
+  session reading only its folder); no live run.
 
 ## Known, not implemented
 

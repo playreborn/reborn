@@ -14,18 +14,25 @@
 //!   (`UserStatsReceived_t`, `docs/shim/meanings.md`, experiment 21) to the
 //!   game, the proxy sends `RequestStats` on the same shadow session and
 //!   waits for the event `StatsReceived` ([`ShadowLink::stats_result`]).
-//!
 //! - For `SteamFriends017` position 0 (`GetPersonaName` or
 //!   `ClearRichPresence`, ADR 0056 decision 2) the proxy sends only the
 //!   SHA-256 of the text the official client returned
 //!   (`ComparePersonaName`, [`ShadowLink::persona_name`]); `rebornd`
 //!   answers whether it is the account's persona name. Only to a `rebornd`
 //!   of protocol 0.3 or later.
+//! - For the cloud reads `GetFileSize` and `FileRead` the proxy sends
+//!   `CloudFileSize` and `CloudRead` (protocol 0.2, so no further version
+//!   gate) with the file name the game passed, on the same shadow session
+//!   ([`ShadowLink::file_size`], [`ShadowLink::file_read`]); `rebornd`
+//!   answers from the session's separate shadow folder, filled from
+//!   Valve's cloud when `arm` registered the app (ADR 0055, stage 1).
 //!
-//! Whether an app is owned, the stats and the persona name are account
-//! data (ADR 0055, 0056): the log gets only `shadow match` or `shadow
-//! mismatch` ([`compare_subscribed`], [`compare_stats_received`],
-//! [`compare_persona_name`]) or why there is no answer, never the values.
+//! Whether an app is owned, the stats, the persona name, file names, file
+//! sizes and file contents are account data (ADR 0055, 0056): the log gets
+//! only `shadow match` or `shadow mismatch` ([`compare_subscribed`],
+//! [`compare_stats_received`], [`compare_persona_name`],
+//! [`compare_file_size`], [`compare_file_read`]) or why there is no
+//! answer, never the values, no file name and no size.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::mpsc;
@@ -36,9 +43,11 @@ use reborn_shim_protocol::{
     ShimMessage, UnavailableReason, Version, decode, encode,
 };
 
-/// Longest line read from `rebornd`; no answer of protocol 0.2 comes near
-/// it.
-const MAX_LINE: u64 = 64 * 1024;
+/// Longest line read from `rebornd`: a `CloudRead` answer carries up to
+/// 16 MiB (the largest cloud file `rebornd` hands out,
+/// `reborn_core::run_cloud::MAX_FILE`) as base64, 4/3 as long (ADR 0055,
+/// "Cloud"), plus the JSON around it.
+const MAX_LINE: u64 = 16 * 1024 * 1024 / 3 * 4 + 64 * 1024;
 
 /// Talking to `rebornd` failed.
 #[derive(Debug, thiserror::Error)]
@@ -86,7 +95,11 @@ pub struct LineThread {
     lines: mpsc::Receiver<io::Result<String>>,
 }
 
-/// Lines read ahead at most; the reading thread then waits.
+/// Lines read ahead at most; the reading thread then waits. Worst case in
+/// memory: this many lines of up to [`MAX_LINE`] (about 21 MiB, a 16 MiB
+/// `CloudRead` answer) plus the one being read, about 360 MiB; in practice
+/// the proxy asks one question at a time and waits for its answer, so at
+/// most one long line is queued beside a few short stats events.
 const LINES_AHEAD: usize = 16;
 
 impl LineThread {
@@ -214,6 +227,45 @@ impl<R: Lines, W: Write> Client<R, W> {
     pub fn owned(&mut self, app_id: u32) -> Result<Result<bool, UnavailableReason>, DaemonError> {
         match self.ask(Request::AppOwnership { app_id })? {
             Response::Ownership { owned } => Ok(Ok(owned)),
+            Response::Unavailable { reason } => Ok(Err(reason)),
+            _ => Err(DaemonError::Unexpected),
+        }
+    }
+
+    /// `CloudFileSize { name }`: the size of the file in the session's
+    /// cloud folder (`None` if there is none), or why `rebornd` cannot say.
+    pub fn cloud_file_size(
+        &mut self,
+        name: &str,
+    ) -> Result<Result<Option<u32>, UnavailableReason>, DaemonError> {
+        match self.ask(Request::CloudFileSize {
+            name: name.to_owned(),
+        })? {
+            Response::FileSize { size } => Ok(Ok(size)),
+            Response::Unavailable { reason } => Ok(Err(reason)),
+            _ => Err(DaemonError::Unexpected),
+        }
+    }
+
+    /// `CloudRead { name, max }`: at most `max` bytes from the start of the
+    /// file in the session's cloud folder (`None` if there is none), or why
+    /// `rebornd` cannot say. More than `max` bytes is an unexpected answer.
+    pub fn cloud_read(
+        &mut self,
+        name: &str,
+        max: u32,
+    ) -> Result<Result<Option<Vec<u8>>, UnavailableReason>, DaemonError> {
+        match self.ask(Request::CloudRead {
+            name: name.to_owned(),
+            max,
+        })? {
+            Response::FileData { data } => {
+                let data = data.map(|data| data.0);
+                if data.as_ref().is_some_and(|data| data.len() > max as usize) {
+                    return Err(DaemonError::Unexpected);
+                }
+                Ok(Ok(data))
+            }
             Response::Unavailable { reason } => Ok(Err(reason)),
             _ => Err(DaemonError::Unexpected),
         }
@@ -413,6 +465,48 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         }
     }
 
+    /// Reborn's answer to `GetFileSize(name)` (ADR 0055, stage 1): the
+    /// size `rebornd` reads in the shadow folder, `None` for no such file,
+    /// or why there is no answer. Same session as [`Self::subscribed`];
+    /// `CloudFileSize` is a protocol 0.2 message, which every daemon that
+    /// gives a shadow session speaks.
+    pub fn file_size(
+        &mut self,
+        pid: u32,
+        app_id: u32,
+        connect: impl FnOnce() -> io::Result<Client<R, W>>,
+        name: &str,
+    ) -> Result<Option<u32>, String> {
+        let (client, _) = self.client(pid, app_id, connect)?;
+        let answer = client.cloud_file_size(name);
+        match answer {
+            Ok(Ok(size)) => Ok(size),
+            Ok(Err(reason)) => Err(reason_name(reason)),
+            Err(error) => Err(self.fail(error)),
+        }
+    }
+
+    /// Reborn's answer to `FileRead(name, buffer, max)` (ADR 0055, stage
+    /// 1): at most `max` bytes `rebornd` reads in the shadow folder, `None`
+    /// for no such file, or why there is no answer. Same session as
+    /// [`Self::subscribed`] (`CloudRead` is protocol 0.2).
+    pub fn file_read(
+        &mut self,
+        pid: u32,
+        app_id: u32,
+        connect: impl FnOnce() -> io::Result<Client<R, W>>,
+        name: &str,
+        max: u32,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let (client, _) = self.client(pid, app_id, connect)?;
+        let answer = client.cloud_read(name, max);
+        match answer {
+            Ok(Ok(data)) => Ok(data),
+            Ok(Err(reason)) => Err(reason_name(reason)),
+            Err(error) => Err(self.fail(error)),
+        }
+    }
+
     /// The session's client and the daemon's protocol version, made on the
     /// first question (one attempt per run).
     fn client(
@@ -574,6 +668,66 @@ pub fn compare_persona_name(
     }
 }
 
+/// The SHA-1 of `bytes`; ADR 0055 compares `FileRead` "by size and SHA-1
+/// only". Computed in memory, never logged.
+pub fn sha1_of(bytes: &[u8]) -> [u8; 20] {
+    use sha1::{Digest, Sha1};
+    Sha1::digest(bytes).into()
+}
+
+/// The shadow note for `GetFileSize` (`STEAMREMOTESTORAGE_INTERFACE_VERSION014`
+/// position 15, `docs/shim/meanings.md`, experiment 1): the official
+/// client's result is the low 32 bits of `rax` (the recorded 44875 was
+/// the file's size), Reborn's is the size `rebornd` read in the shadow
+/// folder. A file Reborn does not have is not compared: what the official
+/// client answers for a missing file is not recorded (ADR 0055). Only
+/// match, mismatch or the reason is logged (account data).
+pub fn compare_file_size(rax: u64, reborn: Result<Option<u32>, String>) -> String {
+    match reborn {
+        Ok(Some(size)) => {
+            if rax as u32 == size {
+                "shadow match".to_owned()
+            } else {
+                "shadow mismatch".to_owned()
+            }
+        }
+        Ok(None) => "shadow: no Reborn answer (no such file in the shadow folder)".to_owned(),
+        Err(why) => format!("shadow: no Reborn answer ({why})"),
+    }
+}
+
+/// What the official `FileRead` put into the game's buffer: how many bytes
+/// (its result) and their SHA-1. The bytes themselves are not kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OfficialRead {
+    /// The official result: bytes read into the buffer.
+    pub len: usize,
+    /// The SHA-1 of those bytes.
+    pub sha1: [u8; 20],
+}
+
+/// The shadow note for `FileRead` (`STEAMREMOTESTORAGE_INTERFACE_VERSION014`
+/// position 1, `docs/shim/meanings.md`, experiment 1): compared by size
+/// and SHA-1 only (ADR 0055, stage 1) with the bytes `rebornd` read from
+/// the shadow folder, at most the game's buffer size. Only match,
+/// mismatch or the reason is logged (account data).
+pub fn compare_file_read(
+    official: OfficialRead,
+    reborn: Result<Option<Vec<u8>>, String>,
+) -> String {
+    match reborn {
+        Ok(Some(data)) => {
+            if data.len() == official.len && sha1_of(&data) == official.sha1 {
+                "shadow match".to_owned()
+            } else {
+                "shadow mismatch".to_owned()
+            }
+        }
+        Ok(None) => "shadow: no Reborn answer (no such file in the shadow folder)".to_owned(),
+        Err(why) => format!("shadow: no Reborn answer ({why})"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -704,6 +858,157 @@ mod tests {
             ]))
         });
         assert_eq!(answer, Err("rebornd sent an unexpected answer".to_owned()));
+    }
+
+    #[test]
+    fn cloud_reads_go_to_the_shadow_session_with_the_games_name() {
+        let mut link = ShadowLink::default();
+        let size = link.file_size(
+            4242,
+            2_143_030,
+            || {
+                Ok(scripted(&[
+                    r#"{"id":1,"response":{"type":"session","version":{"major":0,"minor":2},"app_id":2143030}}"#,
+                    r#"{"id":2,"response":{"type":"file_size","size":11}}"#,
+                    r#"{"id":3,"response":{"type":"file_data","data":"eyJsZXZlbCI6M30="}}"#,
+                    r#"{"id":4,"response":{"type":"file_size","size":null}}"#,
+                    r#"{"id":5,"response":{"type":"unavailable","reason":"not_allowed"}}"#,
+                    r#"{"id":6,"response":{"type":"file_data","data":"eyJsZXZlbCI6M30="}}"#,
+                ]))
+            },
+            "MainPlayerData.json",
+        );
+        assert_eq!(size, Ok(Some(11)));
+        let never = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(
+            link.file_read(4242, 2_143_030, never, "MainPlayerData.json", 4096),
+            Ok(Some(b"{\"level\":3}".to_vec()))
+        );
+        assert_eq!(
+            link.file_size(4242, 2_143_030, never, "other.json"),
+            Ok(None)
+        );
+        assert_eq!(
+            link.file_read(4242, 2_143_030, never, "other.json", 10),
+            Err("not_allowed".to_owned())
+        );
+        // More bytes than the game's buffer: not Reborn's answer.
+        assert_eq!(
+            link.file_read(4242, 2_143_030, never, "MainPlayerData.json", 4),
+            Err("rebornd sent an unexpected answer".to_owned())
+        );
+        let State::Failed(_) = &link.state else {
+            panic!("an unexpected answer fails the link");
+        };
+    }
+
+    #[test]
+    fn cloud_reads_skip_a_late_stats_event() {
+        // The stats shadow may leave an event behind on the same session.
+        let mut client = scripted(&[
+            r#"{"event":{"type":"stats_received","result":1,"achievement_names":[]}}"#,
+            r#"{"id":1,"response":{"type":"file_size","size":3}}"#,
+        ]);
+        assert!(matches!(client.cloud_file_size("a.sav"), Ok(Ok(Some(3)))));
+    }
+
+    #[test]
+    fn the_cloud_requests_carry_the_name_and_the_buffer_size() {
+        let mut client = scripted(&[
+            r#"{"id":1,"response":{"type":"file_size","size":3}}"#,
+            r#"{"id":2,"response":{"type":"file_data","data":null}}"#,
+        ]);
+        assert!(matches!(client.cloud_file_size("a.sav"), Ok(Ok(Some(3)))));
+        assert!(matches!(client.cloud_read("a.sav", 44_875), Ok(Ok(None))));
+        assert_eq!(
+            sent(&client),
+            "{\"id\":1,\"request\":{\"type\":\"cloud_file_size\",\"name\":\"a.sav\"}}\n\
+             {\"id\":2,\"request\":{\"type\":\"cloud_read\",\"name\":\"a.sav\",\"max\":44875}}\n"
+        );
+    }
+
+    #[test]
+    fn a_long_cloud_answer_is_read_whole() {
+        // Cave Crawlers' recorded save (44875 bytes) is about 60 000 as
+        // base64, close to the old 64 KiB line limit; larger saves up to
+        // 16 MiB must fit too.
+        let data = vec![7u8; 200_000];
+        let line = encode(&DaemonMessage::Response {
+            id: 1,
+            response: Response::FileData {
+                data: Some(reborn_shim_protocol::Bytes(data.clone())),
+            },
+        })
+        .unwrap_or_default();
+        let mut client = Client::new(Cursor::new(line.into_bytes()), Vec::new());
+        assert!(matches!(
+            client.cloud_read("big.sav", 200_000),
+            Ok(Ok(Some(read))) if read == data
+        ));
+        const { assert!(MAX_LINE > (16 * 1024 * 1024_u64).div_ceil(3) * 4 + 64) };
+    }
+
+    #[test]
+    fn file_sizes_are_compared_by_their_low_32_bits() {
+        assert_eq!(compare_file_size(44_875, Ok(Some(44_875))), "shadow match");
+        assert_eq!(
+            compare_file_size(0xffff_ffff_0000_af4b, Ok(Some(44_875))),
+            "shadow match"
+        );
+        assert_eq!(
+            compare_file_size(44_877, Ok(Some(44_875))),
+            "shadow mismatch"
+        );
+        assert_eq!(
+            compare_file_size(0, Ok(None)),
+            "shadow: no Reborn answer (no such file in the shadow folder)"
+        );
+        assert_eq!(
+            compare_file_size(1, Err("not_allowed".to_owned())),
+            "shadow: no Reborn answer (not_allowed)"
+        );
+    }
+
+    #[test]
+    fn file_reads_are_compared_by_size_and_sha1() {
+        let bytes = b"{\"level\":3}";
+        let official = OfficialRead {
+            len: bytes.len(),
+            sha1: sha1_of(bytes),
+        };
+        assert_eq!(
+            compare_file_read(official, Ok(Some(bytes.to_vec()))),
+            "shadow match"
+        );
+        assert_eq!(
+            compare_file_read(official, Ok(Some(b"{\"level\":4}".to_vec()))),
+            "shadow mismatch",
+            "same size, other bytes"
+        );
+        assert_eq!(
+            compare_file_read(official, Ok(Some(bytes[..4].to_vec()))),
+            "shadow mismatch",
+            "fewer bytes"
+        );
+        assert_eq!(
+            compare_file_read(official, Ok(None)),
+            "shadow: no Reborn answer (no such file in the shadow folder)"
+        );
+        // The SHA-1 of nothing is the known empty-input value.
+        assert_eq!(
+            sha1_of(b"")
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        // No note carries a value, a name or contents.
+        for note in [
+            compare_file_read(official, Ok(Some(bytes.to_vec()))),
+            compare_file_size(11, Ok(Some(11))),
+        ] {
+            assert!(!note.contains("level") && !note.contains("11"), "{note}");
+        }
     }
 
     #[test]

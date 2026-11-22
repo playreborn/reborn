@@ -1,5 +1,11 @@
 # Recording candidates
 
+> Adding a candidate to the test account needs a planned experiment
+> first (ADR 0044, 0052): a plan in `docs/shim/meanings.md` that names
+> the game, committed before the license is added. This list is not
+> itself that approval. Check size and price on the store page again
+> right before adding a game.
+
 These are free games to **record** with the observation proxy, picked
 because they will probably call interfaces that only 1 or 2 of the 20
 games in `coverage.md` call today. They are **not** proposed for the

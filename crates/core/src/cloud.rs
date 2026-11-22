@@ -427,7 +427,7 @@ pub fn local_only_files(
 
 /// Splits `%Root%rest` into the root and the rest (a separator right
 /// after the token is dropped).
-fn split_root(name: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_root(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix('%')?;
     let end = rest.find('%')?;
     let root = &rest[..end];

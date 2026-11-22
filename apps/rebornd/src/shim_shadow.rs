@@ -20,7 +20,9 @@
 //!   not needed for `BIsSubscribed`, so DLC get `NotAllowed` like any
 //!   other app until a shadow for position 7 needs them.
 //! - **Reads only.** A shadow session gets `AppOwnership` and
-//!   `RequestStats`; every write is refused (`shim_server`).
+//!   `RequestStats`; every write is refused (`shim_server`). Cloud reads
+//!   (`CloudFileSize`, `CloudRead`) get `NotAllowed` until the separate
+//!   shadow folder of ADR 0055 exists (stage 1).
 //! - **Any logoff stops the stage.** When the Valve session ends in any
 //!   way (a logoff or kick, a lost connection, a sign-out), every shadow
 //!   session and the registration are dropped and later requests get
@@ -97,6 +99,8 @@ impl ShadowSessions {
             app_id,
             ownership: Some(registration.ownership),
             stats: Some(Arc::new(RunStats::default())),
+            // The shadow folder for cloud reads comes with stage 1.
+            cloud: None,
             shadow: true,
         };
         inner.last_token += 1;

@@ -16,6 +16,7 @@ use reborn_core::CoreError;
 use reborn_core::cloud::{RestoreBlocked, RestoreOutcome, restore_missing_saves};
 use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install_app};
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
+use reborn_core::run_cloud::{RunCloud, cloud_quota};
 use reborn_ipc::protocol::{
     AchievementInfo, ChatMessageInfo, ChatText, CloudRestoreResult, Event, FriendInfo,
     FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState,
@@ -1220,6 +1221,22 @@ impl Daemon {
         } else {
             None
         };
+        // In shim mode the run's cloud folder (ADR 0055), with the size
+        // limit from the app's quota: one more app info request per
+        // shim-mode launch. An app without a quota has no cloud and gets
+        // no folder (its reads are refused). Reads only, so far.
+        let cloud = if shim_mode {
+            match run_cloud(&session, app_id).await {
+                Ok(cloud) => cloud.map(Arc::new),
+                Err(error) => {
+                    crate::shim_launch::leave();
+                    self.forget_session_after(&error).await;
+                    return error_response(&error);
+                }
+            }
+        } else {
+            None
+        };
         let mut child = match spawn(&plan) {
             Ok(child) => child,
             Err(error) => {
@@ -1239,6 +1256,7 @@ impl Daemon {
                 app_id,
                 ownership,
                 stats,
+                cloud,
                 shadow: false,
             },
         );
@@ -1788,6 +1806,23 @@ impl ShimHost for Daemon {
         }
         ShimResponse::Accepted
     }
+}
+
+/// The cloud folder a shim-mode run of `app_id` reads (ADR 0055):
+/// `<Reborn data>/cloud/<account ID>/<app ID>/`, limited by the app's
+/// quota; `None` for an app without one. Creates nothing.
+async fn run_cloud(session: &Session, app_id: u32) -> Result<Option<RunCloud>, CoreError> {
+    let Some(limit) = cloud_quota(session, app_id).await? else {
+        return Ok(None);
+    };
+    let data_dir = settings::data_dir()?;
+    info!(app_id, limit, "shim mode: cloud quota loaded");
+    Ok(Some(RunCloud::new(
+        &data_dir,
+        session.steam_id(),
+        app_id,
+        limit,
+    )))
 }
 
 /// The ownership data a shim-mode run gets (ADR 0055): the apps the

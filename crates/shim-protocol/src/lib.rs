@@ -9,9 +9,12 @@
 //! [`Request::AppOwnership`], answered with [`Response::Ownership`] or
 //! [`Response::Unavailable`], and [`Request::RequestStats`], answered with
 //! [`Response::Accepted`] and later the event [`Event::StatsReceived`]
-//! (in a [`DaemonMessage::Event`], which has no `id`). The other messages
-//! of ADR 0055 (stores, cloud) follow in later stage-0 changes under the
-//! same version, before any release.
+//! (in a [`DaemonMessage::Event`], which has no `id`). The cloud reads
+//! [`Request::CloudFileSize`] and [`Request::CloudRead`] are answered from
+//! the run's local cloud folder with [`Response::FileSize`] and
+//! [`Response::FileData`] (file content as base64 text, [`Bytes`]). The
+//! other messages of ADR 0055 (stores, cloud writes) follow in later
+//! stage-0 changes under the same version, before any release.
 //!
 //! Shadow sessions (ADR 0055, amending ADR 0047): `reborn-observe arm
 //! --app <id>` registers one app with [`Request::RegisterShadow`] (and
@@ -74,6 +77,25 @@ pub enum Request {
     /// [`Response::Accepted`] and later [`Event::StatsReceived`], or with
     /// [`Response::Unavailable`]. Only reads; nothing is written.
     RequestStats,
+    /// The size of a file in the run's cloud folder (ADR 0055; the shim
+    /// sends it for `GetFileSize`). Answered with [`Response::FileSize`] or
+    /// [`Response::Unavailable`]. Only reads.
+    CloudFileSize {
+        /// The file name as the game passed it (untrusted; the daemon
+        /// checks it like an install path).
+        name: String,
+    },
+    /// The content of a file in the run's cloud folder (ADR 0055; the shim
+    /// sends it for `FileRead`): at most `max` bytes from its start.
+    /// Answered with [`Response::FileData`] or [`Response::Unavailable`].
+    /// Only reads.
+    CloudRead {
+        /// The file name as the game passed it (untrusted).
+        name: String,
+        /// The size of the game's buffer: at most this many bytes come
+        /// back.
+        max: u32,
+    },
     /// Sent by `reborn-observe arm --app <id>` (ADR 0055, stage 1): the
     /// next process that says [`Request::ShadowHello`] for this app gets a
     /// read-only shadow session. The game is not running yet when `arm`
@@ -118,6 +140,8 @@ impl Request {
             Request::Hello { .. }
             | Request::AppOwnership { .. }
             | Request::RequestStats
+            | Request::CloudFileSize { .. }
+            | Request::CloudRead { .. }
             | Request::RegisterShadow { .. }
             | Request::CancelShadow
             | Request::ShadowHello { .. } => false,
@@ -196,6 +220,20 @@ pub enum Response {
     /// [`Request::RegisterShadow`] and [`Request::CancelShadow`] nothing
     /// follows.
     Accepted,
+    /// The answer to [`Request::CloudFileSize`]: the file's size in bytes,
+    /// `None` when the run's cloud folder has no such file. What the
+    /// official client answers for a missing file is not recorded, so the
+    /// shim stops the game on `None` (ADR 0055).
+    FileSize {
+        /// The size, or `None` for a missing file.
+        size: Option<u32>,
+    },
+    /// The answer to [`Request::CloudRead`]: the file's first bytes (at
+    /// most `max`), `None` when the run's cloud folder has no such file.
+    FileData {
+        /// The bytes, or `None` for a missing file.
+        data: Option<Bytes>,
+    },
     /// The daemon cannot give the real answer to a request. The shim never
     /// makes one up (ADR 0055, "Honest failure").
     Unavailable {
@@ -217,6 +255,102 @@ pub enum UnavailableReason {
     NotAllowed,
     /// The data is larger than the protocol allows.
     TooLarge,
+}
+
+/// File content in a message: base64 text (RFC 4648, standard alphabet,
+/// with padding) on the wire, bytes in memory. `Debug` shows only the
+/// length: cloud files are the user's saves (account data, never logged).
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Bytes(pub Vec<u8>);
+
+impl std::fmt::Debug for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Bytes(<{} bytes>)", self.0.len())
+    }
+}
+
+impl Serialize for Bytes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::encode(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        base64::decode(&text)
+            .map(Bytes)
+            .ok_or_else(|| serde::de::Error::custom("not valid base64"))
+    }
+}
+
+/// Base64 (RFC 4648 section 4) without a dependency: ADR 0055 keeps this
+/// crate on `serde`, `serde_json` and `thiserror` only.
+mod base64 {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub(crate) fn encode(bytes: &[u8]) -> String {
+        let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                chunk.get(1).copied().unwrap_or(0),
+                chunk.get(2).copied().unwrap_or(0),
+            ];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
+                if i <= chunk.len() {
+                    text.push(char::from(ALPHABET[((n >> shift) & 63) as usize]));
+                } else {
+                    text.push('=');
+                }
+            }
+        }
+        text
+    }
+
+    fn value(c: u8) -> Option<u32> {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        Some(u32::from(v))
+    }
+
+    /// The bytes of canonical base64 text, `None` for anything else
+    /// (wrong length, other characters, padding in the middle, or unused
+    /// bits that are not zero).
+    pub(crate) fn decode(text: &str) -> Option<Vec<u8>> {
+        let text = text.as_bytes();
+        if !text.len().is_multiple_of(4) {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
+        let groups = text.len() / 4;
+        for (index, group) in text.chunks(4).enumerate() {
+            let padding = group.iter().rev().take_while(|&&c| c == b'=').count();
+            if padding > 2 || (padding > 0 && index + 1 != groups) {
+                return None;
+            }
+            let mut n = 0u32;
+            for &c in &group[..4 - padding] {
+                n = (n << 6) | value(c)?;
+            }
+            n <<= 6 * padding as u32;
+            let out = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+            let keep = 3 - padding;
+            // Canonical only: the bits the padding drops must be zero.
+            if out[keep..].iter().any(|&b| b != 0) {
+                return None;
+            }
+            bytes.extend_from_slice(&out[..keep]);
+        }
+        Some(bytes)
+    }
 }
 
 /// Values the shim keeps for the whole run.
@@ -493,6 +627,13 @@ mod tests {
             },
             Request::AppOwnership { app_id: 1 },
             Request::RequestStats,
+            Request::CloudFileSize {
+                name: "a".to_owned(),
+            },
+            Request::CloudRead {
+                name: "a".to_owned(),
+                max: 1,
+            },
             Request::RegisterShadow { app_id: 1 },
             Request::CancelShadow,
             Request::ShadowHello {
@@ -503,6 +644,96 @@ mod tests {
         ] {
             assert!(!request.writes(), "{request:?}");
         }
+    }
+
+    #[test]
+    fn cloud_read_messages_round_trip_as_one_line() -> Result<(), FrameError> {
+        for (request, text) in [
+            (
+                Request::CloudFileSize {
+                    name: "MainPlayerData.json".to_owned(),
+                },
+                "{\"id\":8,\"request\":{\"type\":\"cloud_file_size\",\"name\":\"MainPlayerData.json\"}}\n",
+            ),
+            (
+                Request::CloudRead {
+                    name: "MainPlayerData.json".to_owned(),
+                    max: 4096,
+                },
+                "{\"id\":8,\"request\":{\"type\":\"cloud_read\",\"name\":\"MainPlayerData.json\",\"max\":4096}}\n",
+            ),
+        ] {
+            let message = ShimMessage { id: 8, request };
+            let line = encode(&message)?;
+            assert_eq!(line, text);
+            assert_eq!(decode::<ShimMessage>(&line)?, message);
+        }
+        for (response, text) in [
+            (
+                Response::FileSize { size: Some(1234) },
+                "{\"id\":8,\"response\":{\"type\":\"file_size\",\"size\":1234}}\n",
+            ),
+            (
+                Response::FileSize { size: None },
+                "{\"id\":8,\"response\":{\"type\":\"file_size\",\"size\":null}}\n",
+            ),
+            (
+                Response::FileData {
+                    data: Some(Bytes(b"{\"a\":1}\n".to_vec())),
+                },
+                "{\"id\":8,\"response\":{\"type\":\"file_data\",\"data\":\"eyJhIjoxfQo=\"}}\n",
+            ),
+            (
+                Response::FileData { data: None },
+                "{\"id\":8,\"response\":{\"type\":\"file_data\",\"data\":null}}\n",
+            ),
+        ] {
+            let message = DaemonMessage::Response { id: 8, response };
+            let line = encode(&message)?;
+            assert_eq!(line, text);
+            assert_eq!(decode::<DaemonMessage>(&line)?, message);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn base64_follows_rfc_4648() {
+        // The test vectors of RFC 4648, section 10.
+        for (plain, coded) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64::encode(plain.as_bytes()), coded);
+            assert_eq!(base64::decode(coded), Some(plain.as_bytes().to_vec()));
+        }
+        let all: Vec<u8> = (0..=255).collect();
+        assert_eq!(base64::decode(&base64::encode(&all)), Some(all));
+        for bad in [
+            "Zg", "Zg=", "Z===", "====", "Zg==Zm8=", "Zh==", "Zm9=", "Zm 9", "Zm9v\n", "Zm-_",
+        ] {
+            assert_eq!(base64::decode(bad), None, "{bad}");
+        }
+        assert!(
+            decode::<DaemonMessage>(
+                "{\"id\":8,\"response\":{\"type\":\"file_data\",\"data\":\"Zh==\"}}"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn file_data_debug_shows_only_the_length() {
+        let response = Response::FileData {
+            data: Some(Bytes(b"secret save".to_vec())),
+        };
+        let text = format!("{response:?}");
+        assert!(!text.contains("secret"), "{text}");
+        assert!(text.contains("11 bytes"), "{text}");
     }
 
     #[test]

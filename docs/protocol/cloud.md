@@ -96,6 +96,39 @@ response types are in steam-vent-proto-steam
   (ADR 0035): with the save moved away, starting the game restored it
   and the game showed the save (2026-11-21).
 
+### Cloud reads for the shim (`rebornd`, ADR 0055 stage 0)
+
+- **What:** the shim's `CloudFileSize { name }` and `CloudRead { name,
+  max }` (shim protocol 0.2) are answered from the run's cloud folder
+  `<Reborn data>/cloud/<account ID>/<app ID>/` (`reborn_core::run_cloud`;
+  account ID = the low 32 bits of the SteamID64, `friends.md`):
+  `FileSize { size }` or `FileData { data }` (base64, at most `max`
+  bytes from the start), each `None` for a missing file. No Valve
+  request per call; nothing is written, created or uploaded.
+- **Rules:** a connection without a session, a run not started in shim
+  mode, an app whose app info has no `ufs` `quota`, and shadow sessions
+  (their separate shadow folder comes with stage 1) get `NotAllowed`.
+  Names are checked like install paths (no `..`, no absolute paths or
+  drive letters, no unsafe characters or device names) and must have no
+  root token (`%...%`) and at most 1024 bytes; no symlink is followed,
+  neither below the Reborn data folder nor inside the run's folder; a
+  folder is not a file. All of these get `NotAllowed`, as does a read
+  error (ADR 0055 names no other reason). A file larger than the app's
+  quota (at most 16 MiB) gets `TooLarge`. A shim-mode launch reads the
+  app info once more for the quota (public data).
+- **Logs:** only sizes and the refusal reason, never names or contents;
+  `Debug` of the file data shows only its length.
+- **Not yet:** the base file (SHA-1, size, time of the last downloaded
+  version), filling the folder at launch (the L/C/B rules of ADR 0055),
+  writes, and the shim sending these requests. Until then the folder
+  holds only what was put there by hand, so every file is missing.
+- **Source:** ADR 0055 ("Protocol messages", "What is cached, and
+  where", "Cloud"); no Valve protocol is involved.
+- **Verified:** unit tests in `crates/core` and `apps/rebornd` with
+  temporary folders (traversal, absolute names, root tokens, symlinks on
+  systems that allow making them, other accounts and apps, quota, a
+  200 000-byte answer over a served in-memory connection); no live run.
+
 ## Known, not implemented
 
 ### Download through `Cloud.ClientFileDownload`

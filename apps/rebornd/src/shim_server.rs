@@ -24,6 +24,18 @@
 //! app only: `Accepted` and later the event `StatsReceived`, written on
 //! the same connection after the response, or `Unavailable`.
 //!
+//! `CloudFileSize { name }` and `CloudRead { name, max }` (ADR 0055) are
+//! checked the same way and answered only from the run's own cloud folder
+//! (`reborn_core::run_cloud`, `<Reborn data>/cloud/<account ID>/<app
+//! ID>/`), never from Valve: `FileSize` or `FileData` (`None` for a
+//! missing file; at most `max` bytes), `TooLarge` for a file above the
+//! app's quota (at most 16 MiB), and `NotAllowed` for an unsafe name (a
+//! path that could leave the folder, an absolute path, a root token), a
+//! symlink, a folder, a read error, a run without shim mode, an app
+//! without a quota, and shadow sessions (their separate shadow folder
+//! comes with stage 1). Nothing is written. File names and contents are
+//! never logged.
+//!
 //! Shadow sessions (ADR 0055, amending ADR 0047; `shim_shadow`): a
 //! connection without a session may send `RegisterShadow { app_id }`
 //! (`reborn-observe arm --app`) or `CancelShadow` (`disarm`); a
@@ -42,9 +54,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use reborn_core::run_cloud::{RunCloud, RunCloudError};
 use reborn_ipc::socket::LocalSocketStream;
 use reborn_shim_protocol::{
-    DaemonMessage, PROTOCOL_VERSION, RefusalReason, Request, Response, ShimMessage,
+    Bytes, DaemonMessage, PROTOCOL_VERSION, RefusalReason, Request, Response, ShimMessage,
     UnavailableReason, answer_hello, decode, encode,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -56,8 +69,9 @@ use crate::shim_shadow::ShadowSessions;
 use crate::shim_stats::{RunStats, StatsBackend, StatsState, event_when_received, request_stats};
 
 /// Longest line read from a shim; anything longer closes the connection.
-/// No message of protocol 0.2 comes near it; ADR 0055 raises it per
-/// session from the app's cloud quota once cloud writes exist.
+/// No request of protocol 0.2 comes near it (cloud reads are short
+/// requests; only their answers are long); ADR 0055 raises it per session
+/// from the app's cloud quota once cloud writes exist.
 const MAX_LINE: usize = 64 * 1024;
 
 /// Most accepted stats requests one connection may wait on at once; a shim
@@ -76,6 +90,9 @@ pub struct ShimRun {
     /// The run's stats, fetched on the game's first `RequestStats`; `None`
     /// for a run that was not started in shim mode.
     pub stats: Option<Arc<RunStats>>,
+    /// The run's cloud folder (ADR 0055); `None` for a run not started in
+    /// shim mode, an app without a cloud quota, and shadow sessions.
+    pub cloud: Option<Arc<RunCloud>>,
     /// Whether this is a read-only shadow session for a process
     /// `reborn-observe arm` registered (ADR 0055), not a process `rebornd`
     /// launched.
@@ -364,6 +381,17 @@ async fn answer<H: ShimHost, B: StatsBackend>(
             stats = receiver;
             response
         }
+        Request::CloudFileSize { name } => {
+            let response = answer_cloud(connection.run(host).as_ref(), name, CloudAsk::Size).await;
+            log_cloud(connection.pid, "size", &response);
+            response
+        }
+        Request::CloudRead { name, max } => {
+            let response =
+                answer_cloud(connection.run(host).as_ref(), name, CloudAsk::Read { max }).await;
+            log_cloud(connection.pid, "read", &response);
+            response
+        }
     };
     reply_line(message.id, response, stats)
 }
@@ -429,6 +457,84 @@ async fn answer_stats<B: StatsBackend>(
         return (not_allowed, None);
     };
     request_stats(backend, run.app_id, stats).await
+}
+
+/// A cloud read of the shim.
+#[derive(Clone, Copy, Debug)]
+enum CloudAsk {
+    /// `CloudFileSize`.
+    Size,
+    /// `CloudRead` with the game's buffer size.
+    Read { max: u32 },
+}
+
+/// The answer to `CloudFileSize` or `CloudRead` for the connection's run
+/// (ADR 0055): the session check first, then the run's cloud folder (shim
+/// mode, an app with a quota, not a shadow session), then the file, read
+/// off the async threads. Never asks Valve.
+async fn answer_cloud(run: Option<&ShimRun>, name: String, ask: CloudAsk) -> Response {
+    let not_allowed = Response::Unavailable {
+        reason: UnavailableReason::NotAllowed,
+    };
+    let Some(cloud) = run.and_then(|run| run.cloud.clone()) else {
+        return not_allowed;
+    };
+    match tokio::task::spawn_blocking(move || cloud_answer(&cloud, &name, ask)).await {
+        Ok(response) => response,
+        Err(error) => {
+            warn!(%error, "shim cloud read failed");
+            not_allowed
+        }
+    }
+}
+
+/// The answer from the run's cloud folder. Every refusal but `TooLarge`
+/// is `NotAllowed`: an unsafe name, a symlink or a folder is not the
+/// game's business, and for a read error ADR 0055 names no reason; the
+/// shim stops the game on any of them.
+fn cloud_answer(cloud: &RunCloud, name: &str, ask: CloudAsk) -> Response {
+    let result = match ask {
+        CloudAsk::Size => cloud.file_size(name).and_then(|size| {
+            let size = size
+                .map(|size| u32::try_from(size).map_err(|_| RunCloudError::TooLarge))
+                .transpose()?;
+            Ok(Response::FileSize { size })
+        }),
+        CloudAsk::Read { max } => cloud
+            .read(name, u64::from(max))
+            .map(|data| Response::FileData {
+                data: data.map(Bytes),
+            }),
+    };
+    match result {
+        Ok(response) => response,
+        Err(RunCloudError::TooLarge) => Response::Unavailable {
+            reason: UnavailableReason::TooLarge,
+        },
+        Err(error) => {
+            debug!(%error, "shim cloud read refused");
+            Response::Unavailable {
+                reason: UnavailableReason::NotAllowed,
+            }
+        }
+    }
+}
+
+/// Logs a cloud answer with sizes only: names and contents are the user's
+/// saves.
+fn log_cloud(pid: Option<u32>, what: &str, response: &Response) {
+    match response {
+        Response::Unavailable { reason } => {
+            info!(?pid, what, ?reason, "shim cloud request refused");
+        }
+        Response::FileSize { size } => debug!(?pid, ?size, "shim cloud size answered"),
+        Response::FileData { data } => debug!(
+            ?pid,
+            bytes = data.as_ref().map(|data| data.0.len()),
+            "shim cloud read answered"
+        ),
+        _ => {}
+    }
 }
 
 /// The answer to `AppOwnership { app_id }` for the connection's run
@@ -520,12 +626,14 @@ mod tests {
                         dlc: BTreeSet::from([DLC, OTHER_DLC]),
                     })),
                     stats: Some(Arc::new(RunStats::default())),
+                    cloud: None,
                     shadow: false,
                 },
                 bongo: ShimRun {
                     app_id: BONGO_CAT,
                     ownership: Some(Arc::new(RunOwnership::default())),
                     stats: Some(Arc::new(RunStats::default())),
+                    cloud: None,
                     shadow: false,
                 },
                 ended: false,
@@ -560,6 +668,7 @@ mod tests {
                     app_id: GAME,
                     ownership: None,
                     stats: None,
+                    cloud: None,
                     shadow: false,
                 }),
                 200 => Some(self.bongo.clone()),
@@ -1513,5 +1622,279 @@ mod tests {
                 .is_ok()
         );
         assert!(runs.shadows.get(SHADOW_PID, 1).is_none());
+    }
+
+    // Cloud reads (ADR 0055): from the run's own cloud folder only.
+
+    /// A made-up SteamID: the individual base plus account 123456.
+    const STEAM_ID: u64 = 0x0110_0001_0000_0000 + 123_456;
+    /// Cave Crawlers' recorded quota (`docs/protocol/cloud.md`).
+    const QUOTA: u64 = 1_000_000;
+    /// A save as Cave Crawlers names its files (no root token); made-up
+    /// content.
+    const SAVE: &str = "MainPlayerData.json";
+    const SAVE_DATA: &[u8] = b"{\"level\":3}";
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let unique = format!(
+                "rebornd-shim-cloud-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|time| time.as_nanos())
+                    .unwrap_or_default()
+            );
+            let dir = std::env::temp_dir().join(unique);
+            std::fs::create_dir_all(&dir).unwrap_or_else(|error| panic!("{error}"));
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The test runs, with a cloud folder for the game (process 100) that
+    /// holds [`SAVE`], limited to `limit`; Bongo Cat (process 200) gets
+    /// its own, empty folder below the same data folder.
+    fn with_cloud(temp: &TempDir, limit: u64) -> Runs {
+        let cloud = RunCloud::new(&temp.0, STEAM_ID, GAME, limit);
+        std::fs::create_dir_all(cloud.dir()).unwrap_or_else(|error| panic!("{error}"));
+        std::fs::write(cloud.dir().join(SAVE), SAVE_DATA).unwrap_or_else(|error| panic!("{error}"));
+        let mut runs = Runs::new();
+        runs.game.cloud = Some(Arc::new(cloud));
+        runs.bongo.cloud = Some(Arc::new(RunCloud::new(&temp.0, STEAM_ID, BONGO_CAT, limit)));
+        runs
+    }
+
+    fn cloud_size(name: &str) -> String {
+        line(
+            8,
+            Request::CloudFileSize {
+                name: name.to_owned(),
+            },
+        )
+    }
+
+    fn cloud_read(name: &str, max: u32) -> String {
+        line(
+            8,
+            Request::CloudRead {
+                name: name.to_owned(),
+                max,
+            },
+        )
+    }
+
+    async fn cloud_reply(
+        line: &str,
+        connection: &mut Connection,
+        runs: &Runs,
+    ) -> Option<DaemonMessage> {
+        reply_with(line, connection, runs, &offline())
+            .await
+            .map(|(message, _)| message)
+    }
+
+    fn file_size(size: Option<u32>) -> Option<DaemonMessage> {
+        response(8, Response::FileSize { size })
+    }
+
+    fn file_data(data: Option<&[u8]>) -> Option<DaemonMessage> {
+        response(
+            8,
+            Response::FileData {
+                data: data.map(|data| Bytes(data.to_vec())),
+            },
+        )
+    }
+
+    fn cloud_refused(reason: UnavailableReason) -> Option<DaemonMessage> {
+        unavailable(8, reason)
+    }
+
+    #[tokio::test]
+    async fn cloud_reads_come_from_the_runs_folder() {
+        let temp = TempDir::new("read");
+        let runs = with_cloud(&temp, QUOTA);
+        let mut connection = Connection::default();
+        cloud_reply(&hello(100, PROTOCOL_VERSION), &mut connection, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_size(SAVE), &mut connection, &runs).await,
+            file_size(Some(11))
+        );
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 4096), &mut connection, &runs).await,
+            file_data(Some(SAVE_DATA))
+        );
+        // At most the game's buffer.
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 4), &mut connection, &runs).await,
+            file_data(Some(&SAVE_DATA[..4]))
+        );
+        // A missing file is said to be missing; the shim decides.
+        assert_eq!(
+            cloud_reply(&cloud_size("other.json"), &mut connection, &runs).await,
+            file_size(None)
+        );
+        assert_eq!(
+            cloud_reply(&cloud_read("other.json", 10), &mut connection, &runs).await,
+            file_data(None)
+        );
+        // Reading wrote nothing.
+        let names: Vec<_> = std::fs::read_dir(
+            runs.game
+                .cloud
+                .as_ref()
+                .map(|c| c.dir())
+                .unwrap_or_default(),
+        )
+        .map(|dir| {
+            dir.filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .collect()
+        })
+        .unwrap_or_default();
+        assert_eq!(names, [SAVE]);
+    }
+
+    #[tokio::test]
+    async fn cloud_reads_never_leave_the_runs_folder() {
+        let temp = TempDir::new("unsafe");
+        let runs = with_cloud(&temp, QUOTA);
+        // Bongo Cat's session: the game's save is in another app's folder.
+        let mut connection = Connection::default();
+        cloud_reply(&hello(200, PROTOCOL_VERSION), &mut connection, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 10), &mut connection, &runs).await,
+            file_data(None)
+        );
+        for name in [
+            "../2143030/MainPlayerData.json",
+            "..\\2143030\\MainPlayerData.json",
+            "/etc/passwd",
+            "C:\\Windows\\win.ini",
+            "%WinAppDataLocalLow%x/MainPlayerData.json",
+            "",
+        ] {
+            assert_eq!(
+                cloud_reply(&cloud_size(name), &mut connection, &runs).await,
+                cloud_refused(UnavailableReason::NotAllowed),
+                "{name:?}"
+            );
+            assert_eq!(
+                cloud_reply(&cloud_read(name, 10), &mut connection, &runs).await,
+                cloud_refused(UnavailableReason::NotAllowed),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_files_above_the_quota_are_too_large() {
+        let temp = TempDir::new("large");
+        let runs = with_cloud(&temp, 4);
+        let mut connection = Connection::default();
+        cloud_reply(&hello(100, PROTOCOL_VERSION), &mut connection, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_size(SAVE), &mut connection, &runs).await,
+            cloud_refused(UnavailableReason::TooLarge)
+        );
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 2), &mut connection, &runs).await,
+            cloud_refused(UnavailableReason::TooLarge)
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_reads_need_a_session_with_a_cloud_folder() {
+        let temp = TempDir::new("session");
+        let runs = with_cloud(&temp, QUOTA);
+        let refused = cloud_refused(UnavailableReason::NotAllowed);
+        // No session on this connection.
+        let mut connection = Connection::default();
+        assert_eq!(
+            cloud_reply(&cloud_size(SAVE), &mut connection, &runs).await,
+            refused
+        );
+        // A refused hello binds nothing.
+        cloud_reply(&hello(102, PROTOCOL_VERSION), &mut connection, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 10), &mut connection, &runs).await,
+            refused
+        );
+        // A run without shim mode has no cloud folder.
+        let mut connection = Connection::default();
+        cloud_reply(&hello(101, PROTOCOL_VERSION), &mut connection, &runs).await;
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 10), &mut connection, &runs).await,
+            refused
+        );
+        // The game exited.
+        let mut connection = Connection {
+            pid: Some(100),
+            shadow: None,
+        };
+        let mut ended = with_cloud(&temp, QUOTA);
+        ended.ended = true;
+        assert_eq!(
+            cloud_reply(&cloud_read(SAVE, 10), &mut connection, &ended).await,
+            refused
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shadow_session_gets_no_cloud_reads_yet() {
+        let temp = TempDir::new("shadow");
+        let runs = with_cloud(&temp, QUOTA);
+        registered(&runs, SHADOW_GAME).await;
+        let mut proxy = Connection::default();
+        assert_eq!(
+            cloud_reply(&shadow_hello(SHADOW_PID, SHADOW_GAME), &mut proxy, &runs).await,
+            shadow_session()
+        );
+        for request in [cloud_size(SAVE), cloud_read(SAVE, 10)] {
+            assert_eq!(
+                cloud_reply(&request, &mut proxy, &runs).await,
+                cloud_refused(UnavailableReason::NotAllowed)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_served_cloud_read_longer_than_a_request_line_arrives_whole() {
+        // Answers may be longer than the 64 KiB request limit.
+        let temp = TempDir::new("served");
+        let runs = Arc::new(with_cloud(&temp, QUOTA));
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        if let Some(cloud) = &runs.game.cloud {
+            std::fs::write(cloud.dir().join("big.sav"), &big)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        let (mut lines, mut write, served) = connect_to(&offline(), &runs);
+        write
+            .write_all(hello(100, PROTOCOL_VERSION).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(next(&mut lines).await.contains("\"session\""));
+        write
+            .write_all(cloud_read("big.sav", 1 << 20).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            file_data(Some(&big))
+        );
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
     }
 }

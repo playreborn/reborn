@@ -16,6 +16,16 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0055 stage 0, cloud reads (parallel agent, no runs):
+  shim protocol 0.2 gains `CloudFileSize`, `CloudRead`, `FileSize` and
+  `FileData` (base64 without a new dependency, `None` for a missing
+  file); `reborn_core::run_cloud` reads sizes and bytes from
+  `<Reborn data>/cloud/<account ID>/<app ID>/` with name checks (no `..`,
+  absolute paths, root tokens) and no symlinks followed, limited by the
+  app's `ufs` quota (at most 16 MiB, `TooLarge` above); `rebornd` answers
+  only a shim-mode run's own folder, shadow sessions get `NotAllowed`.
+  No writes, no base file, nothing fills the folder yet; the shim does
+  not send the requests yet.
 - 2026-11-22: ADR 0056 (maintainer): the proxy may read call results
   (`SteamUtils010` 13), `rebornd` may compare the persona name (match or
   mismatch only), and recordings of non-M4 games count in coverage.

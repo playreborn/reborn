@@ -916,3 +916,23 @@ lowest byte. Checked by `tools/shim/experiments/010_battery_power.py`.
 
 **Limit, known in advance:** a desktop on AC power cannot show the
 battery case (0 to 100); only a laptop on battery could.
+
+**Result of experiment 10** (agent runs after the plan was committed at
+04:03:12): Linsips, Chronigma and Cartapli **match**: every logged call of
+position 14 returned 255 in its lowest byte. Outcore was not run (its
+launch-option window was answered too late, the run timed out), so
+`SteamUtils009` position 14 stays a candidate. Under ADR 0051 position 14
+of `SteamUtils010` is confirmed as `GetCurrentBatteryPower`, with the
+known limit that only the AC-power case was observed.
+
+```text
+observe-46356.log: 108 logged calls, 0 not 255 -> match
+observe-18812.log: 64 logged calls, 0 not 255 -> match
+observe-34072.log: 66 logged calls, 0 not 255 -> match
+experiment 10: match
+```
+
+```text
+78 ms ThreadId(1) SteamUtils010#14 call 1 rcx=0x19f0f8f02e0 rdx=0x0 r8=0x19f0bee1500 r9=0x1a
+79 ms ThreadId(1) SteamUtils010#14 return 1 rax=0xffffffff
+```

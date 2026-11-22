@@ -49,12 +49,19 @@
 //! lowest byte is 1, the first 16 bytes at the addresses `rdx` and `r8`
 //! held when the call started are logged as hex, each only if
 //! `VirtualQuery` shows them readable. Nothing beyond them is read.
+
 //!
 //! Step 4c (ADR 0043): for calls through stand-ins listed in `READS`,
 //! and only when the call is logged, the proxy also logs after the return
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
 //! started. Calls not on the list are logged as before.
+//!
+//! Step 4d (ADR 0050): at `rdx` the proxy reads 24 bytes instead of 16.
+//! If bytes 8 to 16 hold an address and bytes 16 to 20 a size of at most
+//! 4096 that make a readable range, it logs that size and the SHA-256 of
+//! the range, never its content. Only for callback numbers (bytes 4 to 8)
+//! listed in `PAYLOAD_LISTED` it also logs the first 64 bytes as hex.
 //!
 //! Shadow mode (ADR 0046): for confirmed meanings listed in `SHADOWS`,
 //! and only when the call is logged, the proxy compares the official
@@ -101,6 +108,26 @@ const B_GET_CALLBACK: usize = 2;
 /// `Steam_BGetCallback` (step 4b, ADR 0042), and for listed calls
 /// (step 4c, ADR 0043).
 const READ_BYTES: usize = 16;
+
+/// Bytes logged at `rdx` after `Steam_BGetCallback` (step 4d, ADR 0050):
+/// the 16 of step 4b and the 8 after them, where a size may follow the
+/// address.
+const CALLBACK_HEADER: usize = 24;
+
+/// The largest callback payload that is hashed (ADR 0050).
+const MAX_PAYLOAD: usize = 4096;
+
+/// Bytes of a listed callback's payload logged as hex (ADR 0050).
+const PAYLOAD_SHOWN: usize = 64;
+
+/// Callback numbers whose first [`PAYLOAD_SHOWN`] payload bytes are logged
+/// (ADR 0050). A number is added only with a candidate and an experiment
+/// plan in `docs/shim/meanings.md` that names it.
+///
+/// A hash of a small payload (a few bytes, such as an account ID) can be
+/// reversed by trying every value, so payload hashes, like the raw logs,
+/// never go into `docs/shim/`.
+const PAYLOAD_LISTED: &[u32] = &[];
 
 /// What is read after a listed call returns (step 4c, ADR 0043).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -814,35 +841,80 @@ fn ascii_at(address: u64) -> Option<String> {
     None
 }
 
-/// Step 4b of ADR 0042: if the lowest byte of `rax` is 1, the first
-/// [`READ_BYTES`] at the addresses `rdx` and `r8` held, as hex in
-/// groups of four bytes (memory order). `None` for any other result.
+/// Steps 4b and 4d (ADR 0042, 0050): if the lowest byte of `rax` is 1,
+/// the first [`CALLBACK_HEADER`] bytes at `rdx` and the first
+/// [`READ_BYTES`] at `r8`, as hex in groups of four bytes (memory order),
+/// followed by the payload note of [`describe_payload`]. `None` for any
+/// other result.
 fn describe_callback(rax: u64, [rdx, r8]: [u64; 2]) -> Option<String> {
     if rax & 0xff != 1 {
         return None;
     }
-    let mut note = String::from("wrote");
-    for (name, address) in [("rdx", rdx), ("r8", r8)] {
-        let _ = write!(note, " {name}->{}", hex_at(address));
+    let header = bytes_in(rdx, CALLBACK_HEADER);
+    let mut note = String::from("wrote rdx->");
+    // Without 24 readable bytes, the 16 of step 4b as before.
+    note.push_str(&header.as_deref().map_or_else(|| hex_at(rdx), hex));
+    let _ = write!(note, " r8->{}", hex_at(r8));
+    if let Some(header) = header {
+        let _ = write!(note, " {}", describe_payload(&header, PAYLOAD_LISTED));
     }
     Some(note)
+}
+
+/// Step 4d of ADR 0050: what a callback header points to. If bytes 8 to
+/// 16 hold an address and bytes 16 to 20 a size of 1 to [`MAX_PAYLOAD`]
+/// that make a readable range, the size and the SHA-256 of that range;
+/// for a number (bytes 4 to 8) in `listed`, also its first
+/// [`PAYLOAD_SHOWN`] bytes as hex. `header` has [`CALLBACK_HEADER`] bytes.
+fn describe_payload(header: &[u8], listed: &[u32]) -> String {
+    let word = |at: usize| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    let number = word(4);
+    let address = u64::from(word(8)) | (u64::from(word(12)) << 32);
+    let size = word(16) as usize;
+    if size == 0 || size > MAX_PAYLOAD {
+        return format!("payload: no size (bytes 16..20 = {size})");
+    }
+    let Some(payload) = bytes_in(address, size) else {
+        return format!("payload: size {size} not readable at the address");
+    };
+    let mut note = format!("payload: size {size} sha256 {}", sha256_hex(&payload));
+    if listed.contains(&number) {
+        let shown = &payload[..size.min(PAYLOAD_SHOWN)];
+        let _ = write!(note, " first {}", hex(shown));
+    }
+    note
+}
+
+/// The SHA-256 of `bytes` as lowercase hex.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
+}
+
+/// `bytes` as hex in groups of four bytes (memory order), in brackets.
+fn hex(bytes: &[u8]) -> String {
+    let mut text = String::from("[");
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 && index % 4 == 0 {
+            text.push(' ');
+        }
+        let _ = write!(text, "{byte:02x}");
+    }
+    text.push(']');
+    text
 }
 
 /// The first [`READ_BYTES`] at `address` as hex in groups of four bytes
 /// (memory order), or "not readable".
 fn hex_at(address: u64) -> String {
-    let Some(bytes) = bytes_at(address) else {
-        return "not readable".to_owned();
-    };
-    let mut hex = String::from("[");
-    for (index, byte) in bytes.iter().enumerate() {
-        if index > 0 && index % 4 == 0 {
-            hex.push(' ');
-        }
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex.push(']');
-    hex
+    bytes_at(address).map_or_else(|| "not readable".to_owned(), |bytes| hex(&bytes))
 }
 
 /// Step 4c of ADR 0043: the read for a call at `slot` of the object asked
@@ -953,6 +1025,31 @@ fn bytes_at(address: u64) -> Option<[u8; READ_BYTES]> {
     // SAFETY: the bytes lie inside a committed, readable region that
     // `readable_end` just checked; no alignment is assumed.
     Some(unsafe { std::ptr::read_unaligned(start as *const [u8; READ_BYTES]) })
+}
+
+/// The `len` bytes at `address`, if they all lie in one committed,
+/// readable memory region (as [`bytes_at`]).
+fn bytes_in(address: u64, len: usize) -> Option<Vec<u8>> {
+    // As in `ascii_at`: the lowest 64 KiB are never mapped.
+    if address < 0x1_0000 {
+        return None;
+    }
+    let start = usize::try_from(address).ok()?;
+    let end = readable_end(start)?;
+    if start.checked_add(len)? > end {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(len);
+    // SAFETY: the `len` bytes lie inside a committed, readable region that
+    // `readable_end` just checked, and `bytes` has room for `len` bytes; no
+    // reference to the game's memory is made, so other threads writing it
+    // is no aliasing violation. As in `bytes_at`, the memory is assumed not
+    // to be freed between the check and the copy.
+    unsafe {
+        std::ptr::copy_nonoverlapping(start as *const u8, bytes.as_mut_ptr(), len);
+        bytes.set_len(len);
+    }
+    Some(bytes)
 }
 
 /// Windows' information about the memory at `address`, if it is
@@ -1318,22 +1415,84 @@ mod tests {
 
     #[test]
     fn logs_callback_bytes_only_after_a_result_of_one() {
-        let first: [u8; 20] = core::array::from_fn(|index| index as u8);
-        let second = [0xab_u8; 16];
+        let first: [u8; 28] = core::array::from_fn(|index| index as u8);
+        let second = [0xab_u8; 20];
         let outputs = [first.as_ptr() as u64, second.as_ptr() as u64];
         assert_eq!(describe_callback(0, outputs), None);
         assert_eq!(describe_callback(0x100, outputs), None, "lowest byte 0");
         assert_eq!(
             describe_callback(0xffff_ff01, outputs).as_deref(),
             Some(
-                "wrote rdx->[00010203 04050607 08090a0b 0c0d0e0f] \
-                 r8->[abababab abababab abababab abababab]"
+                "wrote rdx->[00010203 04050607 08090a0b 0c0d0e0f 10111213 14151617] \
+                 r8->[abababab abababab abababab abababab] \
+                 payload: no size (bytes 16..20 = 319951120)"
             ),
-            "only the first 16 bytes"
+            "24 bytes at rdx, 16 at r8"
         );
         assert_eq!(
             describe_callback(1, [0x10, 0x7fff_ffff_0000]).as_deref(),
             Some("wrote rdx->not readable r8->not readable")
+        );
+    }
+
+    fn header(number: u32, address: u64, size: u32) -> [u8; CALLBACK_HEADER] {
+        let mut header = [0; CALLBACK_HEADER];
+        header[..4].copy_from_slice(&1_u32.to_le_bytes());
+        header[4..8].copy_from_slice(&number.to_le_bytes());
+        header[8..16].copy_from_slice(&address.to_le_bytes());
+        header[16..20].copy_from_slice(&size.to_le_bytes());
+        header
+    }
+
+    #[test]
+    fn hashes_a_payload_and_shows_bytes_only_for_listed_numbers() {
+        let payload = *b"abc";
+        let address = payload.as_ptr() as u64;
+        // SHA-256("abc"), FIPS 180-2 appendix B.1.
+        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(
+            describe_payload(&header(703, address, 3), &[]),
+            format!("payload: size 3 sha256 {digest}")
+        );
+        assert_eq!(
+            describe_payload(&header(703, address, 3), &[704]),
+            format!("payload: size 3 sha256 {digest}"),
+            "another number is listed"
+        );
+        assert_eq!(
+            describe_payload(&header(703, address, 3), &[703]),
+            format!("payload: size 3 sha256 {digest} first [616263]")
+        );
+    }
+
+    #[test]
+    fn shows_at_most_64_payload_bytes() {
+        let payload: [u8; 100] = core::array::from_fn(|index| index as u8);
+        let note = describe_payload(&header(1, payload.as_ptr() as u64, 100), &[1]);
+        let shown = note.split(" first ").nth(1).expect("bytes shown");
+        assert_eq!(shown.matches(|c: char| c.is_ascii_hexdigit()).count(), 128);
+        assert!(shown.ends_with("3c3d3e3f]"), "{shown}");
+    }
+
+    #[test]
+    fn hashes_nothing_without_a_readable_size() {
+        let payload = [0_u8; 8];
+        let address = payload.as_ptr() as u64;
+        assert_eq!(
+            describe_payload(&header(1, address, 0), &[1]),
+            "payload: no size (bytes 16..20 = 0)"
+        );
+        assert_eq!(
+            describe_payload(&header(1, address, 4097), &[1]),
+            "payload: no size (bytes 16..20 = 4097)"
+        );
+        assert_eq!(
+            describe_payload(&header(1, 0x7fff_ffff_0000, 8), &[1]),
+            "payload: size 8 not readable at the address"
+        );
+        assert_eq!(
+            describe_payload(&header(1, 0x10, 8), &[1]),
+            "payload: size 8 not readable at the address"
         );
     }
 

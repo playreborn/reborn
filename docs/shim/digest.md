@@ -12,6 +12,8 @@ first, so the maintainer can read a day's work quickly and stop anything.
 - 2026-11-22: loop iteration 1: `SteamUtils010` 14 confirmed as
   `GetCurrentBatteryPower` (experiment 10, 3 games, 238 calls, all 255 on
   AC power); `SteamUtils009` 14 stays a candidate (Outcore not run).
+  Implemented in the shim and in shadow mode (live: every call matched);
+  the review pass found a Linux test abort, fixed before merging. PR #10.
 - 2026-11-22: loop set up (ADR 0051): `tools/shim/` (coverage, gap
   list, runs), `LOOP.md`. Gaps: 205 positions recorded, 87 confirmed,
   118 open; first gap `SteamUtils010` position 14 (14 of 20 games).

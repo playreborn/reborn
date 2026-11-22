@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    Column, button, column, container, pick_list, progress_bar, row, rule, scrollable, space, text,
-    text_input,
+    Column, button, center, column, container, opaque, pick_list, progress_bar, row, rule,
+    scrollable, space, stack, text, text_input,
 };
-use iced::{Alignment, Element, Fill, Subscription, Task};
+use iced::{Alignment, Color, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
     AchievementInfo, ChatMessageInfo, CloudAnswer, CloudChoice, CloudConflictFile,
     CloudRestoreResult, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job,
@@ -137,6 +137,10 @@ pub enum Message {
     /// version; `None` cancels.
     CloudChoice(u32, Option<CloudChoice>),
     PlayDone(u32, Result<Response, String>),
+    /// The user continued past the shim-mode notice (ADR 0057).
+    ShimNoticeContinue,
+    /// The user cancelled at the shim-mode notice.
+    ShimNoticeCancel,
     Uninstall(u32),
     UninstallDone(Result<Response, String>),
     SettingsLoaded(Result<Response, String>),
@@ -199,6 +203,10 @@ pub struct App {
     /// A shim-mode launch refused by a true cloud conflict, waiting for the
     /// user to pick a version (ADR 0055).
     cloud_conflict: Option<(u32, Vec<CloudConflictFile>)>,
+    /// The app waiting for the user at the shim-mode notice (ADR 0057).
+    shim_notice: Option<u32>,
+    /// The answers given so far for a launch still being asked about.
+    launch_answers: HashMap<u32, LaunchAnswers>,
     settings: Option<SettingsView>,
     library_input: String,
     /// `None` until loaded.
@@ -248,6 +256,8 @@ impl App {
             starting: BTreeSet::new(),
             confirm_uninstall: None,
             cloud_conflict: None,
+            shim_notice: None,
+            launch_answers: HashMap::new(),
             settings: None,
             library_input: String::new(),
             friends: None,
@@ -664,7 +674,11 @@ impl App {
                     None => iced::exit(),
                 }
             }
-            Message::Play(app_id) => self.launch(app_id, None),
+            Message::Play(app_id) => {
+                // A new launch starts without answers.
+                self.launch_answers.remove(&app_id);
+                self.launch(app_id)
+            }
             Message::CloudChoice(app_id, choice) => {
                 // The answer names exactly the conflicts the user was shown;
                 // any other the daemon finds is asked again.
@@ -672,10 +686,27 @@ impl App {
                 match (choice, shown) {
                     (Some(choice), Some((shown_app, files))) if shown_app == app_id => {
                         let answer = CloudAnswer::for_conflicts(choice, &files);
-                        self.launch(app_id, Some(answer))
+                        self.launch_answers.entry(app_id).or_default().cloud = Some(answer);
+                        self.launch(app_id)
                     }
-                    _ => Task::none(),
+                    _ => {
+                        self.launch_answers.remove(&app_id);
+                        Task::none()
+                    }
                 }
+            }
+            Message::ShimNoticeContinue => match self.shim_notice.take() {
+                Some(app_id) => {
+                    self.launch_answers.entry(app_id).or_default().notice = true;
+                    self.launch(app_id)
+                }
+                None => Task::none(),
+            },
+            Message::ShimNoticeCancel => {
+                if let Some(app_id) = self.shim_notice.take() {
+                    self.launch_answers.remove(&app_id);
+                }
+                Task::none()
             }
             Message::Uninstall(app_id) => {
                 if self.confirm_uninstall != Some(app_id) {
@@ -752,10 +783,18 @@ impl App {
                     }
                     Ok(Response::CloudConflict { app_id, files }) => {
                         self.cloud_conflict = Some((app_id, files));
+                        return Task::none();
+                    }
+                    // First shim-mode launch: ask before anything starts.
+                    Ok(Response::ShimModeNotice { app_id }) => {
+                        self.shim_notice = Some(app_id);
+                        return Task::none();
                     }
                     Ok(_) => {}
                     Err(error) => self.notice = Some(format!("Cannot start the game: {error}")),
                 }
+                // The launch is over: its answers are not reused.
+                self.launch_answers.remove(&app_id);
                 Task::none()
             }
             Message::QuitDone(result) => {
@@ -777,26 +816,29 @@ impl App {
             .unwrap_or_else(|| format!("App {app_id}"))
     }
 
-    /// Asks the daemon to start a game, with the user's answer to a cloud
-    /// conflict if there was one.
-    fn launch(&mut self, app_id: u32, cloud_choice: Option<CloudAnswer>) -> Task<Message> {
-        self.starting.insert(app_id);
+    /// Asks the daemon to start a game, with every answer the user gave
+    /// for this launch so far (the shim-mode notice, a cloud conflict).
+    fn launch(&mut self, app_id: u32) -> Task<Message> {
         self.notice = None;
-        match &self.client {
-            Some(client) => Task::perform(
-                daemon::request(
-                    Arc::clone(client),
-                    Request::Launch {
-                        app_id,
-                        library: None,
-                        option: None,
-                        cloud_choice,
-                    },
-                ),
-                move |result| Message::PlayDone(app_id, result),
-            ),
-            None => Task::none(),
-        }
+        let request = self.launch_request(app_id);
+        let Some(client) = &self.client else {
+            return Task::none();
+        };
+        self.starting.insert(app_id);
+        Task::perform(
+            daemon::request(Arc::clone(client), request),
+            move |result| Message::PlayDone(app_id, result),
+        )
+    }
+
+    /// The launch request for an app from Reborn's own library with the
+    /// default entry, carrying both answers given so far.
+    fn launch_request(&self, app_id: u32) -> Request {
+        self.launch_answers
+            .get(&app_id)
+            .cloned()
+            .unwrap_or_default()
+            .request(app_id)
     }
 
     /// The question after a true cloud conflict (ADR 0055): which version
@@ -1104,7 +1146,46 @@ impl App {
         if let Some(path) = &self.library_path {
             page = page.push(text(format!("Library: {}", path.display())).size(12));
         }
-        container(page).padding(20).width(Fill).height(Fill).into()
+        let page = container(page).padding(20).width(Fill).height(Fill);
+        match self.shim_notice {
+            Some(app_id) => stack([page.into(), self.shim_notice_dialog(app_id)]).into(),
+            None => page.into(),
+        }
+    }
+
+    /// The confirmation before the first shim-mode launch of a game (ADR
+    /// 0055, 0057), over a dimmed page that takes no clicks.
+    fn shim_notice_dialog(&self, app_id: u32) -> Element<'_, Message> {
+        let dialog = container(
+            column![
+                text(shim_notice_title(&self.app_name(app_id))).size(20),
+                text(reborn_ipc::SHIM_MODE_NOTICE),
+                row![
+                    space().width(Fill),
+                    button("Cancel")
+                        .style(button::secondary)
+                        .on_press(Message::ShimNoticeCancel),
+                    button("Continue").on_press(Message::ShimNoticeContinue),
+                ]
+                .spacing(8),
+            ]
+            .spacing(16),
+        )
+        .padding(20)
+        .max_width(520)
+        .style(container::rounded_box);
+        opaque(center(opaque(dialog)).style(|_theme| {
+            container::Style {
+                background: Some(
+                    Color {
+                        a: 0.6,
+                        ..Color::BLACK
+                    }
+                    .into(),
+                ),
+                ..container::Style::default()
+            }
+        }))
     }
 
     fn header(&self) -> Element<'_, Message> {
@@ -1899,6 +1980,33 @@ fn finished_text(result: &JobResult) -> String {
     }
 }
 
+/// What the user answered so far for one launch: the shim-mode notice
+/// (ADR 0057) and a cloud conflict (ADR 0055). Every resend carries both,
+/// so a cloud-conflict resend after the notice keeps the notice accepted.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LaunchAnswers {
+    notice: bool,
+    cloud: Option<CloudAnswer>,
+}
+
+impl LaunchAnswers {
+    /// Starting a game from Reborn's own library with the default entry.
+    fn request(self, app_id: u32) -> Request {
+        Request::Launch {
+            app_id,
+            library: None,
+            option: None,
+            cloud_choice: self.cloud,
+            shim_notice_accepted: self.notice,
+        }
+    }
+}
+
+/// The heading of the shim-mode notice.
+fn shim_notice_title(name: &str) -> String {
+    format!("Start {name} in shim mode?")
+}
+
 fn center_text(message: &str) -> Element<'_, Message> {
     container(text(message.to_owned())).center(Fill).into()
 }
@@ -2006,6 +2114,101 @@ mod tests {
             },
         );
         assert!(conflict.contains("local saves"), "{conflict}");
+    }
+
+    #[test]
+    fn the_shim_notice_waits_for_the_user() {
+        let (mut app, _) = App::boot();
+        let _ = app.update(Message::PlayDone(
+            480,
+            Ok(Response::ShimModeNotice { app_id: 480 }),
+        ));
+        assert_eq!(app.shim_notice, Some(480));
+        assert!(!app.starting.contains(&480), "nothing starts yet");
+        let _ = app.update(Message::ShimNoticeCancel);
+        assert_eq!(app.shim_notice, None);
+        assert!(!app.starting.contains(&480));
+
+        assert_eq!(
+            app.launch_request(480),
+            LaunchAnswers::default().request(480)
+        );
+
+        // Continue closes the dialog and sends the launch again (without a
+        // daemon connection here, nothing is sent) with the confirmation.
+        let _ = app.update(Message::PlayDone(
+            480,
+            Ok(Response::ShimModeNotice { app_id: 480 }),
+        ));
+        let _ = app.update(Message::ShimNoticeContinue);
+        assert_eq!(app.shim_notice, None);
+        assert_eq!(
+            app.launch_request(480),
+            Request::Launch {
+                app_id: 480,
+                library: None,
+                option: None,
+                cloud_choice: None,
+                shim_notice_accepted: true,
+            }
+        );
+        assert_eq!(
+            shim_notice_title(&app.app_name(480)),
+            "Start App 480 in shim mode?"
+        );
+    }
+
+    #[test]
+    fn a_cloud_resend_after_the_notice_keeps_the_notice() {
+        let (mut app, _) = App::boot();
+        let _ = app.update(Message::PlayDone(
+            480,
+            Ok(Response::ShimModeNotice { app_id: 480 }),
+        ));
+        let _ = app.update(Message::ShimNoticeContinue);
+        let file = CloudConflictFile {
+            name: "save.dat".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 1,
+            local_modified: None,
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 2,
+            cloud_modified: 3,
+            had_base: true,
+        };
+        let _ = app.update(Message::PlayDone(
+            480,
+            Ok(Response::CloudConflict {
+                app_id: 480,
+                files: vec![file.clone()],
+            }),
+        ));
+        let _ = app.update(Message::CloudChoice(480, Some(CloudChoice::Local)));
+        assert_eq!(
+            app.launch_request(480),
+            Request::Launch {
+                app_id: 480,
+                library: None,
+                option: None,
+                cloud_choice: Some(CloudAnswer::for_conflicts(CloudChoice::Local, &[file])),
+                shim_notice_accepted: true,
+            }
+        );
+
+        // Once the launch is over, a new Play starts without answers.
+        let _ = app.update(Message::PlayDone(
+            480,
+            Ok(Response::Launched { app_id: 480 }),
+        ));
+        assert_eq!(
+            app.launch_request(480),
+            LaunchAnswers::default().request(480)
+        );
+        let _ = app.update(Message::Play(480));
+        assert_eq!(
+            app.launch_request(480),
+            LaunchAnswers::default().request(480)
+        );
     }
 
     #[test]

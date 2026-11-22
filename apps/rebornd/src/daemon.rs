@@ -924,6 +924,7 @@ impl Daemon {
                 library,
                 option,
                 cloud_choice,
+                shim_notice_accepted,
             } => {
                 self.launch(
                     LaunchRequest {
@@ -932,6 +933,7 @@ impl Daemon {
                         option,
                     },
                     cloud_choice,
+                    shim_notice_accepted,
                 )
                 .await
             }
@@ -1167,10 +1169,48 @@ impl Daemon {
     }
 
     /// Starts an installed game and reports when its process exits.
+    /// In shim mode, the first launch of each app first answers
+    /// [`Response::ShimModeNotice`] until the user confirmed it (ADR 0057);
     /// `cloud_choice` answers a true cloud conflict of a shim-mode launch
     /// (ADR 0055).
-    async fn launch(&self, request: LaunchRequest, cloud_choice: Option<CloudAnswer>) -> Response {
+    async fn launch(
+        &self,
+        request: LaunchRequest,
+        cloud_choice: Option<CloudAnswer>,
+        shim_notice_accepted: bool,
+    ) -> Response {
+        let notices = if crate::shim_launch::enabled() {
+            match settings::ShimNotices::in_config_dir() {
+                Ok(notices) => Some(notices),
+                Err(error) => {
+                    return Response::Error {
+                        message: format!("shim mode: {error}"),
+                    };
+                }
+            }
+        } else {
+            None
+        };
+        self.launch_with(
+            request,
+            cloud_choice,
+            shim_notice_accepted,
+            notices.as_ref(),
+        )
+        .await
+    }
+
+    /// [`Self::launch`] with shim mode given: `notices` is `Some` exactly in
+    /// shim mode and says where the notice confirmations are kept.
+    async fn launch_with(
+        &self,
+        request: LaunchRequest,
+        cloud_choice: Option<CloudAnswer>,
+        shim_notice_accepted: bool,
+        notices: Option<&settings::ShimNotices>,
+    ) -> Response {
         let app_id = request.app_id;
+        let shim_mode = notices.is_some();
         if self.running().contains(&app_id) {
             return Response::Error {
                 message: format!("app {app_id} is already running"),
@@ -1183,6 +1223,35 @@ impl Daemon {
             return Response::Error {
                 message: format!("app {app_id} is being installed or verified"),
             };
+        }
+        // A game that is not installed gets that error, not the notice.
+        // Local files only: no session, no Valve request.
+        let library = match &request.library {
+            Some(library) => Ok(library.clone()),
+            None => settings::default_library().map_err(CoreError::from),
+        };
+        if let Err(error) =
+            library.and_then(|library| reborn_core::launch::installed_game_dir(&library, app_id))
+        {
+            return error_response(&error);
+        }
+        // Before anything asks Valve: the frontend tells the user where
+        // shim-mode saves go before the first shim-mode launch (ADR 0055).
+        // The confirmation is stored before the launch is known to work.
+        if let Some(notices) = notices {
+            let seen = notices.seen(app_id).unwrap_or_else(|error| {
+                warn!(app_id, %error, "reading the shim-mode notice setting failed");
+                false
+            });
+            match notice_step(shim_notice_accepted, seen) {
+                NoticeStep::Ask => return Response::ShimModeNotice { app_id },
+                NoticeStep::Remember => {
+                    if let Err(error) = notices.remember(app_id) {
+                        warn!(app_id, %error, "remembering the shim-mode notice failed");
+                    }
+                }
+                NoticeStep::Go => {}
+            }
         }
         let session = match self.session().await {
             Ok(session) => session,
@@ -1198,7 +1267,6 @@ impl Daemon {
                 return error_response(&error);
             }
         };
-        let shim_mode = crate::shim_launch::enabled();
         // Missing saves from Steam Cloud first (ADR 0035). Never stops the
         // game: a conflict or an error is only reported. The app info is
         // fetched once, for the restore and, in shim mode, for the cloud
@@ -1557,6 +1625,27 @@ pub async fn run_jobs(daemon: Arc<Daemon>) {
             () = stop.notified() => JobResult::Cancelled,
         };
         daemon.finish(job_id, result);
+    }
+}
+
+/// What a shim-mode launch does about the notice (ADR 0057).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoticeStep {
+    /// Not confirmed yet: answer [`Response::ShimModeNotice`], start nothing.
+    Ask,
+    /// Confirmed with this request: remember it, then start.
+    Remember,
+    /// Confirmed earlier: start.
+    Go,
+}
+
+/// The notice step for a shim-mode launch, from whether this request
+/// carries the user's confirmation and whether an earlier one was stored.
+fn notice_step(accepted: bool, seen: bool) -> NoticeStep {
+    match (seen, accepted) {
+        (true, _) => NoticeStep::Go,
+        (false, true) => NoticeStep::Remember,
+        (false, false) => NoticeStep::Ask,
     }
 }
 
@@ -2243,6 +2332,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_shim_notice_is_asked_once_per_app() {
+        // Not seen: ask, unless this request carries the confirmation.
+        assert_eq!(notice_step(false, false), NoticeStep::Ask);
+        assert_eq!(notice_step(true, false), NoticeStep::Remember);
+        // Seen: start, with or without the flag, and write nothing.
+        assert_eq!(notice_step(false, true), NoticeStep::Go);
+        assert_eq!(notice_step(true, true), NoticeStep::Go);
+    }
+
+    #[tokio::test]
+    async fn the_shim_notice_comes_before_any_session_and_writes_nothing() {
+        // A library with a fully installed app, and an empty notice folder.
+        let root =
+            std::env::temp_dir().join(format!("reborn-daemon-notice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let library = root.join("library");
+        std::fs::create_dir_all(library.join("steamapps")).unwrap();
+        std::fs::write(
+            library.join("steamapps").join("appmanifest_480.acf"),
+            "\"AppState\"\n{\n\t\"appid\"\t\t\"480\"\n\t\"name\"\t\t\"Spacewar\"\n\t\"StateFlags\"\t\t\"4\"\n\t\"installdir\"\t\t\"Spacewar\"\n}\n",
+        )
+        .unwrap();
+        let notice_dir = root.join("config");
+        let notices = settings::ShimNotices::new(&notice_dir);
+        let request = |app_id| LaunchRequest {
+            app_id,
+            library: Some(library.clone()),
+            option: None,
+        };
+
+        // No session: anything past the notice would have to sign in.
+        let daemon = Daemon::new();
+        let response = daemon
+            .launch_with(request(480), None, false, Some(&notices))
+            .await;
+        assert_eq!(response, Response::ShimModeNotice { app_id: 480 });
+        assert!(
+            !notice_dir.exists(),
+            "nothing is written before the user confirms"
+        );
+        assert!(!notices.seen(480).unwrap());
+        assert!(daemon.running().is_empty());
+
+        // An app that is not installed gets that error, not the notice.
+        let Response::Error { message } = daemon
+            .launch_with(request(10), None, false, Some(&notices))
+            .await
+        else {
+            panic!("expected an error");
+        };
+        assert!(message.contains("10"), "{message}");
+        assert!(!notice_dir.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[tokio::test]
     async fn status_reports_active_jobs() {
         let daemon = Daemon::new();
@@ -2267,6 +2412,7 @@ mod tests {
             library: None,
             option: None,
             cloud_choice: None,
+            shim_notice_accepted: false,
         };
         daemon.running().insert(480);
         assert!(matches!(

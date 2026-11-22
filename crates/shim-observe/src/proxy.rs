@@ -140,7 +140,8 @@ enum Read {
 }
 
 /// The calls ADR 0043 allows reads for: interface version text, position,
-/// what is read. An entry is added only with a candidate and an experiment
+/// plan in `docs/shim/meanings.md` that names it, and a review pass (ADR
+/// 0053; before that, the maintainer's OK);
 /// plan in `docs/shim/meanings.md` that names it, and the maintainer's OK;
 /// never for a call that could hand back a ticket, a token, a password or
 /// an account identifier.

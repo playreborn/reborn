@@ -1,6 +1,6 @@
 # 0043: Reading result texts and output bytes for planned experiments (step 4c)
 
-- **Status:** Accepted
+- **Status:** Accepted; adding entries amended by ADR 0053
 - **Date:** 2026-11-21
 
 ## Context

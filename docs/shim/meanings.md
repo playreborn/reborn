@@ -2395,7 +2395,7 @@ trigger.
 **Freshness (both scripts):** a log whose `start` line in `starts.log` is
 earlier than `PLAN_COMMITTED` is rejected; both scripts hold the commit
 time of the final plan on `loop/plan-10a` (local time, as `run.sh` writes
-`starts.log`), set in a follow-up commit.
+`starts.log`): 2026-11-22 13:26:55 (commit `43f09cd`).
 
 **Already seen:** run on the existing logs with the plan time lifted,
 experiment 23 gives "match" and experiment 22 "MISMATCH" (703 payload

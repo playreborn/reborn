@@ -45,7 +45,7 @@ GAMES = {
 }
 STORED = 0x44E
 WINDOW_MS = 1000
-PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 13, 26, 55)  # commit 43f09cd on loop/plan-10a (final plan)
 
 
 def u32(data, at):

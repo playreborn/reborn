@@ -63,7 +63,7 @@ STATS_RECEIVED_SIZE = 24
 REQUEST_USER_STATS = ("STEAMUSERSTATS_INTERFACE_VERSION013", 15)
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
 F_MIN = 10
-PLAN_COMMITTED = datetime(2026, 11, 22, 23, 59, 59)  # placeholder, set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 13, 26, 55)  # commit 43f09cd on loop/plan-10a (final plan)
 low = observelog.low32
 
 

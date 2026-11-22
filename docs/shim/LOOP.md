@@ -24,7 +24,9 @@ registry is virtualized) repeats it until stopped. Every rule of
 3. **Candidate:** read the public page of that interface on
    <https://partner.steamgames.com/doc/api/> (one page at a time; never
    from memory, AGENTS.md section 4). If nothing fits, record "no
-   candidate" in `digest.md` and go to the next row.
+   candidate" in `digest.md` and go to the next row. List every function
+   on the page with the recorded shape (arguments and result); a meaning
+   is confirmed only if the predictions rule out all others.
 4. **Plan:** write the candidate and an experiment with predictions a
    script can check into `meanings.md`; write the check as
    `tools/shim/experiments/NNN_short_name.py` (reads logs given on the

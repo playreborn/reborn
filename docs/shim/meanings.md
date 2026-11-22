@@ -1220,8 +1220,26 @@ experiment 14: match
 ```
 
 Cave Crawlers called position 6 once this time (seven times in its
-reference run). Under ADR 0051, positions 6 and 3 of
-`STEAMINVENTORY_INTERFACE_V003` are confirmed as `GetAllItems` and
-`GetResultTimestamp`; position 1 stays a candidate (`GetResultItems`).
-Not in the shim yet: it has no inventory object, and an honest answer
-needs the account's inventory from Valve's servers.
+reference run).
+
+**Review finding (before merge):** the predictions do not tell
+`GetAllItems` apart from other functions on the page that write "a new
+result handle" through `SteamInventoryResult_t *pResultHandle` and return
+true: `GrantPromoItems(pResultHandle)` has the same signature, and
+`TriggerItemDrop` and `AddPromoItem` take an item definition as a second
+argument (in the new Bongo Cat log `r8` held a small number). Likewise
+`SerializeResult(resultHandle, pOutBuffer, punOutBufferSize)` has the
+shape of `GetResultItems`. So, although the script reported a match:
+
+- position 3 is confirmed as `GetResultTimestamp`: it is the only
+  function on the page that takes a result handle and returns a `uint32`,
+  and the result was a Unix time 27 to 87 seconds before the log's last
+  write;
+- position 6 stays a candidate: `GetAllItems`, `GrantPromoItems`,
+  `TriggerItemDrop` or `AddPromoItem` (it writes a result handle);
+- position 1 stays a candidate: `GetResultItems` or `SerializeResult`.
+
+Telling them apart needs another experiment. Lesson for the loop: before
+planning, list every function on the page with the recorded shape, not
+only the best fit. Not in the shim yet: it has no inventory object, and
+an honest answer needs the account's inventory from Valve's servers.

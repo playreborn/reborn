@@ -280,12 +280,12 @@
   },
   "STEAMINVENTORY_INTERFACE_V003": {
     "6": [
-      "confirmed",
-      "GetAllItems"
+      "candidate",
+      "GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle)"
     ],
     "1": [
       "candidate",
-      "GetResultItems"
+      "GetResultItems or SerializeResult"
     ],
     "3": [
       "confirmed",

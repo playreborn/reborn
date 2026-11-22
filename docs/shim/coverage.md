@@ -62,7 +62,7 @@ Positions are listed in the order of their numbers.
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
 | `SteamInput001` | 4 | 2 | candidate: 2 shape only: per-frame call like RunFrame |
 | `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | confirmed: 0 Init; candidate: 3 RunFrame, 6 GetConnectedControllers |
-| `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems; confirmed: 3 GetResultTimestamp, 6 GetAllItems |
+| `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle); confirmed: 3 GetResultTimestamp |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |

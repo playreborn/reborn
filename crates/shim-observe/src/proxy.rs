@@ -49,18 +49,19 @@
 //! lowest byte is 1, the first 16 bytes at the addresses `rdx` and `r8`
 //! held when the call started are logged as hex, each only if
 //! `VirtualQuery` shows them readable. Nothing beyond them is read.
-//!
-//! Step 4d (ADR 0050): at `rdx` the proxy reads 24 bytes instead of 16.
-//! If bytes 8 to 16 hold an address and bytes 16 to 20 a size of at most
-//! 4096 that make a readable range, it logs that size and the SHA-256 of
-//! the range, never its content. Only for callback numbers (bytes 4 to 8)
-//! listed in `PAYLOAD_LISTED` it also logs the first 64 bytes as hex.
+
 //!
 //! Step 4c (ADR 0043): for calls through stand-ins listed in `READS`,
 //! and only when the call is logged, the proxy also logs after the return
 //! either the text `rax` points to (same rules as argument texts) or the
 //! first 16 bytes at the address one argument register held when the call
 //! started. Calls not on the list are logged as before.
+//!
+//! Step 4d (ADR 0050): at `rdx` the proxy reads 24 bytes instead of 16.
+//! If bytes 8 to 16 hold an address and bytes 16 to 20 a size of at most
+//! 4096 that make a readable range, it logs that size and the SHA-256 of
+//! the range, never its content. Only for callback numbers (bytes 4 to 8)
+//! listed in `PAYLOAD_LISTED` it also logs the first 64 bytes as hex.
 //!
 //! Shadow mode (ADR 0046): for confirmed meanings listed in `SHADOWS`,
 //! and only when the call is logged, the proxy compares the official
@@ -122,6 +123,10 @@ const PAYLOAD_SHOWN: usize = 64;
 /// Callback numbers whose first [`PAYLOAD_SHOWN`] payload bytes are logged
 /// (ADR 0050). A number is added only with a candidate and an experiment
 /// plan in `docs/shim/meanings.md` that names it.
+///
+/// A hash of a small payload (a few bytes, such as an account ID) can be
+/// reversed by trying every value, so payload hashes, like the raw logs,
+/// never go into `docs/shim/`.
 const PAYLOAD_LISTED: &[u32] = &[];
 
 /// What is read after a listed call returns (step 4c, ADR 0043).
@@ -847,11 +852,8 @@ fn describe_callback(rax: u64, [rdx, r8]: [u64; 2]) -> Option<String> {
     }
     let header = bytes_in(rdx, CALLBACK_HEADER);
     let mut note = String::from("wrote rdx->");
-    note.push_str(
-        &header
-            .as_deref()
-            .map_or_else(|| "not readable".to_owned(), hex),
-    );
+    // Without 24 readable bytes, the 16 of step 4b as before.
+    note.push_str(&header.as_deref().map_or_else(|| hex_at(rdx), hex));
     let _ = write!(note, " r8->{}", hex_at(r8));
     if let Some(header) = header {
         let _ = write!(note, " {}", describe_payload(&header, PAYLOAD_LISTED));
@@ -1037,9 +1039,17 @@ fn bytes_in(address: u64, len: usize) -> Option<Vec<u8>> {
     if start.checked_add(len)? > end {
         return None;
     }
+    let mut bytes = Vec::with_capacity(len);
     // SAFETY: the `len` bytes lie inside a committed, readable region that
-    // `readable_end` just checked; a byte slice needs no alignment.
-    Some(unsafe { std::slice::from_raw_parts(start as *const u8, len) }.to_vec())
+    // `readable_end` just checked, and `bytes` has room for `len` bytes; no
+    // reference to the game's memory is made, so other threads writing it
+    // is no aliasing violation. As in `bytes_at`, the memory is assumed not
+    // to be freed between the check and the copy.
+    unsafe {
+        std::ptr::copy_nonoverlapping(start as *const u8, bytes.as_mut_ptr(), len);
+        bytes.set_len(len);
+    }
+    Some(bytes)
 }
 
 /// Windows' information about the memory at `address`, if it is

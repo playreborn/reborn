@@ -14,6 +14,12 @@
 //!   callback over returns 1, and the game frees it with exactly one
 //!   `Steam_FreeLastCallback` on the same `rcx` (and thread) before it
 //!   polls again.
+//! - Recorded, used as recorded: a free with nothing held. Linsips
+//!   (`observe-55108`) freed once more than it got headers, after a poll
+//!   that returned 0, and that free returned 0 (`meanings.md`, loop
+//!   iteration 9b, Linsips note). The shim then changes nothing and
+//!   returns 0; experiment 19's "no free without a header" (D) held for
+//!   its five games, not for every game.
 //! - Candidate, used as recorded: bytes 0..4 were 1 in every recorded
 //!   header, also for polls with `rcx` 2. Whether that is the user handle,
 //!   a constant 1 or the user on that pipe is not settled; the shim writes
@@ -179,8 +185,9 @@ pub(crate) fn fetch(pipe: i32) -> Fetch {
 pub(crate) enum Free {
     /// The held callback's data is released.
     Freed,
-    /// Nothing was held. Never recorded (experiment 19, D: no free without
-    /// an open header), so it has no answer.
+    /// Nothing was held; nothing changes. Recorded in Linsips
+    /// (`observe-55108`: 10 headers, 11 frees, the extra one after a poll
+    /// that returned 0; `meanings.md`, loop iteration 9b, Linsips note).
     NothingHeld,
 }
 

@@ -1775,8 +1775,8 @@ their contents, which come from `rebornd`.
 **In the shim since PR #24** (`crates/shim/src/callbacks.rs`): the delivery
 machinery, a queue per `rcx` value with the header above (bytes 0..4
 written as 1 and 20..24 as 0, as recorded), result 1 or 0, and one free
-per header. Nothing fills the queue yet, so no game gets a callback from
-the shim.
+per header (a free with nothing held returns 0, as Linsips recorded).
+Nothing fills the queue yet, so no game gets a callback from the shim.
 
 **Correction (loop iteration 10a, after a review pass):** a Linsips run
 (`observe-55108`, app 4301370) recorded after experiment 19 and outside

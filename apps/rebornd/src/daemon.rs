@@ -1679,12 +1679,17 @@ impl StatsBackend for Daemon {
         let notified = self.session_ready.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        // A sign-out between the caller's `link()` and `enable()` above
-        // notified nobody; return so the caller sees it at once.
-        if matches!(self.session.try_lock(), Ok(session) if session.is_some())
-            || self.signed_out.load(Ordering::SeqCst)
-        {
-            return;
+        // Return at once when a session exists, or when `link()` would now
+        // say SignedOut (a sign-out between the caller's `link()` and
+        // `enable()` above notified nobody). Only that exact case: while a
+        // reconnect runs or the lock is busy, `link()` says Offline, and
+        // returning then would make the caller loop without waiting.
+        let signed_out =
+            !self.reconnecting.load(Ordering::SeqCst) && self.signed_out.load(Ordering::SeqCst);
+        match self.session.try_lock() {
+            Ok(session) if session.is_some() => return,
+            Ok(_) if signed_out => return,
+            _ => {}
         }
         let _ = tokio::time::timeout(longest, notified).await;
     }

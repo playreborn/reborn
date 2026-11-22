@@ -38,7 +38,10 @@ mod secret;
 mod session;
 mod tickets;
 
-pub use achievements::{Achievement, FALLBACK_LANGUAGE, achievements_from};
+pub use achievements::{
+    Achievement, AchievementBlock, FALLBACK_LANGUAGE, StatValue, UserStats, achievements_from,
+    user_stats_from, user_stats_from_bytes,
+};
 pub use apps::{AppDetails, DepotInfo, LaunchOption, PUBLIC_BRANCH, Platform};
 pub use chat::{
     ChatEvent, ChatMessage, ChatRecording, UnreadChat, chat_event_from, history_from,

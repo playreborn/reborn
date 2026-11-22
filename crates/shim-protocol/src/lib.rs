@@ -5,11 +5,13 @@
 //! answers with [`DaemonMessage`]s; a request and its response share an
 //! `id`. The first exchange is [`Request::Hello`].
 //!
-//! Version 0.2 adds the first account-data request of ADR 0055 (stage 0):
+//! Version 0.2 adds the account-data messages of ADR 0055 (stage 0):
 //! [`Request::AppOwnership`], answered with [`Response::Ownership`] or
-//! [`Response::Unavailable`]. The other messages of ADR 0055 (stats,
-//! cloud, events) follow in later stage-0 changes under the same version,
-//! before any release.
+//! [`Response::Unavailable`], and [`Request::RequestStats`], answered with
+//! [`Response::Accepted`] and later the event [`Event::StatsReceived`]
+//! (in a [`DaemonMessage::Event`], which has no `id`). The other messages
+//! of ADR 0055 (stores, cloud) follow in later stage-0 changes under the
+//! same version, before any release.
 //!
 //! This crate holds only message types and framing (MIT OR Apache-2.0), so
 //! the shim never depends on GPL crates (AGENTS.md section 3).
@@ -58,10 +60,14 @@ pub enum Request {
         /// The app asked about.
         app_id: u32,
     },
+    /// The account's stats for the session's own app (ADR 0055; the shim
+    /// sends it for `RequestCurrentStats`). Answered with
+    /// [`Response::Accepted`] and later [`Event::StatsReceived`], or with
+    /// [`Response::Unavailable`]. Only reads; nothing is written.
+    RequestStats,
 }
 
-/// A line the daemon sends: a response to a request (events follow in
-/// later versions).
+/// A line the daemon sends: a response to a request, or an event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DaemonMessage {
@@ -72,6 +78,41 @@ pub enum DaemonMessage {
         /// The answer.
         response: Response,
     },
+    /// Something the daemon tells the shim without a request of its own,
+    /// such as the result of an accepted request (ADR 0047: events have no
+    /// `id`).
+    Event {
+        /// What happened.
+        event: Event,
+    },
+}
+
+/// What the daemon tells the shim on its own (ADR 0055). The shim, not the
+/// daemon, turns an event into callback bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Event {
+    /// Valve answered the stats request of an accepted
+    /// [`Request::RequestStats`] (`ClientGetUserStats`). Stat values and
+    /// unlock state are not sent while the readers are candidates
+    /// (ADR 0055).
+    StatsReceived {
+        /// The `EResult` Valve sent; 1 is OK.
+        result: i32,
+        /// For `GetAchievementDisplayAttribute(name, "name")`: each
+        /// achievement's display name, in English until Reborn has a
+        /// language setting (ADR 0055). Empty when `result` is not OK.
+        achievement_names: Vec<AchievementName>,
+    },
+}
+
+/// One achievement's display name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AchievementName {
+    /// The game's internal (API) name of the achievement.
+    pub name: String,
+    /// Its display name.
+    pub display_name: String,
 }
 
 /// The daemon's answer.
@@ -92,6 +133,9 @@ pub enum Response {
         /// Whether the app is owned.
         owned: bool,
     },
+    /// The request is taken; its result follows as an event (for
+    /// [`Request::RequestStats`]: [`Event::StatsReceived`]).
+    Accepted,
     /// The daemon cannot give the real answer to a request. The shim never
     /// makes one up (ADR 0055, "Honest failure").
     Unavailable {
@@ -302,6 +346,66 @@ mod tests {
             "{\"id\":9,\"response\":{\"type\":\"unavailable\",\"reason\":\"not_allowed\"}}\n"
         );
         Ok(())
+    }
+
+    #[test]
+    fn stats_messages_round_trip_as_one_line() -> Result<(), FrameError> {
+        let request = ShimMessage {
+            id: 5,
+            request: Request::RequestStats,
+        };
+        let line = encode(&request)?;
+        assert_eq!(
+            line,
+            "{\"id\":5,\"request\":{\"type\":\"request_stats\"}}\n"
+        );
+        assert_eq!(decode::<ShimMessage>(&line)?, request);
+
+        let accepted = DaemonMessage::Response {
+            id: 5,
+            response: Response::Accepted,
+        };
+        let line = encode(&accepted)?;
+        assert_eq!(line, "{\"id\":5,\"response\":{\"type\":\"accepted\"}}\n");
+        assert_eq!(decode::<DaemonMessage>(&line)?, accepted);
+
+        let received = DaemonMessage::Event {
+            event: Event::StatsReceived {
+                result: 1,
+                achievement_names: vec![AchievementName {
+                    name: "PET_1".to_owned(),
+                    display_name: "Bongo Beat 1".to_owned(),
+                }],
+            },
+        };
+        let line = encode(&received)?;
+        assert_eq!(
+            line,
+            "{\"event\":{\"type\":\"stats_received\",\"result\":1,\"achievement_names\":[{\"name\":\"PET_1\",\"display_name\":\"Bongo Beat 1\"}]}}\n"
+        );
+        assert_eq!(decode::<DaemonMessage>(&line)?, received);
+
+        let refused = DaemonMessage::Event {
+            event: Event::StatsReceived {
+                result: 15,
+                achievement_names: Vec::new(),
+            },
+        };
+        assert_eq!(decode::<DaemonMessage>(&encode(&refused)?)?, refused);
+        Ok(())
+    }
+
+    #[test]
+    fn an_event_is_not_a_response() {
+        // An event line has no `id`; a line with neither is invalid.
+        assert!(matches!(
+            decode::<DaemonMessage>(
+                "{\"event\":{\"type\":\"stats_received\",\"result\":1,\"achievement_names\":[]}}"
+            ),
+            Ok(DaemonMessage::Event { .. })
+        ));
+        assert!(decode::<DaemonMessage>("{\"response\":{\"type\":\"accepted\"}}").is_err());
+        assert!(decode::<DaemonMessage>("{\"event\":{\"type\":\"stats_stored\"}}").is_err());
     }
 
     #[test]

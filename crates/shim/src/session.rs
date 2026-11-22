@@ -66,7 +66,10 @@ fn hello() -> std::io::Result<Option<Session>> {
             log(&format!("rebornd refused the session: {reason:?}"));
             Ok(None)
         }
-        DaemonMessage::Response { .. } => Err(std::io::Error::other("unexpected answer")),
+        // No event can come before the session exists.
+        DaemonMessage::Response { .. } | DaemonMessage::Event { .. } => {
+            Err(std::io::Error::other("unexpected answer"))
+        }
     }
 }
 

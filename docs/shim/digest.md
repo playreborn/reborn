@@ -16,6 +16,14 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: ADR 0055 stage 0, stats read (parallel agent, no runs):
+  shim protocol 0.2 gains `RequestStats`, `Accepted` and the first event,
+  `StatsReceived { result, achievement_names }`; `reborn-cm` has a typed
+  `Session::user_stats` (result, `crc_stats`, raw schema, stat values,
+  unlock times), replayed against `user_stats.bin`; `rebornd` answers
+  only the run's own app, fetches once per run on the first request,
+  waits through a reconnect, backs off 1 s doubling for 5 tries, and
+  sends no event when it gives up. No writes. The shim does not ask yet.
 - 2026-11-22: loop iteration 12a: experiment 25 **mismatched** as
   scripted (Super Jigsaw is 32-bit; Pixel Puzzles' E: `rdx` 0/1 at
   `StoreStats`). VPet-Simulator matched fully and is the third recorded

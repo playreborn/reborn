@@ -52,15 +52,19 @@ Predictions, groups L012 (Fallout Shelter, find = 23, download = 29) and
 L013 (Pixel Puzzles, find = 22, upload = 30, name = 23):
 F1  The find position is called at least once; every call has a text at
     rdx and a result with non-zero upper 32 bits; at least one call has
-    non-zero upper 32 bits in r8 (under A1 not FindOrCreateLeaderboard,
-    whose second parameter is an enum).
+    non-zero upper 32 bits in r8, and at least one has low 32 bits of r8
+    outside 0..=2, the page's ELeaderboardSortMethod values (so not
+    FindOrCreateLeaderboard, whose second parameter is that enum; the low
+    32 bits need no A1).
 F2  At least one 703 payload has bytes 0..8 equal to a find result; every
     such 703 has size 16 (bytes 12..16), and they all carry one number
     (bytes 8..12).
 D1  (L012) Position 29 is called at least once; every call has non-zero
-    upper 32 bits in r8 and in its result (under A1 not
-    DownloadLeaderboardEntries or UploadLeaderboardScore, whose second
-    parameter is an enum).
+    upper 32 bits in r8 and in its result, and low 32 bits of r8 outside
+    0..=3 (ELeaderboardDataRequest) and 0..=2
+    (ELeaderboardUploadScoreMethod), so not DownloadLeaderboardEntries or
+    UploadLeaderboardScore, whose second parameter is one of those enums
+    (no A1 needed).
 D2  (L012) At least one 703 payload has bytes 0..8 equal to a position-29
     result; every such 703 has size 24 and a number other than 1101
     (UserStatsReceived_t, experiments 21 and 22) and other than F2's
@@ -70,7 +74,8 @@ U1  (L013) Position 30 is called at least once; every call's rdx equals
     (a leaderboard handle used again) and its result has non-zero upper
     32 bits.
 U2  (L013) At least one 703 payload has bytes 0..8 equal to a position-30
-    result; every such 703 has size 32 and a number other than F2's.
+    result; every such 703 has size 32, they all carry one number, and it
+    is not F2's.
 T1  (L013) Position 23 is called at least once; every call has a
     `result->"..."` note whose text equals the rdx text of a find call
     (position 22) made before it, and its rdx equals the rdx of a
@@ -110,7 +115,11 @@ GAMES = {
 COMPLETED = 703
 STATS_RECEIVED = 0x44D  # UserStatsReceived_t, experiments 21 and 22
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
-PLAN_COMMITTED = datetime(2026, 11, 22, 21, 33, 35)  # commit 8f3e6f5 on loop/plan-16a (plan, rebased onto main)
+PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
+# Enum values on the ISteamUserStats page.
+SORT_METHODS = {0, 1, 2}  # ELeaderboardSortMethod
+DATA_REQUESTS = {0, 1, 2, 3}  # ELeaderboardDataRequest
+UPLOAD_METHODS = {0, 1, 2}  # ELeaderboardUploadScoreMethod
 RESULT_TEXT = re.compile(r'^result->"(.*)"$')
 
 
@@ -190,11 +199,13 @@ def check_leaderboards(path, interface, find, second, size, name_pos, say):
     calls = [c for c in observelog.calls(path) if c.interface == interface]
     done = completions(path)
     finds = [c for c in calls if c.position == find]
+    wide = any(high(c.reg("r8")) for c in finds)
+    not_sort = any(observelog.low32(c.reg("r8")) not in SORT_METHODS for c in finds)
     ok_f1 = (bool(finds) and all("rdx" in c.texts and high(c.rax) for c in finds)
-             and any(high(c.reg("r8")) for c in finds))
+             and wide and not_sort)
     say("F1", ok_f1, f"{len(finds)} calls of {find}, all with a text and a 64-bit result: "
         f"{all('rdx' in c.texts and high(c.rax) for c in finds)}, "
-        f"one with a wide r8: {any(high(c.reg('r8')) for c in finds)}")
+        f"one with a wide r8: {wide}, one with r8 no sort method: {not_sort}")
     found = {c.rax for c in finds}
     f_done = [(num, sz) for _, h, num, sz in done if h in found]
     f_numbers = {num for num, _ in f_done}
@@ -207,8 +218,12 @@ def check_leaderboards(path, interface, find, second, size, name_pos, say):
     s_done = [(num, sz) for _, h, num, sz in done if h in handles]
     s_numbers = {num for num, _ in s_done}
     if name_pos is None:
-        ok_d1 = bool(seconds) and all(high(c.reg("r8")) and high(c.rax) for c in seconds)
-        say("D1", ok_d1, f"{len(seconds)} calls of {second}, all with a wide r8 and a 64-bit result: {ok_d1}")
+        ok_d1 = bool(seconds) and all(
+            high(c.reg("r8")) and high(c.rax)
+            and observelog.low32(c.reg("r8")) not in DATA_REQUESTS | UPLOAD_METHODS
+            for c in seconds)
+        say("D1", ok_d1, f"{len(seconds)} calls of {second}, all with a wide r8 that is no "
+            f"data request or upload method, and a 64-bit result: {ok_d1}")
         ok_d2 = (bool(s_done) and all(sz == size for _, sz in s_done) and len(s_numbers) == 1
                  and not s_numbers & ({STATS_RECEIVED} | f_numbers))
         say("D2", ok_d2, f"{len(s_done)} callbacks 703 for a {second} result, all size {size}: "
@@ -219,7 +234,8 @@ def check_leaderboards(path, interface, find, second, size, name_pos, say):
     used = [c.reg("rdx") for c in names] + [c.reg("rdx") for c in seconds]
     ok_u1 = bool(seconds) and all(used.count(c.reg("rdx")) >= 2 and high(c.rax) for c in seconds)
     say("U1", ok_u1, f"{len(seconds)} calls of {second}, handle used again and 64-bit result: {ok_u1}")
-    ok_u2 = (bool(s_done) and all(sz == size for _, sz in s_done) and not s_numbers & f_numbers)
+    ok_u2 = (bool(s_done) and all(sz == size for _, sz in s_done) and len(s_numbers) == 1
+             and not s_numbers & f_numbers)
     say("U2", ok_u2, f"{len(s_done)} callbacks 703 for a {second} result, all size {size}: "
         f"{all(sz == size for _, sz in s_done)}, other than F2's: {not s_numbers & f_numbers}")
     upload_rdx = {c.reg("rdx") for c in seconds}

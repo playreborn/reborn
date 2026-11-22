@@ -433,21 +433,17 @@
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
-    "15": [
-      "confirmed",
-      "RequestUserStats"
+    "5": [
+      "candidate",
+      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ],
     "9": [
       "confirmed",
       "StoreStats"
     ],
-    "5": [
-      "candidate",
-      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
-    ],
-    "37": [
-      "candidate",
-      "narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet)"
+    "15": [
+      "confirmed",
+      "RequestUserStats"
     ],
     "22": [
       "candidate",
@@ -460,6 +456,10 @@
     "30": [
       "candidate",
       "UploadLeaderboardScore (experiment 32)"
+    ],
+    "37": [
+      "candidate",
+      "narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet)"
     ]
   },
   "SteamInput001": {

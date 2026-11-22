@@ -4131,7 +4131,10 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
   6 with an achievement-like name as text in `rdx` (candidates in loop
   iteration 7). In both games no call of the interface before 14 except
   position 0 (confirmed `RequestCurrentStats`), and no 703 callback before
-  the first 15.
+  the first 15. One's Own Exile also calls position 10 (narrowed:
+  `StoreStats` or `ResetAllStats`, experiment 13) once, at about 88 to
+  97 s, in all three logs, on its own without input; the plan adds
+  nothing to that.
 - **Position 14, every function of the page against the recorded shape**
   (a value 16 or 29, no text argument, nothing asynchronous before it):
 
@@ -4139,6 +4142,8 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
   | --- | --- |
   | `GetNumAchievements()` | fits (N1, N2) |
   | `GetTrophySpaceRequiredBeforeInstall()` (`uint64`) | A3 only: the game takes the value as the number of names it asks for |
+  | `GetAchievementName( uint32 )` (a text) | N1: a result of 16 or 29 lies below 0x10000, so it is no text address |
+  | `GetLeaderboardName( SteamLeaderboard_t )` (a text) | N0: no leaderboard handle exists yet; also N1 (no text address) |
   | `RequestCurrentStats`, `StoreStats`, `GetUserStatsData`, `ResetAllStats`, `SetUserStatsData` (`bool`) | N1 under A1 (value at least 4) |
   | `GetNumberOfCurrentPlayers`, `RequestGlobalAchievementPercentages` and the other `SteamAPICall_t` functions | N1: upper 32 bits zero, while every recorded call handle used them (experiment 23, C); N0: no 703 for it |
   | `GetLeaderboardEntryCount`, `GetLeaderboardSortMethod`, `GetLeaderboardDisplayType`, `GetDownloadedLeaderboardEntry` (a leaderboard or entries handle first) | N0: no find or download call result exists yet; for the two enums also N1 (value above 3) |
@@ -4169,8 +4174,10 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
 - **Position 23:** a text first and a call handle back fit only the
   page's `FindLeaderboard( const char * )` and `FindOrCreateLeaderboard(
   const char *, ELeaderboardSortMethod, ELeaderboardDisplayType )`. F1
-  rules out the second under A1 (its enum in `r8` would have upper 32
-  bits zero). Every other function with a name first returns a `bool`, an
+  rules out the second without A1: in at least one call the low 32 bits
+  of `r8`, where its enum would be, are none of the page's
+  `ELeaderboardSortMethod` values (0 to 2); under A1 the non-zero upper 32
+  bits rule it out as well. Every other function with a name first returns a `bool`, an
   `int`, an `int32` or a text, not a call handle that comes back in a 703
   (F1, F2).
 - **Position 29:** a 64-bit result that comes back in a 703 with size 24
@@ -4178,8 +4185,10 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
   `DownloadLeaderboardEntriesForUsers` and `UploadLeaderboardScore`. D2
   rules out `RequestUserStats` (its call result is 1101, experiments 21
   and 22); D1 rules out `DownloadLeaderboardEntries` and
-  `UploadLeaderboardScore` under A1 (an enum second parameter, but `r8`
-  is wide). `AttachLeaderboardUGC`, `RequestGlobalStats`,
+  `UploadLeaderboardScore` without A1: their second parameter is an enum
+  (`ELeaderboardDataRequest` 0 to 3, `ELeaderboardUploadScoreMethod` 0 to
+  2), and the low 32 bits of `r8` are none of those values in every call
+  (under A1 the wide `r8` rules them out as well). `AttachLeaderboardUGC`, `RequestGlobalStats`,
   `RequestGlobalAchievementPercentages`, the two finders and
   `GetNumberOfCurrentPlayers` have at most 16 bytes. `r9` 4 is in the
   page's range for `cUsers` ("A maximum of 100 users").
@@ -4198,9 +4207,10 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
   result of a call of 30 (a leftover, by its look), each returning an
   address.
 - **Position 22:** as `…VERSION012` 23 above: `FindLeaderboard` or
-  `FindOrCreateLeaderboard`; F1 rules out the second under A1 (`r8` has
-  non-zero upper 32 bits). Coin Maker Simulator's `r8` 4 at this position
-  is also outside the page's `ELeaderboardSortMethod` values (0 to 2).
+  `FindOrCreateLeaderboard`; F1 rules out the second without A1 (the low
+  32 bits of `r8`, 0xffffffff, are no `ELeaderboardSortMethod` value, 0 to
+  2; under A1 the non-zero upper 32 bits as well). Coin Maker Simulator's
+  `r8` 4 at this position is also outside those values.
 - **Position 30:** of the page's call results only
   `LeaderboardScoreUploaded_t` can have 32 bytes (A2), so of the
   `SteamAPICall_t` functions only `UploadLeaderboardScore(
@@ -4209,13 +4219,16 @@ and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
   page's `KeepBest` value. The game uploads this score itself at start,
   without input, in both earlier runs; the experiment adds nothing (red
   line 4).
-- **Position 23:** a leaderboard handle in `rdx` and an address back fit
-  `GetLeaderboardName` (a text), `GetLeaderboardEntryCount` (`int`),
-  `GetLeaderboardSortMethod` and `GetLeaderboardDisplayType` (enums). T1
-  keeps only the text one. `GetAchievementName` with the handle's low 32
-  bits as index would get "an empty string", which the proxy's text rule
-  (2 characters or more) does not log; `GetAchievementDisplayAttribute`
-  needs a text at `rdx`.
+- **Position 23** (a leaderboard handle in `rdx`, an address back with
+  upper 32 bits zero):
+
+  | Functions (page) | Ruled out by |
+  | --- | --- |
+  | `GetLeaderboardName( SteamLeaderboard_t )` | fits (T1) |
+  | `GetLeaderboardEntryCount` (`int`), `GetLeaderboardSortMethod`, `GetLeaderboardDisplayType` (enums) | T1: a text at the result, the name of a find call |
+  | `SteamAPICall_t` functions with a leaderboard handle first: `AttachLeaderboardUGC`, `DownloadLeaderboardEntries`, `DownloadLeaderboardEntriesForUsers`, `UploadLeaderboardScore` | T1 (a text at the result); the result's upper 32 bits are zero, while every recorded call handle used them (experiment 23, C) |
+  | `GetAchievementName( uint32 )` | the handle's low 32 bits as index get "an empty string", which the proxy's text rule (2 characters or more) does not log (T1) |
+  | `GetAchievementDisplayAttribute` | needs a text at `rdx` |
 
 ### Rows looked at and not planned here
 
@@ -4295,17 +4308,20 @@ group, each decided by its own game's log:
   Puzzles: find 22, upload 30, name 23):
   - F1: the find position is called; every call has a text at `rdx` and a
     result with non-zero upper 32 bits; at least one has non-zero upper 32
-    bits in `r8`.
+    bits in `r8`, and at least one has low 32 bits of `r8` outside 0 to 2
+    (`ELeaderboardSortMethod`).
   - F2: at least one 703 has bytes 0..8 equal to a find result; all such
     703s have size 16 and one number.
   - D1 (L012): 29 is called; every call has non-zero upper 32 bits in
-    `r8` and in its result.
+    `r8` and in its result, and low 32 bits of `r8` outside 0 to 3
+    (`ELeaderboardDataRequest`) and 0 to 2
+    (`ELeaderboardUploadScoreMethod`).
   - D2 (L012): at least one 703 for a result of 29; all have size 24 and
     one number, which is neither 1101 nor F2's number.
   - U1 (L013): 30 is called; every call's `rdx` is used again (by a call
     of 23 or of 30) and its result has non-zero upper 32 bits.
-  - U2 (L013): at least one 703 for a result of 30; all have size 32 and a
-    number other than F2's.
+  - U2 (L013): at least one 703 for a result of 30; all have size 32 and
+    one number, which is not F2's.
   - T1 (L013): 23 is called; every call has a result text equal to the
     `rdx` text of a call of 22 made before it, and its `rdx` equals the
     `rdx` of a call of 30.
@@ -4314,8 +4330,8 @@ group, each decided by its own game's log:
 `GetNumAchievements` (under A1 and A3) and 15 `GetAchievementName`. N012
 matched: the same for `…VERSION012` 14 and 15. L012 matched:
 `…VERSION012` 23 `FindLeaderboard` and 29
-`DownloadLeaderboardEntriesForUsers` (both under A1 and A2). L013
-matched: `…VERSION013` 22 `FindLeaderboard` (under A1), 30
+`DownloadLeaderboardEntriesForUsers` (under A2). L013 matched:
+`…VERSION013` 22 `FindLeaderboard`, 30
 `UploadLeaderboardScore` (under A2) and 23 `GetLeaderboardName`. The
 entries in `meanings.md`, `status.json` and later shim comments carry
 these assumptions. A group that mismatches leaves its candidates as they

@@ -2724,3 +2724,38 @@ line, so the script cannot take them), A to G match in each; H
 mismatches ("not logged"), since no READS entry existed for position 3.
 The predictions were written from these logs, so they are not the test;
 only fresh runs after the plan commit are.
+
+**Result of experiment 24** (agent runs by the main session after the
+plan time 14:34:22, with the two `READS` entries for position 3 committed
+at 14:37:02 before the runs; logs recorded by `run.sh` in `starts.log`:
+`observe-15876` Gravitas, `observe-31232` Dark Deception): **match**,
+checked by the script.
+
+```text
+observe-15876.log (Gravitas, SteamClient018) A: first calls [0, 2], P=1 U=1 -> match
+observe-15876.log (Gravitas, SteamClient018) B: 1 calls of 3 (r8 [3], V=1), 1 calls of 7, 7 before 3: True -> match
+observe-15876.log (Gravitas, SteamClient018) C: Q=2, a result or SteamClient argument before position 3 returned: False -> match
+observe-15876.log (Gravitas, SteamClient018) D: 24 getter calls, 0 with other handles, 1 calls of 9 with Q -> match
+observe-15876.log (Gravitas, SteamClient018) E: 0 getter calls without the text's shape and stand-in, 0 (text, pipe) with more than one stand-in, 2 texts over both pipes, 0 of them sharing a stand-in -> match
+observe-15876.log (Gravitas, SteamClient018) F: ReleaseUser (pipe, user) [(1, 1), (2, 1)], sequences [[4, 1, 23], [4, 1, 23]] -> match
+observe-15876.log (Gravitas, SteamClient018) G: 1 calls of 34 -> match
+observe-15876.log (Gravitas, SteamClient018) H: first four bytes at rdx after position 3: Q -> match
+observe-31232.log (Dark Deception, SteamClient019) A: first calls [0, 2], P=1 U=1 -> match
+observe-31232.log (Dark Deception, SteamClient019) B: 1 calls of 3 (r8 [3], V=1), 1 calls of 7, 7 before 3: True -> match
+observe-31232.log (Dark Deception, SteamClient019) C: Q=2, a result or SteamClient argument before position 3 returned: False -> match
+observe-31232.log (Dark Deception, SteamClient019) D: 27 getter calls, 0 with other handles, 1 calls of 9 with Q -> match
+observe-31232.log (Dark Deception, SteamClient019) E: 0 getter calls without the text's shape and stand-in, 0 (text, pipe) with more than one stand-in, 2 texts over both pipes, 0 of them sharing a stand-in -> match
+observe-31232.log (Dark Deception, SteamClient019) F: ReleaseUser (pipe, user) [(1, 1), (2, 1)], sequences [[4, 1, 23], [4, 1, 23]] -> match
+observe-31232.log (Dark Deception, SteamClient019) G: 1 calls of 34 -> match
+observe-31232.log (Dark Deception, SteamClient019) H: first four bytes at rdx after position 3: Q -> match
+experiment 24: match
+```
+
+As the plan fixed beforehand, under ADR 0051, for `SteamClient018` and
+`SteamClient019`: confirmed 0 `CreateSteamPipe`, 1 `BReleaseSteamPipe`,
+2 `ConnectToGlobalUser`, 3 `CreateLocalUser`, 4 `ReleaseUser`, 5/6/26
+the per-interface getters (`GetISteamUser`, `GetISteamGameServer`,
+`GetISteamController`, by their texts), 9 `GetISteamUtils`, 12
+`GetISteamGenericInterface`, 23 `BShutdownIfAllPipesClosed`; P and Q are
+pipes (positions 9 and 1). Position 7 stays narrowed, 34 a candidate, 38
+"objects". Not in the shim yet: it has no 018/019 objects.

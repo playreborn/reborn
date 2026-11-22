@@ -6,8 +6,7 @@ saves on a computer where the official Steam client was never
 installed. Written for people, not for tools; the detailed records are
 linked at the end.
 
-**Last updated:** 2026-11-22 (after loop iteration 10a and callback
-delivery in the shim).
+**Last updated:** 2026-11-22 (after loop iteration 11a).
 
 ## In one sentence
 
@@ -19,7 +18,7 @@ but no game runs fully without Steam yet: **M4 is about 15 to 20 % done**
 
 | Area | State | Roughly |
 | --- | --- | --- |
-| Steam functions whose meaning is confirmed | 109 of the 205 positions our 20 games call | **53 %** |
+| Steam functions whose meaning is confirmed | 130 of the 205 positions our 20 games call | **63 %** |
 | Of those, answered by the shim itself | connecting to Steam, handing out the interfaces, cleaning up at exit, the app ID, the battery level | **about 40 %** of all positions |
 | Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing), and the shim has that delivery machinery (a queue per handle, handing over and freeing); no callback content is in the shim yet, so it delivers nothing to games; 3 of 15 recorded message types have a confirmed meaning ("stats received", "stats stored", "call completed") | **about 25 %** |
 | Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | some meanings known, nothing connected to `rebornd` yet | **0 %** |
@@ -65,7 +64,7 @@ first two rows are counts from [`coverage.md`](coverage.md).
 2. **Real data from Valve.** Ownership, DLC, achievements and cloud must
    come from the user's account through `rebornd`. This touches sign-in
    and the account, so the maintainer decides each step.
-3. **The other 96 positions**, mostly friends, the user's own data (such
+3. **The other 75 positions**, mostly friends, the user's own data (such
    as the Steam ID) and controllers. Many of them look the same as other
    functions on Valve's pages or involve account data, so they go slower.
 4. **A real test** on a computer (a virtual machine) where Steam was never

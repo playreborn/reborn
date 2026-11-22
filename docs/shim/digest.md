@@ -16,6 +16,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 11a (planned by a parallel agent, run by the
+  main session): experiment 24 **matched** (Gravitas, Dark Deception):
+  `SteamClient018`/`019` positions 0, 1, 2, 3 (`CreateLocalUser`, read
+  through a new `READS` entry), 4, 5, 6, 9, 12, 23, 26 confirmed; pipes and
+  users told apart for the first time. PR #27.
 - 2026-11-22: loop iteration 11a (planned by a parallel agent, no runs):
   every recorded position of `SteamClient018` (Gravitas) and
   `SteamClient019` (Dark Deception) has a candidate from the

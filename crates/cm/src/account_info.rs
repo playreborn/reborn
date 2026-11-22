@@ -236,9 +236,8 @@ mod tests {
         assert!(store.await.is_ok());
     }
 
-    /// Replay of the recorded account info (AGENTS.md section 4). Read at
-    /// run time, not with `include_bytes!`, so the crate builds before the
-    /// file exists.
+    /// Replay of the recorded account info (AGENTS.md section 4), recorded
+    /// with `reborn-cli friends --record` on the test account.
     #[test]
     fn replays_the_recorded_account_info() -> Result<(), Box<dyn std::error::Error>> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -1419,3 +1419,38 @@ seconds.
 - C: the callback comes after the first call of
   `STEAMUSERSTATS_INTERFACE_VERSION011` position 0, at most 5 seconds
   later.
+
+**Result of experiment 20** (agent runs after the plan was committed at
+12:05:59; logs recorded by `run.sh`: `observe-42504` Cave Crawlers,
+`observe-31124` Gravitas, `observe-47852` Dark Deception): **mismatch**,
+as scripted.
+
+```text
+observe-42504.log (Cave Crawlers) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-42504.log (Cave Crawlers) C: callback 265 ms after the first position-0 call -> match
+observe-31124.log (Gravitas) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-31124.log (Gravitas) C: callback 268 ms after the first position-0 call -> match
+observe-47852.log (Dark Deception) A: 1 callbacks 0x44d, size [24], app ID matches, result 1 -> match
+observe-47852.log (Dark Deception) C: callback 285 ms after the first position-0 call -> match
+B: bytes 16..24 the same in 3 logs -> MISMATCH
+experiment 20: MISMATCH
+```
+
+A and C matched (the result code was 1 in all three). B did not: the
+8 bytes at 16 to 24 differ between games. Looked at afterwards, without
+printing any value: bytes 12 to 20 are the same in all three games and
+only bytes 20 to 24 differ. That fits the user's Steam ID at 12 to 20
+(the fields packed on 4 bytes) and 4 bytes of leftover at the end, not
+the layout the plan assumed. Nothing is confirmed; 0x44d stays a
+candidate for `UserStatsReceived_t`, position 0 of
+`STEAMUSERSTATS_INTERFACE_VERSION011` a candidate for
+`RequestCurrentStats`.
+
+### Experiment 21 (planned 2026-11-22, before the runs)
+
+Experiment 20 again, with the layout its result suggested, on fresh runs
+of the same three games (they are the only `…VERSION011` games).
+
+**Predictions** (`tools/shim/experiments/021_stats_received_layout.py`):
+A and C as in experiment 20; B: bytes 12 to 20 are the same in all three
+games and their upper four bytes are not zero.

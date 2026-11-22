@@ -1135,3 +1135,30 @@ each log given as `A:<log>` or `B:<log>`):
   called once and returns true. Candidate: `Init`.
 
 The experiment matches only with three logs per part, all matching.
+
+**Result of experiment 13** (agent runs after the plan was committed at
+07:46:59; logs: `observe-42400` An Arcade Full of Cats, `observe-47612`
+One's Own Exile, `observe-28456` A Park Full of Cats, `observe-50248`
+Baldi's Basics, `observe-51752` Chronigma, `observe-2896` HoloCure):
+**match**, checked by the script.
+
+```text
+observe-42400.log A: position 0 at [47] ms, position 10 at [87929] ms -> match
+observe-47612.log A: position 0 at [46] ms, position 10 at [88220] ms -> match
+observe-28456.log A: position 0 at [46] ms, position 10 at [87758] ms -> match
+observe-50248.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-51752.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-2896.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+part A: 3 logs, match
+part B: 3 logs, match
+experiment 13: match
+```
+
+The games were closed about 88 seconds after the proxy started (the
+waits of `run.sh` add up), as in experiment 12; no verdict depends on
+that. Under ADR 0051, positions 0 and 10 of
+`STEAMUSERSTATS_INTERFACE_VERSION012` are confirmed as
+`RequestCurrentStats` and `StoreStats`, and position 0 of `SteamInput006`
+as `Init`. Not in the shim yet: neither interface has an object there, and
+an honest answer to `RequestCurrentStats` needs the stats from Valve's
+servers and the callbacks (ADR 0050).

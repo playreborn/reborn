@@ -1679,7 +1679,11 @@ impl StatsBackend for Daemon {
         let notified = self.session_ready.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        if matches!(self.session.try_lock(), Ok(session) if session.is_some()) {
+        // A sign-out between the caller's `link()` and `enable()` above
+        // notified nobody; return so the caller sees it at once.
+        if matches!(self.session.try_lock(), Ok(session) if session.is_some())
+            || self.signed_out.load(Ordering::SeqCst)
+        {
             return;
         }
         let _ = tokio::time::timeout(longest, notified).await;

@@ -54,3 +54,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0046](0046-shadow-and-answer-mode.md) | Shadow and answer mode, the first step from proxy to shim (stage 5) | Accepted |
 | [0047](0047-shim-daemon-connection.md) | How the shim talks to rebornd | Accepted |
 | [0048](0048-loading-the-shim.md) | How games find the shim when Reborn starts them | Accepted |
+| [0049](0049-agent-input-in-games.md) | Input in games during agent runs | Accepted |

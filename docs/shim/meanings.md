@@ -831,3 +831,33 @@ out; Cave Crawlers, Plant Therapy, Dark Deception):
 77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 call 1 rcx=0x1c27dc40a40 rdx=0x1 r8=0x7ffffffffffffffc r9=0x13
 77 ms ThreadId(1) STEAMAPPS_INTERFACE_VERSION008#0 return 1 rax=0x1
 ```
+
+## `SteamUtils010` positions 5 and 6: candidates `GetImageSize`, `GetImageRGBA`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamUtils>, read
+  again 2026-11-22 (it names `SteamUtils009`; candidate only for 010, as
+  for `GetAppID`).
+- **Recorded:** Please, Touch The Artwork 2, stage 3 run: four pairs, each
+  first position 5 then position 6 with the same small number in `rdx`
+  (3, 3, 11, 10). Position 5 got two stack addresses 8 bytes apart in
+  `r8` and `r9`; position 6 got a heap address in `r8` and `0x21100` =
+  135424 in `r9`; both returned 1.
+- **Fit:** the page documents a function that takes an image handle and
+  two places for width and height and reports success, and one that
+  takes the same handle, a buffer and the buffer's size and fills it
+  with the image as RGBA; the page says to size the buffer as width ×
+  height × 4. 135424 = 184 × 184 × 4.
+
+### Experiment 9 (planned 2026-11-22, before the runs)
+
+Two agent runs of Please, Touch The Artwork 2 to its first screen.
+
+**Predictions:**
+
+1. Every call of position 6 follows a call of position 5 with the same
+   `rdx` (low 32 bits), with no other position 5 or 6 call in between.
+2. The size in `r9` of every position 6 call is a multiple of 4, and a
+   quarter of it is a square number (a square image, as an avatar or an
+   icon is; a non-square image would not break the meaning, only this
+   prediction, and is noted).
+3. Both return 1 in their lowest byte.

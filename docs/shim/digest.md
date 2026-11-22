@@ -16,6 +16,32 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 13a results (PR #40): experiment 26 (VPet)
+  matched: `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12, `SteamUtils010` 13
+  and `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/19 confirmed; 18, 11, 77
+  and `SteamUser023` 12 narrowed. Experiment 27 matched:
+  `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3 narrowed to `HookScreenshots`.
+  Now 138 of 220 positions confirmed (M4 games alone: 130 of 205).
+- 2026-11-22: loop iteration 13a (parallel agent, plan only, no runs):
+  survey positions of experiment 25. Experiment 26 (VPet-Simulator, about
+  27 minutes, closed from the tray by the maintainer) for
+  `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77, `SteamUtils010` 11/13,
+  `SteamUser023` 12 and `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/18/19
+  (needs four `READS` entries, one under ADR 0056); experiment 27
+  (HoloCure, Pixel Puzzles) for `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3.
+  No candidate: `STEAMUGC_INTERFACE_VERSION020` 74; no experiment yet:
+  `SteamFriends017` 0 (ADR 0056 allows a match-only comparison, needs
+  code). VPet-Simulator and Pixel Puzzles added to `games.json` as extra
+  entries (ADR 0056): 220 positions, 130 confirmed (M4 games alone 205,
+  130).
+  survey positions of experiment 25. Experiment 26 (VPet-Simulator, at
+  least 25 minutes) for `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12/77,
+  `SteamUtils010` 11/13, `SteamUser023` 12 and
+  `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/18/19 (needs three `READS`
+  entries); experiment 27 (HoloCure, Pixel Puzzles) for
+  `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3. No candidate:
+  `STEAMUGC_INTERFACE_VERSION020` 74; no experiment: `SteamFriends017` 0.
+
 - 2026-11-22: ADR 0055 stage 0, cloud reads (parallel agent, no runs):
   shim protocol 0.2 gains `CloudFileSize`, `CloudRead`, `FileSize` and
   `FileData` (base64 without a new dependency, `None` for a missing

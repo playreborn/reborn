@@ -3082,3 +3082,541 @@ answer mode for this call is allowed: in shim mode the shim asks
 game qualifies for answer mode as a whole only when all of its
 account-data calls (position 7, cloud, stats and so on) have matched in
 shadow mode (ADR 0055 stage 2); none of those is shadowed yet.
+
+## Survey positions of experiment 25 (loop iteration 13a)
+
+Positions from the survey (S) of experiment 25 and from the M4 gaps that a
+public page can explain. No game was run for this plan; the shapes below
+come from the two experiment 25 logs (`observe-23624` VPet-Simulator,
+`observe-51312` Pixel Puzzles Ultimate) and, for
+`STEAMSCREENSHOTS_INTERFACE_VERSION003`, from HoloCure's reference run
+(`observe-11624`, `coverage.md`). The VPet log covers about three hours,
+because VPet stayed in the notification area after the close request.
+Argument registers follow the Microsoft x64 convention (`rcx` the object,
+then `rdx`, `r8`, `r9`, further arguments on the stack, not logged), as in
+experiment 7. The proxy logs the first 50 calls of each position and then
+every 10 000th, so counts of 50 are the logging limit, not the game's.
+No value that could be account data is written here: IDs, handles, sizes
+and texts only as "a text", "an address", "small"; the raw logs stay on
+the recorder's computer.
+
+ADR 0056 (accepted by the maintainer, pull request #41) changes three
+things for this plan: the proxy may read call results (`SteamUtils010`
+13), `rebornd` may compare the persona name (match or mismatch only), and
+the recordings of games outside the M4 list count in `coverage.md` and
+`gaps.md` (VPet-Simulator and Pixel Puzzles are now extra entries of
+`tools/shim/games.json`).
+
+Pages, each fetched once on 2026-11-22:
+<https://partner.steamgames.com/doc/api/ISteamUGC> (93 function entries;
+`GetAppDependencies` appears twice, once returning `bool`, once
+`SteamAPICall_t`),
+<https://partner.steamgames.com/doc/api/ISteamUtils> (38 functions),
+<https://partner.steamgames.com/doc/api/ISteamUser> (32 functions),
+<https://partner.steamgames.com/doc/api/ISteamRemoteStorage> (59
+functions), <https://partner.steamgames.com/doc/api/ISteamScreenshots>
+(9 functions) and <https://partner.steamgames.com/doc/api/ISteamFriends>
+(for position 0 only, as in loop iteration 9a). None of the pages gives
+interface versions or positions. `k_EResultOK` = 1 is from
+<https://partner.steamgames.com/doc/api/steam_api>, as in loop iteration 9.
+
+### `STEAMUGC_INTERFACE_VERSION020` (VPet-Simulator)
+
+- **Recorded** (`observe-23624`, all low 32 bits):
+  - 2: 36 calls in the first 13 s, every one with `rdx` 0, `r8` 2 and `r9`
+    the game's own app ID; results 1, 2, 3, … (each new).
+  - 4: directly after each 2, `rdx` (and `r8`, a leftover) the handle 2
+    just returned; the result a 64-bit value with upper bits set, which the
+    game then passes to `SteamUtils010` 11 and 13 (below).
+  - 5, 12, 9, 77 for handle 1 only (the other queries' items fall past the
+    logging limit): per index `r8` = 0, 1, 2, … 49 one call of 5 (`r9` a
+    stack address; the result's lowest byte 1, its upper bytes those of
+    `r9`, as when only `al` is set), then 13 calls of 12 with `r9` = 0, 1,
+    … 12 (lowest result byte 1), then 9 (`r9` a heap address, result 1),
+    then 77 with `rdx` a 32-bit number different for each index, `r8` a
+    stack address, `r9` the same heap address as 9, result 0.
+  - Nothing else of this interface is called, in particular nothing between
+    2 and 4.
+- **Every function of the page against the shapes:**
+
+  | Functions (page) | Shape on the page | Fits |
+  | --- | --- | --- |
+  | `CreateQueryAllUGCRequest` | `EUGCQuery`, `EUGCMatchingUGCType`, creator app ID, consumer app ID, page; `UGCQueryHandle_t` | 2: 0 = `k_EUGCQuery_RankedByVote`, 2 = `k_EUGCMatchingUGCType_Items_ReadyToUse`, `r9` the app ID; "up to 50 results" per page (`kNumUGCResultsPerPage`) fits an index of at most 49 |
+  | `CreateQueryUserUGCRequest` | `AccountID_t`, list, matching type, sort order, two app IDs, page; handle | not 2: its third argument (`r9`) is an `EUGCMatchingUGCType` (0 to 12 or ~0), not an app ID |
+  | `CreateQueryUGCDetailsRequest` | array of item IDs, count; handle | not 2 if U5 matches: with `r8` = 2 IDs it would give at most 2 results, but a query gives indexes above 2 (also, `rdx` 0 would be a null array and `r9` a leftover equal to the app ID in all 36 calls) |
+  | `StartItemUpdate` | app ID, item ID; `UGCUpdateHandle_t` | not 2: `rdx` is 0, not an app ID |
+  | `SendQueryUGCRequest` | query handle; `SteamAPICall_t` | 4: the only function taking a query handle and returning a call handle; the item-ID functions that also return a call handle (below) fit the shape if `rdx` were an item ID, and are told apart by the call result (T13 in experiment 26) |
+  | `GetQueryUGCResult`, `GetQueryUGCPreviewURL`, `GetQueryUGCMetadata`, `GetQueryUGCChildren` | handle, index, pointer (a size on the stack); `bool` | 5 and 9 both; which is which needs the bytes behind `r9` (H5, H9). Metadata and children are returned only when `SetReturnMetadata` / `SetReturnChildren` were called before `SendQueryUGCRequest` (page: "This must be set before you send a UGC Query handle"), and no call comes between 2 and 4 |
+  | `GetQueryUGCContentDescriptors` | handle, index, pointer, count; `uint32` | not 5: a `uint32` result would clear the upper 32 bits (the assumption of experiment 24), 5's result keeps those of `r9`; not 9 if H9 matches (it writes descriptor IDs, not text) |
+  | `GetQueryUGCStatistic` | handle, index, `EItemStatistic`, `uint64 *` (stack); `bool` | 12: `r9` runs over exactly the 13 values of `EItemStatistic` (0 to 12 on the page), all true |
+  | `GetQueryUGCTag`, `GetQueryUGCTagDisplayName`, `GetQueryUGCKeyValueTag`, `GetQueryUGCAdditionalPreview`, `GetSupportedGameVersionData` | handle, index, sub-index, …; `bool` | 12 by shape; ruled out by U12 in experiment 26: every fully logged item gets exactly the 13 calls 0 to 12, all true, which would need exactly 13 tags (or previews, versions) for every item; their counts (`GetQueryUGCNumTags`, `GetQueryUGCNumKeyValueTags`, `GetQueryUGCNumAdditionalPreviews`, `GetNumSupportedGameVersions`) are never asked for |
+  | `GetQueryUGCNumTags`, `GetQueryUGCNumAdditionalPreviews`, `GetQueryUGCNumKeyValueTags`, `GetNumSupportedGameVersions` | handle, index; `uint32` | none: 5, 9 and 12 have a third argument that changes or is a pointer |
+  | the query setters `AddExcludedTag`, `AddRequiredKeyValueTag`, `AddRequiredTag`, `AddRequiredTagGroup`, `SetAllowCachedResponse`, `SetAdminQuery`, `SetCloudFileNameFilter`, `SetLanguage`, `SetMatchAnyTag`, `SetRankedByTrendDays`, `SetReturnAdditionalPreviews`, `SetReturnChildren`, `SetReturnKeyValueTags`, `SetReturnLongDescription`, `SetReturnMetadata`, `SetReturnOnlyIDs`, `SetReturnPlaytimeStats`, `SetReturnTotalOnly`, `SetSearchText`, and `ReleaseQueryUGCRequest` | query handle and one value or none; `bool` | none: no call between 2 and 4; 5, 9 and 12 take an index and a third argument |
+  | the update functions `AddItemKeyValueTag`, `AddItemPreviewFile`, `AddItemPreviewVideo`, `RemoveItemKeyValueTags`, `RemoveItemPreview`, `AddContentDescriptor`, `RemoveContentDescriptor`, `SetRequiredGameVersions`, `SetItemContent`, `SetItemDescription`, `SetItemMetadata`, `SetItemPreview`, `SetItemTags`, `SetItemTitle`, `SetItemUpdateLanguage`, `SetItemVisibility`, `UpdateItemPreviewFile`, `UpdateItemPreviewVideo`, `GetItemUpdateProgress`, `SubmitItemUpdate` | an update handle from `StartItemUpdate` first | none: no update handle is created |
+  | `AddAppDependency`, `AddDependency`, `DeleteItem`, `DownloadItem`, `GetAppDependencies` (both), `GetItemDownloadInfo`, `GetItemInstallInfo`, `GetItemState`, `GetUserItemVote`, `RemoveAppDependency`, `RemoveDependency`, `RequestUGCDetails`, `SetUserItemVote`, `SubscribeItem`, `UnsubscribeItem`, `MarkDownloadedItemAsUnused` | a `PublishedFileId_t` first | 77, if H5 shows that its `rdx` is the item ID of the `SteamUGCDetails_t`: result 0 fits `GetItemInstallInfo` (false: "The workshop item is not installed"; its `char *` in `r9` fits the buffer 9 also writes), `GetItemDownloadInfo` (false), `GetItemState` (0, `r8`/`r9` leftovers), `DownloadItem`, `MarkDownloadedItemAsUnused` and the `bool` `GetAppDependencies` (false), and the call-handle functions only if 0 is `k_uAPICallInvalid` (the page names the constant, not its value) |
+  | `AddItemToFavorites`, `RemoveItemFromFavorites`, `CreateItem` | an app ID first | none (`rdx` of 77 differs per item) |
+  | `SetItemsDisabledLocally`, `SetSubscriptionsLoadOrder`, `StartPlaytimeTracking`, `StopPlaytimeTracking`, `GetSubscribedItems`, `GetDownloadedItems` | an array first | none |
+  | `GetNumSubscribedItems`, `GetNumDownloadedItems`, `StopPlaytimeTrackingForAllItems`, `SuspendDownloads`, `ShowWorkshopEULA`, `GetWorkshopEULAStatus`, `BInitWorkshopForGameServer` | one simple argument or none | none of VPet's positions; Pixel Puzzles' 74, below |
+
+- **Candidates:** 2 `CreateQueryAllUGCRequest`, 4 `SendQueryUGCRequest`,
+  5 and 9 `GetQueryUGCResult` and `GetQueryUGCPreviewURL` (or metadata or
+  children), 12 `GetQueryUGCStatistic`, 77 a function taking a
+  `PublishedFileId_t` that returned false or 0.
+
+### `STEAMUGC_INTERFACE_VERSION020` position 74 (Pixel Puzzles)
+
+One call 68 ms after start, directly after the interface was asked for:
+`rdx` 1, `r8` and `r9` values that are not addresses, result 0. Of the
+page's functions it fits `GetNumSubscribedItems(true)` (0 items),
+`SuspendDownloads(true)` (no result; a leftover 0), `GetNumDownloadedItems`
+(0), `ShowWorkshopEULA` (false), `StopPlaytimeTrackingForAllItems` and
+`GetWorkshopEULAStatus` (if 0 is the invalid call handle), and every
+function in the table above that takes a handle or item ID and returns
+false for 1, which no call created. No candidate stands out, and the call
+is the game's only one of this interface, so nothing later in the log
+tells them apart. **No candidate, no experiment.** The number of
+subscribed items is account data, so no read is planned either.
+
+### `SteamUtils010` positions 11 and 13 (VPet-Simulator)
+
+- **Recorded:** 11 with `rdx` a call handle returned by
+  `STEAMUGC_INTERFACE_VERSION020` 4, `r8` a stack address, `r9` changing
+  (20 different values in 50 calls); results 0, then 1. Directly after the
+  11 that returned 1, one call of 13 with the same call handle, `r8` a heap
+  address, `r9` the same value in all 36 calls; result 1. No 11 with that
+  handle follows.
+- **Every function of the page:** three take a `SteamAPICall_t`:
+  `IsAPICallCompleted(handle, bool *pbFailed)` (`bool`, "true if the API
+  Call is valid and has completed"), `GetAPICallResult(handle, void
+  *pCallback, int cubCallback, int iCallbackExpected, bool *pbFailed)`
+  (`bool`; "it copies the callback into pCallback") and
+  `GetAPICallFailureReason(handle)` (`ESteamAPICallFailure`: -1 none, 0
+  Steam gone, 1 network failure, 2 invalid handle, 3 mismatched callback).
+  The other 35 (`BOverlayNeedsPresent`, `CheckFileSignature`,
+  `FilterText`, `GetAppID`, `GetConnectedUniverse`, `GetCSERIPPort`,
+  `GetCurrentBatteryPower`, `GetEnteredGamepadTextInput`,
+  `GetEnteredGamepadTextLength`, `GetImageRGBA`, `GetImageSize`,
+  `GetIPCCallCount`, `GetIPCountry`, `GetSecondsSinceAppActive`,
+  `GetSecondsSinceComputerActive`, `GetServerRealTime`,
+  `GetSteamHardwareDefaultConfig`, `GetSteamUILanguage`, `InitFilterText`,
+  `IsOverlayEnabled`, `IsRunningOnSteamHardware`, `IsRunningUnderProton`,
+  `IsSteamChinaLauncher`, `IsSteamInBigPictureMode`, `IsSteamRunningInVR`,
+  `IsSteamRunningOnSteamDeck`, `IsVRHeadsetStreamingEnabled`,
+  `SetGameLauncherMode`, `SetOverlayNotificationInset`,
+  `SetOverlayNotificationPosition`, `SetVRHeadsetStreamingEnabled`,
+  `SetWarningMessageHook`, `ShowGamepadTextInput`,
+  `ShowFloatingGamepadTextInput`, `StartVRDashboard`) take no call handle;
+  positions 5, 6, 9 and 14 are already confirmed as four of them.
+- **Fits:** 11 `IsAPICallCompleted` (polled until true), 13
+  `GetAPICallResult` (once, after completion, with one size for one call
+  result type). Swapped, `GetAPICallResult` would get a different
+  `cubCallback` for the same call result type in nearly every call.
+- **Residual judgement (for the review):** the 35 functions without a call
+  handle are ruled out only because `rdx` is exactly the call handle the
+  game got a moment before, which makes it an argument, not a leftover.
+  `GetAPICallFailureReason` for 11 is ruled out only by the sequence (0,
+  0, 1 as "Steam gone, Steam gone, network failure" followed by a
+  successful fetch is not credible), not by a value. So 11 can only be
+  **narrowed**. 13 is decided by reading the call result (T13; ADR 0056
+  allows the read): only `GetAPICallResult` copies it.
+
+### `SteamUser023` position 12 (VPet-Simulator)
+
+- **Recorded:** once, 90 ms after start; `rdx` a stack address, `r8` a
+  32-bit value above 0x10000000, `r9` a heap address; the result a number
+  from 11025 to 48000 (not written here, as in experiment 18), equal to
+  the value `SteamUser020` position 12 returned in Cave Crawlers' run of
+  experiment 18.
+- **Every function of the page, by shape** (the list of experiment 18,
+  re-read for version 023): the `bool` functions (`BIsBehindNAT`,
+  `BIsPhoneIdentifying`, `BIsPhoneRequiringVerification`,
+  `BIsPhoneVerified`, `BIsTwoFactorEnabled`, `BLoggedOn`,
+  `BSetDurationControlOnlineState`, `GetEncryptedAppTicket`,
+  `GetUserDataFolder`) are ruled out by the value (not 0 or 1);
+  `GetHSteamUser` by comparing with the user handle; `GetGameBadgeLevel`
+  by the page's limits (5 and 1); `GetSteamID` by the upper 32 bits being
+  zero and the range; the call-handle functions (`GetDurationControl`,
+  `RequestEncryptedAppTicket`, `RequestStoreAuthURL`) because the call
+  handles in this same log have upper bits set. `GetVoiceOptimalSampleRate`
+  ("the native sample rate of the Steam voice decoder"; `DecompressVoice`:
+  "The decoder supports any sample rate from 11025 to 48000") fits.
+- **Residual judgement (for the review):** as in experiment 18 for
+  `GetPlayerSteamLevel`, the enum results (`BeginAuthSession`,
+  `DecompressVoice`, `GetAvailableVoice`, `GetVoice`,
+  `UserHasLicenseForApp`), `InitiateGameConnection` and the functions
+  without a result (`AdvertiseGame`, `CancelAuthTicket`,
+  `EndAuthSession`, `StartVoiceRecording`, `StopVoiceRecording`,
+  `TerminateGameConnection`, `TrackAppUsageEvent`). New for 023, because
+  `rdx` is a valid address here: `GetAuthSessionTicket(pTicket,
+  cbMaxTicket, pcbTicket, …)` and `GetAuthTicketForWebApi` return an
+  `HAuthTicket`. They are ruled out only because a ticket handle equal to
+  the decoder rate another game got is not credible, and because `r8`
+  would be a ticket buffer of more than 256 MB (the page: "Typically a
+  buffer size of 1024 will be sufficient"). Nothing is read: a read near a
+  ticket function is outside ADR 0043. So a match records 12 as
+  **narrowed**, like 020.
+
+### `STEAMREMOTESTORAGE_INTERFACE_VERSION016` positions 0, 18 and 19 (VPet-Simulator)
+
+- **Recorded:** every 600 s (the first time 612 s after start), on a new
+  thread each time: 18 (no argument used; result N), then for i = 0 … N-1
+  one call of 19 (`rdx` = i, `r8` a stack address, `r9` small; the result
+  an address), with 18 called again before each 19 and once more at the
+  end, then one call of 0 (`rdx` a text, a different one in each of the 19
+  calls, `r8` a heap address, `r9` a size of about 4 KB; result 1). N was
+  0 before the first 0 call and grew by one after each, as far as the log
+  shows (the logging limit cuts 18 and 19 after the ninth sequence). These
+  are the game's own saves through the official client, like the stats
+  stores of experiment 25.
+- **Every function of the page against the shapes:**
+
+  | Functions (page) | Shape on the page | Fits |
+  | --- | --- | --- |
+  | `FileWrite` | file, data, `int32` size; `bool` ("Creates a new file, writes the bytes to the file") | 0 |
+  | `FileWriteAsync` | file, data, `uint32` size; `SteamAPICall_t` | 0 by its arguments; ruled out under an assumption that experiment 26 checks in the same log: this client's call handles have non-zero upper 32 bits (U4), while 0 returns 1 with upper bits zero (R0) |
+  | `FileRead` | file, buffer, size; `int32` bytes read | 0 by its arguments; ruled out by R18 and H19 (no new file) and by the result 1 with a size of about 4 KB |
+  | `FileReadAsync` | file, offset, size; call handle | not 0: `r8` is an address, not an offset |
+  | `FileDelete`, `FileExists`, `FileForget`, `FilePersisted`, `GetFileSize`, `GetFileTimestamp`, `GetSyncPlatforms`, `FileShare`, `FileWriteStreamOpen` | a file name only | 0 by the text; ruled out by R18 and H19 (none creates a file of size `r9`) |
+  | `SetSyncPlatforms` | file, `ERemoteStoragePlatform`; `bool` | 0 by the text; ruled out by R18 and H19 |
+  | `PublishWorkshopFile`, `PublishVideo`, `UGCDownloadToLocation` | two texts, an enum or a handle first | not 0: `r8` is not a text, or `rdx` is a text where they take an enum or handle |
+  | `GetFileCount` | none; `int32` ("Used for enumeration with `GetFileNameAndSize`") | 18 |
+  | `GetCachedUGCCount`, `GetLocalFileChangeCount` | none; `int32` | 18 by shape; not ruled out by any prediction, only by judgement: the page's example bounds the `GetFileNameAndSize` loop with `GetFileCount`, and local file changes are changes Steam made ("have already been made to local files"), not the game's writes; so 18 can only be narrowed |
+  | `BeginFileWriteBatch`, `EndFileWriteBatch`, `IsCloudEnabledForAccount`, `IsCloudEnabledForApp`, `GetQuota` | none or two pointers; `bool` | not 18: results above 1 |
+  | `GetFileNameAndSize` | `int` index, `int32 *` size; `const char *` | 19 |
+  | `GetLocalFileChange` | index, two enum pointers; `const char *` | not 19: its third argument is a pointer and `r9` was small in every call; and H19 (it writes an enum, not a size) |
+  | `GetCachedUGCHandle` | `int32`; `UGCHandle_t` | 19 by its first argument; ruled out by H19 (it writes nothing at `r8`) |
+  | `SetCloudEnabledForApp`, `FileWriteStreamCancel`, `FileWriteStreamClose`, `FileWriteStreamWriteChunk`, `FileReadAsyncComplete`, `GetUGCDetails`, `GetUGCDownloadProgress`, `UGCDownload`, `UGCRead`, `CommitPublishedFileUpdate`, `CreatePublishedFileUpdateRequest`, `DeletePublishedFile`, `EnumeratePublishedFilesByUserAction`, `EnumeratePublishedWorkshopFiles`, `EnumerateUserPublishedFiles`, `EnumerateUserSharedWorkshopFiles`, `EnumerateUserSubscribedFiles`, `GetPublishedFileDetails`, `GetPublishedItemVoteDetails`, `GetUserPublishedItemVoteDetails`, `SetUserPublishedFileAction`, `SubscribePublishedFile`, `UnsubscribePublishedFile`, `UpdatePublishedFileDescription`, `UpdatePublishedFileFile`, `UpdatePublishedFilePreviewFile`, `UpdatePublishedFileSetChangeDescription`, `UpdatePublishedFileTags`, `UpdatePublishedFileTitle`, `UpdatePublishedFileVisibility`, `UpdateUserPublishedItemVote` | a bool, a stream, UGC or published-file handle, an enum, a start index or a Steam ID first | none: no such handle was handed out, 0's `rdx` is a text, and 18 and 19 are explained above |
+
+- **Candidates:** 0 `FileWrite`, 18 `GetFileCount`, 19
+  `GetFileNameAndSize`.
+
+### `STEAMSCREENSHOTS_INTERFACE_VERSION003` position 3 (HoloCure, Pixel Puzzles)
+
+- **Recorded:** once, at start (73 ms in HoloCure's reference run, 68 ms in
+  Pixel Puzzles), directly after the interface was asked for; `rdx` with
+  lowest byte 1, `r8` and `r9` not addresses; the result an address in a
+  program module (lowest byte neither 0 nor 1, upper bits set). No other
+  position of the interface is called.
+- **Every function of the page:** `IsScreenshotsHooked`, `SetLocation`,
+  `TagPublishedFile`, `TagUser` return `bool` (ruled out: the lowest
+  result byte is not 0 or 1); `AddScreenshotToLibrary`,
+  `AddVRScreenshotToLibrary`, `WriteScreenshot` return a `ScreenshotHandle`
+  (ruled out by the upper 32 bits, under the assumption of experiment 24
+  on 32-bit results; their first argument would also be a pointer, which
+  `rdx` is not); `HookScreenshots(bool bHook)` and `TriggerScreenshot()`
+  return nothing, so the result is a leftover. `HookScreenshots` fits
+  `rdx` (true: "the ScreenshotRequested_t callback will be sent if the
+  user presses the hotkey"); `TriggerScreenshot` ignores `rdx` and
+  "Triggers a ScreenshotReady_t callback" (not hooked: "when the screenshot
+  has been saved and added to the library").
+- **Candidate:** `HookScreenshots` (true) or `TriggerScreenshot`.
+- **Residual judgement (for the review):** the page gives no callback
+  numbers, so `TriggerScreenshot` can only be argued against by the absence
+  of a callback number that games without this interface never get (D
+  below), assuming the screenshot callback would arrive within 10 s and has
+  a number of its own. That is why a match records **narrowed**, not
+  confirmed.
+
+### `SteamFriends017` position 0 (VPet-Simulator)
+
+Four calls in VPet, no argument used as a text, the result a heap address
+(four different ones), three of them directly before or after
+`SetRichPresence` (43). This fits both candidates of loop iteration 9a
+(`GetPersonaName`, `ClearRichPresence`) and tells them apart no better
+than the five reference games: the result text would, but for
+`GetPersonaName` it is the account's persona name, which ADR 0043 keeps
+out of `READS`. ADR 0056 now lets `rebornd` compare the persona name in a
+shadow session and log only match or mismatch; that needs a new shadow
+entry in the proxy and in `rebornd` (code in `crates/`), so it is left to
+a later plan. **No experiment here.**
+
+### Experiment 26 (planned 2026-11-22, before the runs)
+
+**Needs READS** (`crates/shim-observe`; added by the main session before
+the run, not by this plan's branch):
+
+- `("STEAMUGC_INTERFACE_VERSION020", 5, Read::OutputBytes("r9"))` (ADR
+  0053): per the page the candidates write a `SteamUGCDetails_t` (its first
+  fields: item ID, `EResult`, file type; the owner's Steam ID comes far
+  behind, after the title and description arrays), a preview URL,
+  developer metadata or child item IDs. Public Workshop data; no candidate
+  hands back a ticket, token, password or account identifier.
+- `("STEAMUGC_INTERFACE_VERSION020", 9, Read::OutputBytes("r9"))` (ADR
+  0053): the same candidates, the same reason.
+- `("STEAMREMOTESTORAGE_INTERFACE_VERSION016", 19, Read::OutputBytes("r8"))`
+  (ADR 0053): the candidates write a file size (`GetFileNameAndSize`), an
+  enum (`GetLocalFileChange`) or nothing (`GetCachedUGCHandle`). No account
+  data.
+- `("SteamUtils010", 13, Read::OutputBytes("r8"))` (ADR 0056 decision 1:
+  the proxy may read call results): the first 16 bytes of the call result
+  `GetAPICallResult` copies. In VPet that is a `SteamUGCQueryCompleted_t`
+  (query handle, `EResult`, result count). Other games' call results at
+  this position may name a user; as ADR 0056 says, such values never go
+  into `docs/shim/`, only match or mismatch.
+
+The raw logs, with the Workshop item IDs, preview URLs and save file
+names they hold, stay on the recorder's computer.
+
+**Run:** VPet-Simulator (1920960) with `tools/shim/run.sh 1920960`, after
+the four READS entries are in the proxy.
+
+- The official client shows its launch-options dialog first; the main
+  session chooses "VPet spielen" there, as in experiment 25 (ADR 0049's
+  clause for the Play button of a game the test account owns).
+- No input in the game.
+- VPet saves every 600 s (the first time at about 612 s in experiment
+  25), and R18 and H19 need two complete save sequences, so the game runs
+  about 27 minutes (two saves, at about 10 and 20 minutes, plus margin).
+  Then the main session asks the maintainer to close VPet from the
+  notification area (a close request leaves it running there; no forced
+  kill, ADR 0044), and runs the script after it exited.
+- Only calls up to 1 800 000 ms (30 minutes) after the proxy loaded are
+  evidence; the script leaves later ones out, so a late close does not
+  change the result.
+- The saves are the game's own (`FileWrite` through the official client),
+  as in experiment 25; nothing is written on Reborn's initiative.
+
+**Risk, accepted beforehand:** two fully logged save sequences may not
+happen:
+
+- the test account's VPet cloud already holds the files of experiment 25
+  (about 20), so N starts near 20, and two sequences take about 2N + 3
+  logged calls of 18 out of the 50 the proxy logs; with N above 23 the
+  second sequence falls past the logging limit;
+- VPet may enumerate its cloud files at start (a sequence before the first
+  save, which then has a different shape), or rotate its backups (delete
+  old saves, so N does not grow by one); the experiment 25 log shows
+  neither, but it started with no cloud files.
+
+In each of these cases R18 or H19 mismatch, and 0, 18 and 19 stay
+candidates. The outcome is recorded as it is; the logging limit is not
+raised and the run is not repeated with other settings for this plan.
+
+**Predictions** (`tools/shim/experiments/026_vpet_workshop_cloud.py`, one
+log; U = `STEAMUGC_INTERFACE_VERSION020`, T = `SteamUtils010`, S =
+`SteamUser023`, R = `STEAMREMOTESTORAGE_INTERFACE_VERSION016`; only calls
+up to 1 800 000 ms, and of those only up to the 50th of each position):
+
+- U2: U 2 is called; every call has `rdx` in 0..21 (`EUGCQuery`), `r8` in
+  0..12 (`EUGCMatchingUGCType`), the low 32 bits of `r9` the game's app ID,
+  and a new, non-zero result with upper 32 bits zero.
+- U4: every U 4 passes the result h of the latest U 2 before it, with no
+  other U call in between; every result has non-zero upper 32 bits; no U
+  call other than this one U 4 passes h before the first U 5 with h.
+- T: for every call handle A from U 4 (up to the logging limit of T 11 and
+  T 13): T 11 and T 13 with A come after that U 4, T 13 exactly once,
+  after a T 11 with A that returned 1, and no T 11 with A after it; T 11
+  results are 0 or 1, T 13 results 1; T 13 has one `r9`, at least 16, T 11
+  at least two different ones.
+- T13: after every checked T 13, at `r8`: bytes 0..8 are the handle h the
+  U 4 that returned A was given (`m_handle`), bytes 8..12 are 1
+  (`m_eResult`), bytes 12..16 (`m_unNumResultsReturned`) are at most 50 and
+  at least the number of indexes U 5 is called with for h; in at least one
+  call result they are above 16.
+- U5: every U 5 and U 9 passes a U 2 handle whose query a checked T 13
+  already fetched, and an index running 0, 1, 2, … per handle, at most 49;
+  lowest result byte 1. For at least one handle the largest U 5 index is
+  greater than `r8` of the U 2 that returned it.
+- H5: after every U 5, bytes 8..12 at `r9` are 1 (`m_eResult`) and bytes
+  0..8 (`m_nPublishedFileId`) equal `rdx` of the next U 77 for the same
+  item; at least one such pair.
+- H9: after every U 9, bytes 0..4 at `r9` are the text `http`.
+- U12: every U 12 passes a U 2 handle, an index and a value in 0..12 in
+  `r9`, lowest result byte 1; every fully logged item (all groups of calls
+  per handle and index, except a last one that holds the 50th logged call)
+  has exactly the 13 calls with `r9` 0, 1, … 12 in order; at least one such
+  item.
+- U77: every U 77 returns a lowest byte 0 and has the `r9` of the latest
+  U 9.
+- S12: S 12 is called once; the result is from 11025 to 48000 with upper
+  32 bits zero, not the user handle, and equal to `SteamUser020` position
+  12's result in `observe-52912.log` (Cave Crawlers, experiment 18; read
+  from the log folder as a reference; a missing file is a mismatch). No
+  value is printed.
+- R0: R 0 is called at least twice; each call has a text in `rdx` (a new
+  one each time; compared, never printed), `r8` an address, 0 < `r9` <
+  0x80000000, and a result with lowest byte 1 and upper 32 bits zero.
+- R18: a save sequence is the R 18 and R 19 calls since the previous R 0
+  (or the start) up to an R 0; it is fully logged if that R 0 is logged
+  and comes before the 50th logged call of R 18 and of R 19. **Every**
+  fully logged sequence has at least one R 18, the same N from all of
+  them, and R 19 with 0 … N-1 in order; one that does not is a mismatch.
+  At least two fully logged sequences follow each other, and N grows by
+  one from each to the next.
+- H19: for every such pair, one R 19 of the later sequence leaves the size
+  `r9` of the R 0 that ended the earlier sequence in the first four bytes
+  at `r8`; every R 19 of those sequences was read.
+
+The script prints match or MISMATCH per prediction and "experiment 26:
+match" only when all of them match. It rejects a log given twice, maps
+the log to its game through `starts.log` (`observelog.app_of`), needs the
+VPet log and rejects a log whose start (`observelog.start_of`) is earlier
+than the plan commit (`PLAN_COMMITTED`, the local committer time of the
+final plan commit on `loop/plan-13a`, set in a follow-up commit:
+2026-11-22 19:14:46, commit `212f413` (`a4fb521` before the rebase, the
+same committer time); the first plan time 18:57:22,
+commit `80afe13`, is superseded). It prints only positions, counts and
+match/MISMATCH.
+
+**What a match confirms** (fixed now, before the run), for these
+interface versions:
+
+- U2 and U5: 2 `CreateQueryAllUGCRequest`. `CreateQueryUserUGCRequest`
+  and `StartItemUpdate` are ruled out by the arguments (table),
+  `CreateQueryUGCDetailsRequest` by U5 (more results than the 2 IDs it
+  would have been given).
+- U4, T, T13, U5 and H5: 4 `SendQueryUGCRequest`. The functions with the
+  same shape (one item ID in, a call handle out: `SubscribeItem`,
+  `UnsubscribeItem`, `DeleteItem`, `GetUserItemVote`, `RequestUGCDetails`,
+  the call-handle `GetAppDependencies`; app ID and item ID in:
+  `AddItemToFavorites`, `RemoveItemFromFavorites`) are ruled out because
+  their call results, per the structs on the pages, do not start with the
+  handle given, `k_EResultOK` and a count from 17 to 50
+  (`RemoteStorageSubscribePublishedFileResult_t`,
+  `RemoteStorageUnsubscribePublishedFileResult_t`, `DeleteItemResult_t` and
+  `GetAppDependenciesResult_t` start with `EResult`; `GetUserItemVoteResult_t`
+  and `UserFavoriteItemsListChanged_t` with an item ID, `EResult` and
+  `bool` fields; `SteamUGCRequestUGCDetailsResult_t` with a
+  `SteamUGCDetails_t`, whose bytes 12..16 are a file type of at most 16,
+  `k_EWorkshopFileTypeMax`), and because nothing but this call is done with
+  the handle before its 50 items are read (U4, U5).
+- U5 and H5: 5 `GetQueryUGCResult` (it writes the item ID and `EResult` at
+  the start of a `SteamUGCDetails_t`; the text and ID functions do not).
+- U5, H5 and H9: 9 `GetQueryUGCPreviewURL` (it writes text starting with
+  `http`; `GetQueryUGCResult` is 5; children are item IDs, not text; and
+  metadata was not requested before the query was sent, which the page
+  requires).
+- U12: 12 `GetQueryUGCStatistic`: every fully logged item has exactly the
+  13 `EItemStatistic` values, all true; the tag, key-value, preview and
+  game-version functions would need exactly 13 entries for every item.
+- T and T13: 13 `GetAPICallResult` (the only function of the page that
+  copies the call result to the address it gets).
+- R0, R18 and H19: 0 `FileWrite`, 19 `GetFileNameAndSize`. For 0, the file
+  name functions, `SetSyncPlatforms` and `FileRead` are ruled out by R18
+  and H19 (a new file of size `r9` appears); `FileWriteAsync` under an
+  assumption checked in the same log: this client's call handles have
+  non-zero upper 32 bits (U4 checks every `SendQueryUGCRequest` result),
+  while R 0 returns 1 with upper bits zero (R0).
+
+**What stays a candidate**, even with a match:
+
+- 18: "narrowed: `GetFileCount` (experiment 26)". `GetCachedUGCCount` and
+  `GetLocalFileChangeCount` have the same shape, and no prediction rules
+  them out; only the page's example loop and the meaning of "local file
+  changes" speak against them.
+- 11: "narrowed: `IsAPICallCompleted` (experiment 26)" (residual judgement
+  above: `GetAPICallFailureReason` is ruled out only by the sequence).
+- 77: "narrowed: `GetItemInstallInfo`, `GetItemDownloadInfo`,
+  `GetItemState` or another item-ID function returning false or 0
+  (experiment 26)".
+- S12: "narrowed: `GetVoiceOptimalSampleRate` (experiment 26)", as for
+  `SteamUser020`.
+- A prediction that mismatches leaves the positions it is named for above
+  as candidates; the others are decided as listed.
+
+### Experiment 27 (planned 2026-11-22, before the runs)
+
+No `READS` or `PAYLOAD_LISTED` entry needed.
+
+**Runs:** HoloCure - Save the Fans! (2420510) and Pixel Puzzles Ultimate
+Jigsaw Puzzles (351030), one fresh log each with `tools/shim/run.sh`, each
+to its first screen and a close request, no input. Pixel Puzzles did not
+exit on the close request in experiment 25; the main session then asks the
+maintainer to close it (no forced kill, ADR 0044).
+
+**Predictions** (`tools/shim/experiments/027_screenshots_hook.py`, per
+game, X = `STEAMSCREENSHOTS_INTERFACE_VERSION003`):
+
+- A: X 3 is called exactly once; no other X position is called.
+- B: its `rdx` has lowest byte 1.
+- C: its result has a lowest byte other than 0 and 1 and non-zero upper 32
+  bits.
+- D: every callback number of a `Steam_BGetCallback` `wrote` line from the
+  time of the call line of X 3 to 10 000 ms after it also occurs in a
+  reference log of `tools/shim/games.json` (the M4 games and the extra
+  entries) whose game never calls X (numbers outside that set are printed;
+  callback numbers are not account data).
+
+The script rejects a log given twice, maps each log to its game through
+`starts.log`, needs one log of each game and rejects a log whose start is
+earlier than `PLAN_COMMITTED` (the same time as for experiment 26).
+"experiment 27: match" only when both games match A to D.
+
+**What a match confirms:** nothing. A full match records X 3 as
+**"narrowed: `HookScreenshots` (experiment 27)"**: A to C rule out the
+seven functions with a result, D speaks against `TriggerScreenshot` only
+under the residual judgement above. Any mismatch, of D or of A to C,
+leaves the candidate unchanged: "`HookScreenshots` or
+`TriggerScreenshot`". A new callback number in D is not taken as evidence
+for `TriggerScreenshot`, because its number is not known from the page.
+
+**Already seen** (experiments 26 and 27): run with the plan time not yet
+set, on the experiment 25 logs (`observe-23624`, `observe-51312`).
+Experiment 26: U2, U4, T, U5, U12, U77, S12, R0 and R18 match (two save
+sequences fall within the first 30 minutes there); T13, H5, H9 and H19
+mismatch (not logged: no `READS` entry yet). Experiment 27: A to D match
+for Pixel Puzzles; HoloCure's reference run has no `starts.log` line, so
+the script cannot take it. The predictions were written from these logs,
+so they are not the test; only fresh runs after the plan commit are.
+
+**Result of experiment 27** (agent runs by the main session after the
+plan time 19:14:46; logs recorded by `run.sh`: `observe-63496` HoloCure,
+`observe-55924` Pixel Puzzles Ultimate; Pixel Puzzles did not exit on the
+close request and was closed by the maintainer with Alt+F4, no forced
+kill): **match**, checked by the script.
+
+```text
+baseline: 20 reference logs without STEAMSCREENSHOTS_INTERFACE_VERSION003, 18 callback numbers
+observe-63496.log (HoloCure - Save the Fans!) A: 1 calls of position 3, other positions [] -> match
+observe-63496.log (HoloCure - Save the Fans!) B: lowest rdx byte 1 -> match
+observe-63496.log (HoloCure - Save the Fans!) C: result neither a bool nor a 32-bit value -> match
+observe-63496.log (HoloCure - Save the Fans!) D: callback numbers in the 10000 ms after the call not in the baseline: [] -> match
+observe-63496.log (HoloCure - Save the Fans!): match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) A: 1 calls of position 3, other positions [] -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) B: lowest rdx byte 1 -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) C: result neither a bool nor a 32-bit value -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles) D: callback numbers in the 10000 ms after the call not in the baseline: [] -> match
+observe-55924.log (Pixel Puzzles Ultimate Jigsaw Puzzles): match
+experiment 27: match
+```
+
+As fixed beforehand, a match only narrows:
+`STEAMSCREENSHOTS_INTERFACE_VERSION003` position 3 is recorded as
+"narrowed: `HookScreenshots` (experiment 27)"; `TriggerScreenshot` is
+argued against, not ruled out (the page gives no callback numbers).
+
+**Result of experiment 26** (agent run by the main session after the
+plan time 19:14:46; log `observe-44048` recorded by `run.sh`): **match**,
+checked by the script. The official client showed its launch-options
+dialog; the maintainer chose "VPet spielen" there themselves (the plan had
+the main session do it; same button, so the run is unaffected). VPet did
+not exit on the close request (it stays in the tray); the maintainer
+closed it from its tray icon, no forced kill.
+
+```text
+observe-44048.log (VPet-Simulator) U2: 36 calls, arguments in the page's ranges and r9 the app ID, distinct handles -> match
+observe-44048.log (VPet-Simulator) U4: 36 calls, 0 not sending the latest new handle as a 64-bit call, 0 other uses of a handle before its first 5 -> match
+observe-44048.log (VPet-Simulator) T: 36 call handles (20 past the logging limit), 0 out of order, results 0/1 and 1: True/True, one size at 13: True, sizes at 11: 19 -> match
+observe-44048.log (VPet-Simulator) T13: 16 call results, 0 not read, 0 without the handle, result 1 and a fitting count, 16 with a count above 16 -> match
+observe-44048.log (VPet-Simulator) U5: 50 and 50 calls, 0 not on a completed query in index order or not true, 1 handles with more results than the r8 of their 2 -> match
+observe-44048.log (VPet-Simulator) H5: 0 calls not read, 50 pairs with a following 77, 0 not matching -> match
+observe-44048.log (VPet-Simulator) H9: 50 calls, 0 not read, 50 starting with the text http -> match
+observe-44048.log (VPet-Simulator) U12: 50 calls, 0 out of range or not true, 3 of 3 fully logged items with exactly the 13 statistics -> match
+observe-44048.log (VPet-Simulator) U77: 50 calls, 0 not false or not with the 9 buffer -> match
+observe-44048.log (VPet-Simulator) S12: 1 calls, one value in the decoder's range equal to the reference run's (reference found: True) -> match
+observe-44048.log (VPet-Simulator) R0: 2 calls, a new text, a buffer, a size and true in each -> match
+observe-44048.log (VPet-Simulator) R18: 2 sequences, 2 fully logged, 0 of them out of shape, 1 following pairs, count +1 in each: True -> match
+observe-44048.log (VPet-Simulator) H19: 1 pairs, 0 calls of 19 not read, 0 without the written size -> match
+observe-44048.log (VPet-Simulator): match
+experiment 26: match
+```
+
+As fixed beforehand, a match confirms, for these interface versions:
+`STEAMUGC_INTERFACE_VERSION020` 2 `CreateQueryAllUGCRequest`, 4
+`SendQueryUGCRequest`, 5 `GetQueryUGCResult`, 9 `GetQueryUGCPreviewURL`,
+12 `GetQueryUGCStatistic`; `SteamUtils010` 13 `GetAPICallResult`;
+`STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0 `FileWrite`, 19
+`GetFileNameAndSize`. Recorded as narrowed: `…VERSION016` 18
+`GetFileCount`, `SteamUtils010` 11 `IsAPICallCompleted`, `STEAMUGC…020`
+77 (an item-ID function returning false or 0) and `SteamUser023` 12
+`GetVoiceOptimalSampleRate` (all "experiment 26").

@@ -256,6 +256,14 @@
     "14": [
       "confirmed",
       "GetCurrentBatteryPower"
+    ],
+    "11": [
+      "candidate",
+      "narrowed: IsAPICallCompleted (experiment 26)"
+    ],
+    "13": [
+      "confirmed",
+      "GetAPICallResult"
     ]
   },
   "STEAMAPPS_INTERFACE_VERSION008": {
@@ -376,6 +384,10 @@
     "1": [
       "candidate",
       "BLoggedOn, another no-argument bool or GetHSteamUser"
+    ],
+    "12": [
+      "candidate",
+      "narrowed: GetVoiceOptimalSampleRate (experiment 26)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
@@ -460,6 +472,18 @@
     "13": [
       "candidate",
       "a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others)"
+    ],
+    "0": [
+      "confirmed",
+      "FileWrite"
+    ],
+    "18": [
+      "candidate",
+      "narrowed: GetFileCount (experiment 26)"
+    ],
+    "19": [
+      "confirmed",
+      "GetFileNameAndSize"
     ]
   },
   "SteamFriends018": {
@@ -474,6 +498,38 @@
     "36": [
       "candidate",
       "RequestUserInformation, HasFriend or another (Steam ID, 0) call"
+    ]
+  },
+  "STEAMSCREENSHOTS_INTERFACE_VERSION003": {
+    "3": [
+      "candidate",
+      "narrowed: HookScreenshots (experiment 27)"
+    ]
+  },
+  "STEAMUGC_INTERFACE_VERSION020": {
+    "2": [
+      "confirmed",
+      "CreateQueryAllUGCRequest"
+    ],
+    "4": [
+      "confirmed",
+      "SendQueryUGCRequest"
+    ],
+    "5": [
+      "confirmed",
+      "GetQueryUGCResult"
+    ],
+    "9": [
+      "confirmed",
+      "GetQueryUGCPreviewURL"
+    ],
+    "12": [
+      "confirmed",
+      "GetQueryUGCStatistic"
+    ],
+    "77": [
+      "candidate",
+      "narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26)"
     ]
   }
 }

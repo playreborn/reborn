@@ -198,19 +198,19 @@
   },
   "SteamController007": {
     "2": [
-      "candidate",
+      "confirmed",
       "RunFrame"
     ]
   },
   "SteamController008": {
     "2": [
-      "candidate",
+      "confirmed",
       "RunFrame"
     ]
   },
   "SteamInput006": {
     "3": [
-      "candidate",
+      "confirmed",
       "RunFrame"
     ],
     "0": [
@@ -229,7 +229,7 @@
     ],
     "12": [
       "candidate",
-      "GetVoiceOptimalSampleRate"
+      "narrowed: GetVoiceOptimalSampleRate (experiment 18)"
     ]
   },
   "SteamUser021": {
@@ -285,7 +285,7 @@
   "SteamInput001": {
     "2": [
       "candidate",
-      "RunFrame-like per-frame call (no page for this version; rdx not explained)"
+      "narrowed: a RunFrame-like per-frame call (experiment 16)"
     ]
   },
   "SteamFriends017": {
@@ -294,23 +294,23 @@
       "GetPersonaName or ClearRichPresence"
     ],
     "3": [
-      "candidate",
+      "confirmed",
       "GetFriendCount"
     ],
     "4": [
-      "candidate",
+      "confirmed",
       "GetFriendByIndex"
     ],
     "36": [
       "candidate",
-      "GetLargeFriendAvatar"
+      "narrowed: GetLargeFriendAvatar (experiment 17)"
     ],
     "37": [
       "candidate",
       "RequestUserInformation, HasFriend or another (Steam ID, 0) call"
     ],
     "43": [
-      "candidate",
+      "confirmed",
       "SetRichPresence"
     ],
     "44": [

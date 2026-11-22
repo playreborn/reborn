@@ -2118,3 +2118,68 @@ mismatch; experiment 18 prints no value; the residual judgements and the
 "narrowed" outcomes above were written down; the void functions and
 `GetVoice` were added to the list for position 12, and `GetGameBadgeLevel`
 is ruled out by the page's limits (5 and 1).
+
+**Results of experiments 16 to 18** (agent runs by the main session after
+the plan time 12:42:38; logs recorded by `run.sh` in `starts.log`:
+`observe-52912` Cave Crawlers (used for 16, 17 and 18), `observe-51828`
+Dark Deception, `observe-55256` UNBEATABLE [white label], `observe-51224`
+Bongo Cat, `observe-55108` Linsips, `observe-50768` Cartapli : Fold Quest,
+`observe-42892` Please, Touch The Artwork 2, `observe-29128` Fallout
+Shelter): all three **match**, checked by the scripts.
+
+```text
+observe-52912.log (Cave Crawlers) A: 53 SteamController007#2 and 53 SteamInput001#2 calls, a result byte other than 0/1: True/True -> match
+observe-52912.log (Cave Crawlers) B: 53 pairs, 0 unpaired, 49 followed by Steam_BGetCallback -> match
+observe-52912.log (Cave Crawlers) C: 1 distinct result values -> match
+observe-52912.log (Cave Crawlers) D: other positions called: none -> match
+observe-51828.log (Dark Deception) A: 68 SteamController007#2 and 68 SteamInput001#2 calls, a result byte other than 0/1: True/True -> match
+observe-51828.log (Dark Deception) B: 68 pairs, 0 unpaired, 35 followed by Steam_BGetCallback -> match
+observe-51828.log (Dark Deception) C: 1 distinct result values -> match
+observe-51828.log (Dark Deception) D: other positions called: none -> match
+observe-55256.log (UNBEATABLE [white label]) A: 67 SteamController007#2 and 67 SteamInput001#2 calls, a result byte other than 0/1: True/True -> match
+observe-55256.log (UNBEATABLE [white label]) B: 67 pairs, 0 unpaired, 65 followed by Steam_BGetCallback -> match
+observe-55256.log (UNBEATABLE [white label]) C: 1 distinct result values -> match
+observe-55256.log (UNBEATABLE [white label]) D: other positions called: none -> match
+observe-51224.log (Bongo Cat) A: 58 SteamController008#2 and 58 SteamInput006#3 calls, a result byte other than 0/1: True/True -> match
+observe-51224.log (Bongo Cat) B: 58 pairs, 0 unpaired, 49 followed by Steam_BGetCallback -> match
+observe-51224.log (Bongo Cat) C: 1 distinct result values -> match
+observe-51224.log (Bongo Cat) D: other positions called: none -> match
+observe-55108.log (Linsips) A: 127 SteamController008#2 and 127 SteamInput006#3 calls, a result byte other than 0/1: True/True -> match
+observe-55108.log (Linsips) B: 127 pairs, 0 unpaired, 117 followed by Steam_BGetCallback -> match
+observe-55108.log (Linsips) C: 1 distinct result values -> match
+observe-55108.log (Linsips) D: other positions called: none -> match
+observe-50768.log (Cartapli : Fold Quest) A: 72 SteamController008#2 and 72 SteamInput006#3 calls, a result byte other than 0/1: True/True -> match
+observe-50768.log (Cartapli : Fold Quest) B: 72 pairs, 0 unpaired, 59 followed by Steam_BGetCallback -> match
+observe-50768.log (Cartapli : Fold Quest) C: 1 distinct result values -> match
+observe-50768.log (Cartapli : Fold Quest) D: other positions called: none -> match
+experiment 16: match
+```
+
+```text
+observe-52912.log (Cave Crawlers) A: 2 position-43 calls, 2 with two texts -> match
+observe-42892.log (Please, Touch The Artwork 2) B: positions 3 and 4 checked -> match
+observe-42892.log (Please, Touch The Artwork 2) C: position 36 checked -> match
+observe-29128.log (Fallout Shelter) B: positions 3 and 4 checked -> match
+experiment 17: match
+```
+
+```text
+observe-52912.log (Cave Crawlers): one value from 11025 to 48000, not a user handle -> match
+experiment 18: match
+```
+
+As the plan fixed beforehand, under ADR 0051:
+
+- confirmed: `SteamController007` and `SteamController008` position 2 and
+  `SteamInput006` position 3 as `RunFrame` (with the residual judgement
+  written above); `SteamFriends017` position 43 `SetRichPresence`,
+  3 `GetFriendCount`, 4 `GetFriendByIndex` (with the residual judgement
+  written above);
+- narrowed, still candidates: `SteamInput001` position 2 (a
+  `RunFrame`-like per-frame call), `SteamFriends017` position 36
+  (`GetLargeFriendAvatar`), `SteamUser020` position 12
+  (`GetVoiceOptimalSampleRate`).
+
+Not in the shim yet. `SetRichPresence`, `GetFriendCount` and
+`GetFriendByIndex` wait for the maintainer even then (account and friends
+data).

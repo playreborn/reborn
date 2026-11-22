@@ -6,7 +6,7 @@ saves on a computer where the official Steam client was never
 installed. Written for people, not for tools; the detailed records are
 linked at the end.
 
-**Last updated:** 2026-11-22 (after loop iteration 9b).
+**Last updated:** 2026-11-22 (after loop iteration 9a).
 
 ## In one sentence
 
@@ -18,7 +18,7 @@ but no game runs fully without Steam yet: **M4 is about 15 to 20 % done**
 
 | Area | State | Roughly |
 | --- | --- | --- |
-| Steam functions whose meaning is confirmed | 101 of the 205 positions our 20 games call | **49 %** |
+| Steam functions whose meaning is confirmed | 107 of the 205 positions our 20 games call | **52 %** |
 | Of those, answered by the shim itself | connecting to Steam, handing out the interfaces, cleaning up at exit, the app ID, the battery level | **about 40 %** of all positions |
 | Callbacks (messages from Steam to the game) | how they are delivered is confirmed (header, polling, freeing); 1 of 15 recorded message types has a confirmed meaning ("stats received") | **about 20 %** |
 | Real data from Valve inside the shim (ownership, DLC, achievements, cloud) | some meanings known, nothing connected to `rebornd` yet | **0 %** |

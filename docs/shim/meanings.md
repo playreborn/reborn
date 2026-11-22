@@ -3014,3 +3014,31 @@ stated assumption. Survey (S) data of both games, new positions such as
 `STEAMUGC_INTERFACE_VERSION020`, `STEAMSCREENSHOTS_INTERFACE_VERSION003`
 3 and `SteamUtils010` 11 and 13, are left for later rows (the logs stay
 local).
+
+## Shadow mode with real account data: `BIsSubscribed` (ADR 0055 stage 1)
+
+First live run of ADR 0055's read-only shadow session (2026-11-22, agent
+runs by the main session with the maintainer's OK): `rebornd` signed in to
+the test account with the stored login (no Steam Guard prompt) while the
+official client stayed signed in to the same account; `reborn-observe arm
+--app` registered a shadow session, and the proxy compared the official
+answer of `STEAMAPPS_INTERFACE_VERSION008` position 0 (`BIsSubscribed`,
+confirmed in experiment 8) with `rebornd`'s `AppOwnership` for the game's
+own app. The game always got the official answer; the log shows only
+"shadow match" or "shadow mismatch" and hides `rax` (account data).
+
+| Game | Log | Result |
+| --- | --- | --- |
+| Dark Deception (332950) | `observe-60764` | shadow match |
+| A Park Full of Cats (2610090) | `observe-62092` | shadow match |
+| An Arcade Full of Cats (2368470) | `observe-29424` | shadow match |
+
+No logoff or kick of either client and no Steam Guard prompt during the
+runs; `rebornd` was shut down afterwards. A first attempt failed before
+the proxy was installed (VPet-Simulator, still running from experiment
+25, held the proxy file); that run is not counted.
+
+Under ADR 0046/0055 shadow mode for ownership of the game itself has now
+matched in three games. Answer mode (the shim asking `rebornd` instead of
+the official client) is the next step and needs the maintainer's OK per
+ADR 0055.

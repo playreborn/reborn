@@ -5,6 +5,9 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Waiting for the maintainer
 
+- Answer mode for ownership of the game itself (ADR 0055): shadow mode
+  matched in three games; the shim may ask `rebornd` instead of the
+  official client once the maintainer agrees.
 - `GetSteamID` (SteamUser020 to 023 position 2): confirming it needs the
   proxy to read the account's own Steam ID behind the returned address; a
   new ADR, the maintainer decides.
@@ -16,6 +19,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: first live shadow run with real account data (ADR 0055):
+  `BIsSubscribed` shadow **matched** in Dark Deception, A Park Full of
+  Cats and An Arcade Full of Cats; `rebornd` and the official client were
+  signed in at once without kicks or Steam Guard. Answer mode for
+  ownership waits for the maintainer's OK.
 - 2026-11-22: ADR 0055 stage 0, shadow sessions (parallel agent, no
   runs): shim protocol 0.2 gains `RegisterShadow`, `CancelShadow` and
   `ShadowHello` and `Request::writes`; `reborn-observe arm --app`

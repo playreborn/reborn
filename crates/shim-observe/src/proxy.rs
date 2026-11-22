@@ -296,11 +296,11 @@ fn ask_subscribed(prefix: String, rax: u64) {
     match sender {
         Some(sender) => {
             if let Err(error) = sender.try_send(ask) {
-                let ask = match error {
-                    std::sync::mpsc::TrySendError::Full(ask)
-                    | std::sync::mpsc::TrySendError::Disconnected(ask) => ask,
+                let (ask, why) = match error {
+                    std::sync::mpsc::TrySendError::Full(ask) => (ask, "worker busy"),
+                    std::sync::mpsc::TrySendError::Disconnected(ask) => (ask, "worker thread gone"),
                 };
-                log(&format!("{} shadow: skipped, worker busy", ask.prefix));
+                log(&format!("{} shadow: skipped, {why}", ask.prefix));
             }
         }
         None => log(&format!("{} shadow: no worker thread", ask.prefix)),
@@ -596,8 +596,16 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
         let name = kind_name(call.kind);
         let thread = std::thread::current().id();
         if call.logged {
+            // For an ownership shadow the result is account data: together
+            // with the shadow line it would give Reborn's answer, so it is
+            // not logged (ADR 0055: only match or mismatch).
+            let result = if call.shadow == Some(Shadow::Subscribed) {
+                "rax hidden (account data)".to_owned()
+            } else {
+                format!("rax=0x{rax:x}")
+            };
             log(&format!(
-                "{} ms {thread:?} {name} return {} rax=0x{rax:x} xmm0=0x{xmm0:x}",
+                "{} ms {thread:?} {name} return {} {result} xmm0=0x{xmm0:x}",
                 elapsed_ms(),
                 call.call
             ));

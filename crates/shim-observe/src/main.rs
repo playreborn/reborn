@@ -126,16 +126,28 @@ fn run(command: Command) -> Result<()> {
 #[cfg(windows)]
 fn register_shadow(app: u32) -> String {
     use reborn_shim_observe::daemon::{connect, reason_name};
+    use reborn_shim_protocol::UnavailableReason;
     match connect()
         .map_err(Into::into)
         .and_then(|mut client| client.register_shadow(app))
     {
         Ok(Ok(())) => format!("rebornd: shadow session registered for app {app}."),
-        Ok(Err(reason)) => format!(
-            "rebornd refused the shadow session ({}); ownership is not compared. \
-             Sign in to rebornd (for example `reborn-cli library`) and arm again.",
-            reason_name(reason)
-        ),
+        Ok(Err(reason)) => {
+            let advice = match reason {
+                UnavailableReason::NotSignedIn => {
+                    " Sign in to rebornd (for example `reborn-cli library`), then disarm and arm again."
+                }
+                UnavailableReason::Offline => {
+                    " rebornd is reconnecting, signing in or could not load the licence list; \
+                     wait a moment, then disarm and arm again."
+                }
+                UnavailableReason::NotAllowed | UnavailableReason::TooLarge => "",
+            };
+            format!(
+                "rebornd refused the shadow session ({}); ownership is not compared.{advice}",
+                reason_name(reason)
+            )
+        }
         Err(error) => format!("No shadow session ({error}); ownership is not compared."),
     }
 }

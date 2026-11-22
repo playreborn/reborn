@@ -45,8 +45,11 @@ struct Registration {
 #[derive(Debug, Default)]
 struct Inner {
     registration: Option<Registration>,
-    /// Claimed shadow sessions, by process ID.
-    active: BTreeMap<u32, ShimRun>,
+    /// Claimed shadow sessions, by process ID, each with its claim's
+    /// token.
+    active: BTreeMap<u32, (u64, ShimRun)>,
+    /// The last token handed out.
+    last_token: u64,
 }
 
 /// The daemon's shadow registration and sessions.
@@ -76,10 +79,12 @@ impl ShadowSessions {
         self.inner().registration = None;
     }
 
-    /// Claims the registration for `app_id` for process `pid`: the shadow
-    /// run, or `None` if no registration for that app is open or the
-    /// process already has a shadow session.
-    pub fn claim(&self, pid: u32, app_id: u32) -> Option<ShimRun> {
+    /// Claims the registration for `app_id` for process `pid`: the claim's
+    /// token (it names this session, so a stale connection of an older
+    /// session with the same process ID cannot reach or end it) and the
+    /// shadow run, or `None` if no registration for that app is open or
+    /// the process already has a shadow session.
+    pub fn claim(&self, pid: u32, app_id: u32) -> Option<(u64, ShimRun)> {
         let mut inner = self.inner();
         if inner.active.contains_key(&pid) {
             return None;
@@ -94,18 +99,33 @@ impl ShadowSessions {
             stats: Some(Arc::new(RunStats::default())),
             shadow: true,
         };
-        inner.active.insert(pid, run.clone());
-        Some(run)
+        inner.last_token += 1;
+        let token = inner.last_token;
+        inner.active.insert(pid, (token, run.clone()));
+        Some((token, run))
     }
 
-    /// The shadow run of `pid`, while its session lasts.
-    pub fn get(&self, pid: u32) -> Option<ShimRun> {
-        self.inner().active.get(&pid).cloned()
+    /// The shadow run of `pid` claimed with `token`, while that session
+    /// lasts.
+    pub fn get(&self, pid: u32, token: u64) -> Option<ShimRun> {
+        self.inner()
+            .active
+            .get(&pid)
+            .filter(|(claimed, _)| *claimed == token)
+            .map(|(_, run)| run.clone())
     }
 
-    /// Ends the shadow session of `pid` (its connection closed).
-    pub fn end(&self, pid: u32) {
-        self.inner().active.remove(&pid);
+    /// Ends the shadow session of `pid` claimed with `token` (its
+    /// connection closed); a newer session of the same process stays.
+    pub fn end(&self, pid: u32, token: u64) {
+        let mut inner = self.inner();
+        if inner
+            .active
+            .get(&pid)
+            .is_some_and(|(claimed, _)| *claimed == token)
+        {
+            inner.active.remove(&pid);
+        }
     }
 
     /// Drops the registration and every shadow session (the Valve session
@@ -140,16 +160,39 @@ mod tests {
         assert!(shadows.claim(10, DARK_DECEPTION).is_none(), "nothing open");
         shadows.register(DARK_DECEPTION, owned(&[DARK_DECEPTION]));
         assert!(shadows.claim(10, 480).is_none(), "another app");
-        let run = shadows
+        let (token, run) = shadows
             .claim(10, DARK_DECEPTION)
             .unwrap_or_else(|| panic!("not claimed"));
         assert!(run.shadow);
         assert_eq!(run.app_id, DARK_DECEPTION);
         assert!(run.stats.is_some());
-        assert_eq!(shadows.get(10).map(|run| run.app_id), Some(DARK_DECEPTION));
+        assert_eq!(
+            shadows.get(10, token).map(|run| run.app_id),
+            Some(DARK_DECEPTION)
+        );
+        assert!(shadows.get(10, token + 1).is_none(), "another claim");
         assert!(shadows.claim(11, DARK_DECEPTION).is_none(), "claimed once");
-        shadows.end(10);
-        assert!(shadows.get(10).is_none());
+        shadows.end(10, token);
+        assert!(shadows.get(10, token).is_none());
+    }
+
+    #[test]
+    fn a_stale_claim_neither_reaches_nor_ends_a_newer_session() {
+        let shadows = ShadowSessions::default();
+        shadows.register(DARK_DECEPTION, owned(&[]));
+        let (old, _) = shadows
+            .claim(10, DARK_DECEPTION)
+            .unwrap_or_else(|| panic!("not claimed"));
+        // The Valve session ended, then the same process claims again.
+        shadows.stop_all();
+        shadows.register(DARK_DECEPTION, owned(&[]));
+        let (new, _) = shadows
+            .claim(10, DARK_DECEPTION)
+            .unwrap_or_else(|| panic!("not claimed"));
+        assert_ne!(old, new);
+        assert!(shadows.get(10, old).is_none());
+        shadows.end(10, old);
+        assert!(shadows.get(10, new).is_some(), "the old close ends nothing");
     }
 
     #[test]
@@ -181,7 +224,7 @@ mod tests {
         assert!(shadows.claim(10, DARK_DECEPTION).is_some());
         shadows.register(480, owned(&[]));
         assert!(shadows.stop_all());
-        assert!(shadows.get(10).is_none());
+        assert!(shadows.get(10, 1).is_none());
         assert!(shadows.claim(11, 480).is_none());
     }
 }

@@ -252,6 +252,21 @@ impl Daemon {
     /// Drops the shadow registration and every shadow session (ADR 0055:
     /// any logoff or kick stops the shadow stage), saying so in the log
     /// when there was one.
+    /// Puts `new` into the session slot (held by the caller). Every drop or
+    /// replacement of a session goes through here: the shadow sessions were
+    /// registered with the old one's data, so they stop (ADR 0055). They
+    /// stop even when the slot was already empty: a registration needs a
+    /// session, so nothing current is lost, and no path can keep one.
+    fn replace_session(
+        &self,
+        slot: &mut Option<Arc<Session>>,
+        new: Option<Arc<Session>>,
+        why: &str,
+    ) {
+        self.stop_shadows(why);
+        *slot = new;
+    }
+
     fn stop_shadows(&self, why: &str) {
         if self.shadows.stop_all() {
             warn!(why, "shadow mode stopped: shadow sessions dropped");
@@ -314,7 +329,7 @@ impl Daemon {
             };
         let session = Arc::new(session);
         info!(account = session.account(), "signed in to Steam");
-        *cached = Some(Arc::clone(&session));
+        self.replace_session(&mut cached, Some(Arc::clone(&session)), "a new session");
         self.signed_out.store(false, Ordering::SeqCst);
         drop(cached);
         self.session_ready.notify_waiters();
@@ -444,7 +459,7 @@ impl Daemon {
         self.reconnecting.store(reconnect, Ordering::SeqCst);
         {
             let mut session = self.session.lock().await;
-            *session = None;
+            self.replace_session(&mut session, None, "the connection to Steam ended");
             if !reconnect {
                 self.signed_out.store(true, Ordering::SeqCst);
             }
@@ -456,10 +471,10 @@ impl Daemon {
         if let Some(task) = lock(&self.friends_watch).take() {
             task.abort();
         }
+        // Dropping the session above stopped shadow mode (ADR 0055: any
+        // logoff, kick or lost connection); a reconnect does not bring it
+        // back.
         warn!(?lost, reconnect, "connection to Steam lost");
-        // Any logoff, kick or lost connection stops shadow mode (ADR 0055);
-        // a reconnect does not bring it back.
-        self.stop_shadows("the connection to Steam ended");
         self.emit(Event::SteamConnection {
             connected: false,
             reconnecting: reconnect,
@@ -559,7 +574,7 @@ impl Daemon {
             .is_err_and(reborn_cm::Error::is_connection_lost)
         {
             // Reading is safe to repeat: sign in again and retry once.
-            *self.session.lock().await = None;
+            self.replace_session(&mut *self.session.lock().await, None, "connection lost");
             match self.session().await {
                 Ok(session) => result = session.recent_messages(friend, 50).await,
                 Err(error) => return error_response(&error),
@@ -671,7 +686,7 @@ impl Daemon {
             .as_ref()
             .is_err_and(reborn_cm::Error::is_connection_lost)
         {
-            *self.session.lock().await = None;
+            self.replace_session(&mut *self.session.lock().await, None, "connection lost");
             match self.session().await {
                 Ok(session) => result = session.achievements(app_id, language).await,
                 Err(error) => return error_response(&error),
@@ -783,7 +798,11 @@ impl Daemon {
         {
             let mut session = self.session.lock().await;
             if forget {
-                *session = None;
+                self.replace_session(
+                    &mut session,
+                    None,
+                    "the session was forgotten after an error",
+                );
             }
             if sign_out && session.is_none() {
                 self.signed_out.store(true, Ordering::SeqCst);
@@ -972,7 +991,7 @@ impl Daemon {
                 let session = Arc::new(session);
                 {
                     let mut current = self.session.lock().await;
-                    *current = Some(Arc::clone(&session));
+                    self.replace_session(&mut current, Some(Arc::clone(&session)), "a new sign-in");
                     self.signed_out.store(false, Ordering::SeqCst);
                 }
                 self.session_ready.notify_waiters();
@@ -1033,11 +1052,10 @@ impl Daemon {
         if let Err(error) = reborn_core::account::sign_out(&account) {
             return error_response(&error);
         }
-        *session = None;
+        self.replace_session(&mut session, None, "signed out");
         self.signed_out.store(true, Ordering::SeqCst);
         drop(session);
         self.session_ready.notify_waiters();
-        self.stop_shadows("signed out");
         self.forget_friends();
         info!(%account, "signed out");
         self.emit(Event::SignedOut);
@@ -2348,6 +2366,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_forgotten_session_stops_shadow_sessions() {
+        // A Steam error forgets the session (the next request signs in
+        // again); the shadow sessions came from it, so they stop too. No
+        // sign-in or keyring is touched: a Steam error does not sign out.
+        let daemon = Daemon::new();
+        daemon
+            .shadows
+            .register(332_950, ownership_from(&BTreeSet::from([332_950]), &[]));
+        assert!(daemon.shadows.claim(10, 332_950).is_some());
+        daemon
+            .forget_session_after(&CoreError::Steam(reborn_cm::Error::LicenseListTimeout))
+            .await;
+        assert!(daemon.shadows.get(10, 1).is_none());
+
+        // An error that forgets nothing keeps them.
+        daemon
+            .shadows
+            .register(332_950, ownership_from(&BTreeSet::new(), &[]));
+        assert!(daemon.shadows.claim(11, 332_950).is_some());
+        daemon.forget_session_after(&CoreError::SignInTimeout).await;
+        assert!(daemon.shadows.get(11, 2).is_some());
+    }
+
+    #[tokio::test]
     async fn any_end_of_the_valve_session_stops_shadow_sessions() {
         // Steam ended the session (EResult 6, signed in elsewhere; 34,
         // replaced). Both allow no reconnect, so no sign-in or keyring is
@@ -2364,7 +2406,7 @@ mod tests {
                 .register(480, ownership_from(&BTreeSet::new(), &[]));
             assert!(!lost.allows_reconnect());
             daemon.connection_lost(lost).await;
-            assert!(daemon.shadows.get(10).is_none(), "{lost:?}");
+            assert!(daemon.shadows.get(10, 1).is_none(), "{lost:?}");
             assert!(daemon.shadows.claim(11, 480).is_none(), "{lost:?}");
         }
     }

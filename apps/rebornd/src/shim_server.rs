@@ -113,8 +113,9 @@ pub struct RunOwnership {
 struct Connection {
     /// The process this connection got a session for.
     pid: Option<u32>,
-    /// Whether that session is a shadow session.
-    shadow: bool,
+    /// For a shadow session: the token of its claim, so only this
+    /// session's data is reached and only this session is ended.
+    shadow: Option<u64>,
 }
 
 impl Connection {
@@ -122,10 +123,9 @@ impl Connection {
     /// the shadow sessions, a launched process only from the launches.
     fn run<H: ShimHost>(&self, host: &H) -> Option<ShimRun> {
         let pid = self.pid?;
-        if self.shadow {
-            host.shadows().get(pid)
-        } else {
-            host.launched(pid)
+        match self.shadow {
+            Some(token) => host.shadows().get(pid, token),
+            None => host.launched(pid),
         }
     }
 }
@@ -239,10 +239,8 @@ where
         task.abort();
     }
     // A shadow session lasts as long as the proxy's connection.
-    if connection.shadow
-        && let Some(pid) = connection.pid
-    {
-        host.shadows().end(pid);
+    if let (Some(token), Some(pid)) = (connection.shadow, connection.pid) {
+        host.shadows().end(pid, token);
         info!(pid, "shim shadow session ended");
     }
     drop(outgoing);
@@ -296,7 +294,7 @@ async fn answer<H: ShimHost, B: StatsBackend>(
     };
     // A shadow session never writes (ADR 0055), checked before anything
     // else.
-    if connection.shadow && message.request.writes() {
+    if connection.shadow.is_some() && message.request.writes() {
         info!(pid = ?connection.pid, "shim write on a shadow session refused");
         return reply_line(message.id, not_allowed, None);
     }
@@ -305,7 +303,7 @@ async fn answer<H: ShimHost, B: StatsBackend>(
             let response = match connection.pid {
                 // Bound to another process, or as a shadow session:
                 // refused, the binding stays.
-                Some(bound) if bound != pid || connection.shadow => Response::Refused {
+                Some(bound) if bound != pid || connection.shadow.is_some() => Response::Refused {
                     reason: RefusalReason::UnknownProcess,
                 },
                 _ => answer_hello(version, host.launched(pid).map(|run| run.app_id)),
@@ -397,17 +395,17 @@ fn answer_shadow_hello<H: ShimHost>(
         return answer_hello(version, None);
     }
     match connection.pid {
-        Some(bound) if bound == pid && connection.shadow => {
-            let run = host.shadows().get(pid).filter(|run| run.app_id == app_id);
+        Some(bound) if bound == pid && connection.shadow.is_some() => {
+            let run = connection.run(host).filter(|run| run.app_id == app_id);
             answer_hello(version, run.map(|run| run.app_id))
         }
         Some(_) => unknown,
         // A process `rebornd` launched is never a shadow.
         None if host.launched(pid).is_some() => unknown,
         None => match host.shadows().claim(pid, app_id) {
-            Some(run) => {
+            Some((token, run)) => {
                 connection.pid = Some(pid);
-                connection.shadow = true;
+                connection.shadow = Some(token);
                 answer_hello(version, Some(run.app_id))
             }
             None => unknown,
@@ -723,7 +721,7 @@ mod tests {
         // The game exited: the daemon no longer knows the process.
         let mut connection = Connection {
             pid: Some(100),
-            shadow: false,
+            shadow: None,
         };
         let text = answer(
             &ownership(GAME),
@@ -885,7 +883,7 @@ mod tests {
         // The game exited.
         let mut connection = Connection {
             pid: Some(200),
-            shadow: false,
+            shadow: None,
         };
         let reply = answer(&request_stats(), &mut connection, &Runs::ended(), &valve)
             .await
@@ -1229,7 +1227,7 @@ mod tests {
         .await;
         assert_eq!(hello.map(|(m, _)| m), shadow_session());
         assert_eq!(proxy.pid, Some(SHADOW_PID));
-        assert!(proxy.shadow);
+        assert!(proxy.shadow.is_some());
 
         let owned = reply_with(&ownership(SHADOW_GAME), &mut proxy, &runs, &valve).await;
         assert_eq!(
@@ -1429,7 +1427,7 @@ mod tests {
         )
         .await;
         assert_eq!(refused.map(|(m, _)| m), unknown_process());
-        assert!(!game.shadow);
+        assert!(game.shadow.is_none());
 
         // A shadow session cannot become a launched run's session, nor
         // register.
@@ -1461,7 +1459,7 @@ mod tests {
         .await;
         assert_eq!(again.map(|(m, _)| m), shadow_session());
         assert_eq!(proxy.pid, Some(SHADOW_PID));
-        assert!(proxy.shadow);
+        assert!(proxy.shadow.is_some());
     }
 
     #[tokio::test]
@@ -1506,13 +1504,14 @@ mod tests {
             decode::<DaemonMessage>(&next(&mut lines).await).ok(),
             response(4, Response::Ownership { owned: true })
         );
-        assert!(runs.shadows.get(SHADOW_PID).is_some());
+        // The first claim of these runs has token 1.
+        assert!(runs.shadows.get(SHADOW_PID, 1).is_some());
         drop((lines, write));
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(5), served)
                 .await
                 .is_ok()
         );
-        assert!(runs.shadows.get(SHADOW_PID).is_none());
+        assert!(runs.shadows.get(SHADOW_PID, 1).is_none());
     }
 }

@@ -783,7 +783,9 @@ and which the user stays open (limit above).
   given to `reborn-observe arm --app`, on the read-only shadow session
   `arm` registered) and compares the answer with the lowest byte of
   `rax`. The log line says only `shadow match` or `shadow mismatch`
-  (account data), or `shadow: no Reborn answer (<reason>)`. The game
+  (account data), or `shadow: no Reborn answer (<reason>)`; the call's
+  own return line then says `rax hidden (account data)` instead of the
+  value, so the two lines together do not give Reborn's answer. The game
   always gets the official client's result; position 0 is never in
   `ANSWERS`. Position 7 is not shadowed: it is narrowed to two meanings,
   not confirmed as one, and the shadow session knows no DLC yet.

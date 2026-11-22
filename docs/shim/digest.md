@@ -16,6 +16,15 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: shim session follow-up from the review of PR #35 (parallel
+  agent, no runs): a reader thread per connection routes responses by
+  `id` and queues events (`StatsReceived`; no 0x44d yet); every exchange,
+  `Hello` included, waits at most 10 s (`ANSWER_TIMEOUT`), then "rebornd
+  did not answer in time" and the call stops the game. Timeout, an answer
+  for no open request, an early event or a broken line end the connection
+  for the run without the reconnect; a lost connection is reconnected
+  once (same app checked) and only reads (`AppOwnership`, `RequestStats`)
+  are sent again, writes never (red line 4). Fake-transport tests.
 - 2026-11-22: answer mode for `BIsSubscribed` in the shim (parallel
   agent, no runs; maintainer OK in PR #34): `STEAMAPPS_INTERFACE_VERSION008`
   object with position 0 answered by `rebornd`'s `AppOwnership` for the

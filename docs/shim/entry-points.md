@@ -243,4 +243,5 @@ read.
   often). The result was 0 or 1 (Bongo Cat 3 and 3, Coin Maker
   Simulator 3 and 8).
 - **Recorded, recorder:** as above.
-- **Meaning:** not known.
+- **Meaning:** `GetAPICallResult` (`rdx` the call handle, `r9` the buffer
+  size), confirmed by experiment 22 (`meanings.md`, loop iteration 10a).

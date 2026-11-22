@@ -214,7 +214,7 @@
       "RunFrame"
     ],
     "0": [
-      "candidate",
+      "confirmed",
       "Init"
     ],
     "6": [
@@ -252,12 +252,12 @@
   },
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
     "0": [
-      "candidate",
-      "RequestCurrentStats or StoreStats (start: RequestCurrentStats fits)"
+      "confirmed",
+      "RequestCurrentStats"
     ],
     "10": [
-      "candidate",
-      "StoreStats or RequestCurrentStats (close: StoreStats fits)"
+      "confirmed",
+      "StoreStats"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {

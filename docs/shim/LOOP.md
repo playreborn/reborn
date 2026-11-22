@@ -28,7 +28,9 @@ registry is virtualized) repeats it until stopped. Every rule of
 4. **Plan:** write the candidate and an experiment with predictions a
    script can check into `meanings.md`; write the check as
    `tools/shim/experiments/NNN_short_name.py` (reads logs given on the
-   command line, prints match or mismatch per prediction). Commit and
+   command line, prints match or mismatch per prediction; rejects a log given twice and
+   checks which game each log came from with the `log` lines `run.sh`
+   writes to `starts.log`). Commit and
    push the plan on a branch **before** any run.
 5. **Run:** `tools/shim/run.sh <app id>` for the games the plan names
    (limits of ADR 0045 apply; input in games under ADR 0049).

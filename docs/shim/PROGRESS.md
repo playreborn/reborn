@@ -45,6 +45,10 @@ first two rows are counts from [`coverage.md`](coverage.md).
 - **In the shim** (`crates/shim`):
   - `SteamClient020`, `021`, `023`: the connection to Steam, handing out
     the other interfaces, cleaning up when the game closes;
+  - `SteamClient018`, `019` (Gravitas, Dark Deception): the same, plus
+    the second (game server) pipe the games open and close; nothing is
+    handed out over that pipe yet, and positions 7 and 34, which both
+    games call early, still stop them;
   - `SteamUtils009`, `010`: the app ID and the battery level;
   - `STEAMAPPS_INTERFACE_VERSION008` position 0 (`BIsSubscribed`): whether
     the account owns the game, asked from `rebornd` per call (ADR 0055;

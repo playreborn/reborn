@@ -16,6 +16,13 @@
 //! - `SteamClient020`, `021`, `023`: positions 0, 2, 9, 12 and the
 //!   per-interface positions (`meanings.md`, experiment 7), and the calls
 //!   at close: 4, 1 and 23 (020, 021) or 22 (023) (experiments 7, 11).
+//! - `SteamClient018` and `019`: positions 0, 2, 9, 12, the per-interface
+//!   positions 5, 6 and 26, 3 `CreateLocalUser` (writes pipe 2 through
+//!   `rdx`, returns user 1, account type 3 only) and the calls at close
+//!   4, 1 and 23, where 23 is false while a pipe is still open
+//!   (`meanings.md`, experiment 24). The shim has no objects for the
+//!   game server pipe, so getters on pipe 2 stop; 7, 34 and 38 stay
+//!   stops.
 //! - `SteamUtils009` and `SteamUtils010` position 9, `GetAppID`
 //!   (`meanings.md`, experiments 3 to 5 and 15, confirmed), and position
 //!   14, `GetCurrentBatteryPower` (experiments 10 and 15, confirmed).

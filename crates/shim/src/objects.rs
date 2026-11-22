@@ -3,7 +3,7 @@
 //! 3a). Positions not listed here end the process with a log line.
 
 use std::ffi::{c_char, c_void};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::{log, not_implemented, session, text_arg};
 
@@ -187,6 +187,165 @@ fn client_023() -> &'static Built {
     })
 }
 
+// ---- SteamClient018 and SteamClient019 (meanings.md, experiment 24) ----
+
+/// The handle `CreateLocalUser` writes as the second pipe: 2 in every
+/// recorded run (experiment 24, C and H).
+const GAME_SERVER_PIPE: i32 = 2;
+
+/// The user `CreateLocalUser` returned: 1 in every recorded run
+/// (experiment 24, B).
+const GAME_SERVER_USER: i32 = 1;
+
+/// `k_EAccountTypeGameServer`, the only account type recorded at
+/// position 3 (experiment 24, B; the `EAccountType` table of Valve's
+/// `steam_api` page).
+const ACCOUNT_TYPE_GAME_SERVER: i32 = 3;
+
+/// The pipes open on the `SteamClient018`/`019` objects, for
+/// `BShutdownIfAllPipesClosed` (experiment 24, F: false while the other
+/// pipe is still open, true once both are released). A game uses one
+/// `SteamClient` version, so one list for both is enough.
+static OPEN_PIPES: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+fn open_pipes() -> std::sync::MutexGuard<'static, Vec<i32>> {
+    OPEN_PIPES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Opens `pipe`; a second open of the same pipe was never recorded.
+fn open_pipe(pipe: i32, what: &str) {
+    let mut pipes = open_pipes();
+    if pipes.contains(&pipe) {
+        drop(pipes);
+        not_implemented(&format!("{what} while pipe {pipe} is already open"));
+    }
+    pipes.push(pipe);
+}
+
+/// `CreateSteamPipe`, confirmed for 018 and 019 (experiment 24, A):
+/// result 1, called once.
+extern "C" fn create_steam_pipe_two(_this: *const Object) -> i32 {
+    open_pipe(PIPE, "SteamClient018/019 position 0");
+    PIPE
+}
+
+/// `CreateLocalUser` (pipe address, account type), confirmed for 018 and
+/// 019 (experiment 24, B, C, H): writes the new pipe 2 at the address in
+/// `rdx`, takes 3 = `k_EAccountTypeGameServer` and returns the user 1.
+///
+/// The shim has no `SteamGameServer…` object and no objects for the
+/// second pipe (the official client handed other objects over it,
+/// experiment 24, E), so every getter call on pipe 2 stops
+/// (`get_on_first_pipe`). A null address or another account type was
+/// never recorded and stops too.
+extern "C" fn create_local_user(
+    _this: *const Object,
+    pipe_out: *mut i32,
+    account_type: i32,
+) -> i32 {
+    if pipe_out.is_null() {
+        not_implemented("SteamClient018/019 position 3 with a null pipe address");
+    }
+    if account_type != ACCOUNT_TYPE_GAME_SERVER {
+        not_implemented(&format!(
+            "SteamClient018/019 position 3 with account type {account_type}"
+        ));
+    }
+    open_pipe(GAME_SERVER_PIPE, "SteamClient018/019 position 3");
+    // SAFETY: `pipe_out` is not null; per Valve's `ISteamClient` page
+    // `CreateLocalUser` takes an `HSteamPipe *` there, and the recorded
+    // calls passed an address the game later read the pipe from
+    // (experiment 24, H). An unaligned write needs no alignment.
+    unsafe { pipe_out.write_unaligned(GAME_SERVER_PIPE) };
+    GAME_SERVER_USER
+}
+
+/// `BReleaseSteamPipe` for 018 and 019 (experiment 24, F): lowest result
+/// byte 1 for each open pipe. Releasing a pipe that is not open was never
+/// recorded.
+extern "C" fn release_steam_pipe_two(_this: *const Object, pipe: i32) -> bool {
+    let mut pipes = open_pipes();
+    let Some(index) = pipes.iter().position(|&open| open == pipe) else {
+        drop(pipes);
+        not_implemented(&format!(
+            "SteamClient018/019 position 1 for pipe {pipe}, which is not open"
+        ));
+    };
+    pipes.remove(index);
+    true
+}
+
+/// `BShutdownIfAllPipesClosed` for 018 and 019 (experiment 24, F): false
+/// while a pipe is still open, true once all are released.
+extern "C" fn shutdown_if_all_pipes_closed_two(_this: *const Object) -> bool {
+    open_pipes().is_empty()
+}
+
+/// Getters on 018 and 019 answer only on the first pipe; see
+/// `create_local_user`.
+fn get_on_first_pipe(pipe: i32, version: Option<&str>) -> *mut c_void {
+    if pipe != PIPE {
+        not_implemented(&format!(
+            "SteamClient018/019 getter for {} on pipe {pipe} (no objects for the game server pipe)",
+            version.unwrap_or("?")
+        ));
+    }
+    interface_or_stop(version)
+}
+
+/// `GetISteamUtils` (pipe, version text) for 018 and 019 (experiment 24).
+extern "C" fn get_utils_interface_two(
+    _this: *const Object,
+    pipe: i32,
+    version: *const c_char,
+) -> *mut c_void {
+    // SAFETY: games pass a NUL-terminated version text here
+    // (`docs/shim/objects.md`).
+    get_on_first_pipe(pipe, unsafe { text_arg(version) })
+}
+
+/// `GetISteamGenericInterface` and the per-interface `GetISteam…` (user,
+/// pipe, version text) for 018 and 019 (experiment 24).
+extern "C" fn get_user_interface_two(
+    _this: *const Object,
+    _user: i32,
+    pipe: i32,
+    version: *const c_char,
+) -> *mut c_void {
+    // SAFETY: as above.
+    get_on_first_pipe(pipe, unsafe { text_arg(version) })
+}
+
+/// The confirmed positions of 018 and 019 (experiment 24): 0, 2, 3, 9,
+/// 12, the per-interface getters 5, 6 and 26 (26 recorded only in 019,
+/// confirmed for both by the plan), and the calls at close 4, 1, 23.
+/// Positions 7, 34 and 38 stay stops (narrowed, candidate, objects).
+fn client_two_pipes(mut table: [usize; SLOTS]) -> [usize; SLOTS] {
+    table[0] = create_steam_pipe_two as *const () as usize;
+    table[1] = release_steam_pipe_two as *const () as usize;
+    table[2] = connect_to_global_user as *const () as usize;
+    table[3] = create_local_user as *const () as usize;
+    table[4] = release_user as *const () as usize;
+    table[9] = get_utils_interface_two as *const () as usize;
+    for position in [5, 6, 12, 26] {
+        table[position] = get_user_interface_two as *const () as usize;
+    }
+    table[23] = shutdown_if_all_pipes_closed_two as *const () as usize;
+    table
+}
+
+fn client_018() -> &'static Built {
+    static OBJECT: OnceLock<Built> = OnceLock::new();
+    OBJECT.get_or_init(|| Built::new(client_two_pipes(stubs!("SteamClient018"))))
+}
+
+fn client_019() -> &'static Built {
+    static OBJECT: OnceLock<Built> = OnceLock::new();
+    OBJECT.get_or_init(|| Built::new(client_two_pipes(stubs!("SteamClient019"))))
+}
+
 // ---- SteamUtils009 and SteamUtils010 (meanings.md, confirmed) ----
 
 /// `GetAppID`, confirmed (experiments 3 to 5 for 010, 15 for 009): the
@@ -294,6 +453,8 @@ fn apps_008() -> &'static Built {
 /// The version texts the shim has an object for.
 pub fn known_interfaces() -> &'static [&'static str] {
     &[
+        "SteamClient018",
+        "SteamClient019",
         "SteamClient020",
         "SteamClient021",
         "SteamClient023",
@@ -310,6 +471,8 @@ pub fn interface_for(version: &str) -> Option<*mut c_void> {
 
 fn built_for(version: &str) -> Option<&'static Built> {
     let built = match version {
+        "SteamClient018" => client_018(),
+        "SteamClient019" => client_019(),
         "SteamClient020" => client_020(),
         "SteamClient021" => client_021(),
         "SteamClient023" => client_023(),
@@ -431,6 +594,88 @@ mod tests {
                 release_steam_pipe as *const () as usize,
                 "{version}"
             );
+        }
+    }
+
+    #[test]
+    fn two_pipe_clients_have_only_the_confirmed_positions() {
+        let implemented = [
+            (0, create_steam_pipe_two as *const () as usize),
+            (1, release_steam_pipe_two as *const () as usize),
+            (2, connect_to_global_user as *const () as usize),
+            (3, create_local_user as *const () as usize),
+            (4, release_user as *const () as usize),
+            (5, get_user_interface_two as *const () as usize),
+            (6, get_user_interface_two as *const () as usize),
+            (9, get_utils_interface_two as *const () as usize),
+            (12, get_user_interface_two as *const () as usize),
+            (23, shutdown_if_all_pipes_closed_two as *const () as usize),
+            (26, get_user_interface_two as *const () as usize),
+        ];
+        for version in ["SteamClient018", "SteamClient019"] {
+            for (position, function) in implemented {
+                assert_eq!(slot_of(version, position), function, "{version} {position}");
+            }
+            for position in (0..SLOTS).filter(|p| !implemented.iter().any(|(i, _)| i == p)) {
+                assert!(
+                    !implemented
+                        .iter()
+                        .any(|&(_, function)| function == slot_of(version, position)),
+                    "{version} {position} must stay a stop"
+                );
+            }
+        }
+        assert_ne!(object("SteamClient018"), object("SteamClient019"));
+    }
+
+    /// The whole recorded sequence of experiment 24 on both versions:
+    /// Gravitas (018) releases pipe 2 first, Dark Deception (019) pipe 1
+    /// first. The only test that uses the pipe list.
+    #[test]
+    fn two_pipe_clients_open_and_close_as_recorded() {
+        for (version, first, second) in [("SteamClient018", 2, 1), ("SteamClient019", 1, 2)] {
+            let client = object(version).cast::<Object>().cast_const();
+            // SAFETY: the positions hold the functions with these
+            // signatures (`client_two_pipes`); `q` is a writable `i32`.
+            unsafe {
+                let pipe: extern "C" fn(*const Object) -> i32 =
+                    std::mem::transmute(slot_of(version, 0));
+                let user: extern "C" fn(*const Object, i32) -> i32 =
+                    std::mem::transmute(slot_of(version, 2));
+                let local_user: extern "C" fn(*const Object, *mut i32, i32) -> i32 =
+                    std::mem::transmute(slot_of(version, 3));
+                let utils: extern "C" fn(*const Object, i32, *const c_char) -> *mut c_void =
+                    std::mem::transmute(slot_of(version, 9));
+                let generic: extern "C" fn(*const Object, i32, i32, *const c_char) -> *mut c_void =
+                    std::mem::transmute(slot_of(version, 12));
+                let release_user: extern "C" fn(*const Object, i32, i32) =
+                    std::mem::transmute(slot_of(version, 4));
+                let release_pipe: extern "C" fn(*const Object, i32) -> bool =
+                    std::mem::transmute(slot_of(version, 1));
+                let shutdown: extern "C" fn(*const Object) -> bool =
+                    std::mem::transmute(slot_of(version, 23));
+
+                let p = pipe(client);
+                let u = user(client, p);
+                assert_eq!((p, u), (1, 1), "{version}");
+                let text = c"SteamUtils009";
+                assert_eq!(utils(client, p, text.as_ptr()), object("SteamUtils009"));
+                assert_eq!(
+                    generic(client, 0, p, text.as_ptr()),
+                    object("SteamUtils009"),
+                    "user 0, as recorded"
+                );
+
+                let mut q = 0i32;
+                let v = local_user(client, &mut q, 3);
+                assert_eq!((q, v), (2, 1), "{version}");
+
+                for (pipe, last) in [(first, false), (second, true)] {
+                    release_user(client, pipe, 1);
+                    assert!(release_pipe(client, pipe), "{version} pipe {pipe}");
+                    assert_eq!(shutdown(client), last, "{version} after pipe {pipe}");
+                }
+            }
         }
     }
 

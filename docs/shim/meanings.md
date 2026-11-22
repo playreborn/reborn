@@ -3412,8 +3412,8 @@ It rejects a log given twice, maps the log to its game through
 `starts.log` (`observelog.app_of`), needs the VPet log and rejects a log
 whose start (`observelog.start_of`) is earlier than the plan commit
 (`PLAN_COMMITTED`, the local committer time of the final plan commit on
-`loop/plan-13a`, set in a follow-up commit). It prints only positions,
-counts and match/MISMATCH.
+`loop/plan-13a`, set in a follow-up commit: 2026-11-22 18:57:22, commit
+`80afe13`). It prints only positions, counts and match/MISMATCH.
 
 **What a match confirms** (fixed now, before the run), for these
 interface versions:
@@ -3471,7 +3471,7 @@ game, X = `STEAMSCREENSHOTS_INTERFACE_VERSION003`):
 
 The script rejects a log given twice, maps each log to its game through
 `starts.log`, needs one log of each game and rejects a log whose start is
-earlier than `PLAN_COMMITTED` (set as for experiment 26). "experiment 27:
+earlier than `PLAN_COMMITTED` (the same time as for experiment 26). "experiment 27:
 match" only when both games match A to D.
 
 **What a match confirms:** nothing. A full match records X 3 as

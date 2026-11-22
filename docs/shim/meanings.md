@@ -1007,3 +1007,110 @@ Evidence (Linsips, the close calls; floating-point registers and the
 Under ADR 0051, positions 4, 1 and 23 of `SteamClient021` and 4, 1 and
 22 of `SteamClient023` are confirmed as `ReleaseUser`,
 `BReleaseSteamPipe` and `BShutdownIfAllPipesClosed`.
+
+## More candidates from the gap list (loop iteration 3)
+
+Pages: `ISteamUserStats` (read 2026-11-21, `RequestUserStats` checked
+again 2026-11-22), `ISteamUser` (2026-11-21),
+<https://partner.steamgames.com/doc/api/ISteamFriends> (2026-11-22),
+`ISteamInput` (2026-11-22). Correction made before the runs: the first
+version of this list named pages that had not been re-read for these
+entries; `RequestUserStats` and the `ISteamFriends` entry were then
+checked on their pages, the other entries rest on the pages as read on
+the dates given. Each entry
+is a candidate unless an experiment below confirms it.
+
+- **`STEAMUSERSTATS_INTERFACE_VERSION012` positions 0 and 10:** position 0
+  once early, position 10 once when the game closed (An Arcade Full of
+  Cats, One's Own Exile, A Park Full of Cats), both returning 1 with
+  leftovers in the registers. The page documents two functions without
+  arguments that return true or false: asking for the current stats, and
+  sending changed stats to the server. Candidates: 0 `RequestCurrentStats`,
+  10 `StoreStats`.
+- **`STEAMUSERSTATS_INTERFACE_VERSION013` position 15:** once early in
+  three games; `rdx` held the test account's own Steam ID (the value is
+  left out here, ADR 0050), the result looked like a random 64-bit
+  number. The page documents a function that takes a Steam ID and returns
+  a call handle for an asynchronous request of that user's stats.
+  Candidate: `RequestUserStats`. Not tested: confirming the handle needs
+  `Steam_GetAPICallResult` and the callbacks.
+- **`SteamInput006` position 0:** once at start, before any other
+  `SteamInput006` call, `rdx` 0 or 1, result 1. The page names an
+  initialization function that takes one true/false argument ("call
+  RunFrame yourself") and returns true or false. Candidate: `Init`.
+- **`SteamInput006` position 6:** every frame in three games; `rdx` an
+  address, result 0. The page documents a function that fills a buffer
+  with the handles of connected controllers and returns how many; no
+  controller was connected. Candidate: `GetConnectedControllers`.
+- **`SteamInput001` position 2:** every frame in four games, `rdx` an
+  address, the result register a leftover. Only a guess from the shape:
+  a per-frame function like `RunFrame` of `SteamInput006` position 3.
+  `SteamInput001` is an older version than the one the `ISteamInput` page
+  describes, and the address in `rdx` is not explained by that; no page
+  backs this entry yet.
+- **`SteamUser023` position 1:** once early, no argument used, result 1.
+  The `ISteamUser` page documents several functions without arguments
+  that return true or false; whether the client is connected to Steam is
+  the one a game would ask first. Candidate: `BLoggedOn` (also
+  `BIsBehindNAT` and the phone and two-factor checks fit the shape).
+- **`SteamFriends017` position 0:** once early, no argument used, result
+  an address in the heap. The `ISteamFriends` page documents one function
+  without arguments that returns text: the user's display name.
+  Candidate: `GetPersonaName`. That text is account data, so it is not
+  read (ADR 0043).
+
+### Experiment 12 (planned 2026-11-22, before the runs)
+
+Agent runs of An Arcade Full of Cats, One's Own Exile and A Park Full of
+Cats (UserStats012) and of Baldi's Basics, Chronigma and HoloCure
+(`SteamInput006`), each closed by a close request after about 30
+seconds.
+
+**Predictions** (`tools/shim/experiments/012_stats_and_input_init.py`):
+
+- A: position 0 of `STEAMUSERSTATS_INTERFACE_VERSION012` is called once,
+  within the first 3 seconds, returning true; position 10 once, at least
+  20 seconds later (at close), returning true.
+- B: position 0 of `SteamInput006` is the first `SteamInput006` call, is
+  called once and returns true.
+
+**Result of experiment 12** (agent runs after the plan was committed;
+logs: `observe-33776` An Arcade Full of Cats, `observe-612` One's Own
+Exile, `observe-50224` A Park Full of Cats, `observe-46700` Baldi's
+Basics, `observe-43372` Chronigma, `observe-8424` HoloCure):
+
+```text
+observe-33776.log A: position 0 at [63] ms, position 10 at [88250] ms -> match
+observe-33776.log B: first SteamInput006 call is position 3, 0 position-0 calls -> MISMATCH
+observe-612.log A: position 0 at [63] ms, position 10 at [87666] ms -> match
+observe-50224.log A: position 0 at [63] ms, position 10 at [87886] ms -> match
+observe-50224.log B: first SteamInput006 call is position 3, 0 position-0 calls -> MISMATCH
+observe-46700.log A: position 0 at [144] ms, position 10 at [] ms -> MISMATCH
+observe-46700.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-43372.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+observe-8424.log A: position 0 at [63] ms, position 10 at [] ms -> MISMATCH
+observe-8424.log B: first SteamInput006 call is position 0, 1 position-0 calls -> match
+experiment 12: MISMATCH
+```
+
+The games were closed about 86 to 89 seconds after the proxy started,
+not after about 30 seconds as planned (the waits of `run.sh` add up);
+no verdict depends on that.
+
+The script as committed reports **MISMATCH**, so nothing is confirmed
+(ADR 0051 needs a script-checked match). Why, without changing the
+script afterwards:
+
+- In the games each prediction named, both matched: A in An Arcade Full
+  of Cats, One's Own Exile and A Park Full of Cats; B in Baldi's Basics,
+  Chronigma and HoloCure.
+- The script applied both predictions to every log. Outside the named
+  games: Baldi's Basics and HoloCure called position 0 of
+  `STEAMUSERSTATS_INTERFACE_VERSION012` but not position 10 at close (a
+  game that changed no stat may well not store them), and An Arcade Full
+  of Cats and A Park Full of Cats used `SteamInput006` without ever
+  calling position 0 (`Init` is not needed by every game, or happens
+  elsewhere).
+- Lesson for the loop: the check script must encode which games each
+  prediction is about. A new experiment with such a script is needed to
+  confirm these positions; until then they stay candidates.

@@ -9,6 +9,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 3: seven new candidates and one narrowed (UserStats012 0/10,
+  UserStats013 15, SteamInput006 0/6, SteamInput001 2, SteamUser023 1,
+  SteamFriends017 0). Experiment 12 **mismatched** as scripted: the check
+  applied each prediction to all six logs, not only to the games it named;
+  nothing confirmed. Also caught and corrected before the runs: candidate
+  sources written without re-reading the pages.
 - 2026-11-22: loop iteration 2: UserStats 011/012 position 0 recorded as
   candidates (`RequestCurrentStats` or `StoreStats`, no experiment yet);
   experiment 11 matched (4 games): `SteamClient021` 4/1/23 and

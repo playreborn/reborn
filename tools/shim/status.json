@@ -212,6 +212,14 @@
     "3": [
       "candidate",
       "RunFrame"
+    ],
+    "0": [
+      "candidate",
+      "Init"
+    ],
+    "6": [
+      "candidate",
+      "GetConnectedControllers"
     ]
   },
   "SteamUser020": {
@@ -236,12 +244,38 @@
     "2": [
       "candidate",
       "GetSteamID"
+    ],
+    "1": [
+      "candidate",
+      "BLoggedOn (or another no-argument bool)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
     "0": [
       "candidate",
-      "RequestCurrentStats or StoreStats"
+      "RequestCurrentStats or StoreStats (start: RequestCurrentStats fits)"
+    ],
+    "10": [
+      "candidate",
+      "StoreStats or RequestCurrentStats (close: StoreStats fits)"
+    ]
+  },
+  "STEAMUSERSTATS_INTERFACE_VERSION013": {
+    "15": [
+      "candidate",
+      "RequestUserStats"
+    ]
+  },
+  "SteamInput001": {
+    "2": [
+      "candidate",
+      "shape only: per-frame call like RunFrame"
+    ]
+  },
+  "SteamFriends017": {
+    "0": [
+      "candidate",
+      "GetPersonaName"
     ]
   }
 }

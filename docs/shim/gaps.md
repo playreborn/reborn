@@ -9,15 +9,8 @@ Positions recorded: 205; confirmed: 94; open: 111.
 
 | Status | Games | Interface version | Position | Candidate |
 | --- | --- | --- | --- | --- |
-| not known | 5 | `SteamFriends017` | 0 |  |
-| not known | 5 | `SteamUser023` | 1 |  |
-| not known | 4 | `SteamInput001` | 2 |  |
-| not known | 3 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 10 |  |
-| not known | 3 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 15 |  |
 | not known | 3 | `SteamClient020` | 22 |  |
 | not known | 3 | `SteamClient021` | 22 |  |
-| not known | 3 | `SteamInput006` | 0 |  |
-| not known | 3 | `SteamInput006` | 6 |  |
 | not known | 3 | `SteamUtils010` | 34 |  |
 | not known | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 |  |
 | not known | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 |  |
@@ -105,14 +98,21 @@ Positions recorded: 205; confirmed: 94; open: 111.
 | candidate | 14 | `SteamInput006` | 3 | RunFrame |
 | candidate | 11 | `SteamUser023` | 2 | GetSteamID |
 | candidate | 9 | `SteamClient020` | 34 | SetWarningMessageHook |
-| candidate | 7 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 0 | RequestCurrentStats or StoreStats |
+| candidate | 7 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 0 | RequestCurrentStats or StoreStats (start: RequestCurrentStats fits) |
 | candidate | 6 | `SteamClient021` | 32 | SetWarningMessageHook |
+| candidate | 5 | `SteamFriends017` | 0 | GetPersonaName |
 | candidate | 5 | `SteamUser020` | 2 | GetSteamID |
+| candidate | 5 | `SteamUser023` | 1 | BLoggedOn (or another no-argument bool) |
 | candidate | 5 | `SteamUtils009` | 9 | GetAppID |
 | candidate | 4 | `SteamController007` | 2 | RunFrame |
+| candidate | 4 | `SteamInput001` | 2 | shape only: per-frame call like RunFrame |
 | candidate | 4 | `SteamUtils009` | 14 | GetCurrentBatteryPower |
 | candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 0 | RequestCurrentStats or StoreStats |
+| candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 10 | StoreStats or RequestCurrentStats (close: StoreStats fits) |
+| candidate | 3 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 15 | RequestUserStats |
 | candidate | 3 | `SteamClient023` | 30 | SetWarningMessageHook |
+| candidate | 3 | `SteamInput006` | 0 | Init |
+| candidate | 3 | `SteamInput006` | 6 | GetConnectedControllers |
 | candidate | 3 | `SteamUser021` | 2 | GetSteamID |
 | candidate | 2 | `STEAMAPPS_INTERFACE_VERSION008` | 4 | GetCurrentGameLanguage or GetAvailableGameLanguages |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |

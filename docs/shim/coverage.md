@@ -57,11 +57,11 @@ Positions are listed in the order of their numbers.
 | `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | confirmed: 0 CreateSteamPipe, 1 BReleaseSteamPipe, 2 ConnectToGlobalUser, 4 ReleaseUser, 5 GetISteam… (per interface), 8 GetISteam… (per interface), 9 GetISteamUtils, 10 GetISteam… (per interface), 11 GetISteam… (per interface), 12 GetISteamGenericInterface, 13 GetISteam… (per interface), 15 GetISteam… (per interface), 16 GetISteam… (per interface), 17 GetISteam… (per interface), 18 GetISteam… (per interface), 22 BShutdownIfAllPipesClosed, 23 GetISteam… (per interface), 25 GetISteam… (per interface), 26 GetISteam… (per interface), 27 GetISteam… (per interface), 31 GetISteam… (per interface), 32 GetISteam… (per interface), 33 GetISteam… (per interface), 34 GetISteam… (per interface), 35 GetISteam… (per interface), 36 GetISteam… (per interface); candidate: 30 SetWarningMessageHook |
 | `SteamController007` | 4 | 2 | candidate: 2 RunFrame |
 | `SteamController008` | 14 | 2 | candidate: 2 RunFrame |
-| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | not known |
+| `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | candidate: 0 GetPersonaName |
 | `SteamFriends018` | 1 | 6 9 36 | not known |
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | not known |
-| `SteamInput001` | 4 | 2 | not known |
-| `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | candidate: 3 RunFrame |
+| `SteamInput001` | 4 | 2 | candidate: 2 shape only: per-frame call like RunFrame |
+| `SteamInput006` | 14 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA); 0 3 6 (BB, CH, HC) | candidate: 0 Init, 3 RunFrame, 6 GetConnectedControllers |
 | `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | not known |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
@@ -72,10 +72,10 @@ Positions are listed in the order of their numbers.
 | `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID |
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 2 GetSteamID |
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
-| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 2 GetSteamID |
+| `SteamUser023` | 11 | 1 2 (BC, AC, OE, FS, PK); 2 (CM, LS, PT, PY, CH, CA) | candidate: 1 BLoggedOn (or another no-argument bool), 2 GetSteamID |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | candidate: 0 RequestCurrentStats or StoreStats, 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat; confirmed: 12 GetAchievementDisplayAttribute |
-| `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | candidate: 0 RequestCurrentStats or StoreStats |
-| `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | not known |
+| `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | candidate: 0 RequestCurrentStats or StoreStats (start: RequestCurrentStats fits), 10 StoreStats or RequestCurrentStats (close: StoreStats fits) |
+| `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | candidate: 15 RequestUserStats |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | candidate: 9 GetAppID, 14 GetCurrentBatteryPower |
 | `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower |
 

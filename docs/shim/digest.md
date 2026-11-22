@@ -16,6 +16,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: `SteamClient018` and `019` in the shim with the positions
+  experiment 24 confirmed (0, 1, 2, 3, 4, 5, 6, 9, 12, 23, 26);
+  `CreateLocalUser` writes pipe 2 and returns user 1 as recorded, 23 is
+  false while a pipe is open; getters on pipe 2 and positions 7, 34, 38
+  stop. No game runs further yet (7 and 34 come first).
 - 2026-11-22: shim session follow-up from the review of PR #42 (parallel
   agent, no runs): the socket connect waits at most `ANSWER_TIMEOUT`
   (`ConnectWaitMode::Timeout`) for the first connect and the reconnect;

@@ -2771,7 +2771,9 @@ the per-interface getters (`GetISteamUser`, `GetISteamGameServer`,
 `GetISteamController`, by their texts), 9 `GetISteamUtils`, 12
 `GetISteamGenericInterface`, 23 `BShutdownIfAllPipesClosed`; P and Q are
 pipes (positions 9 and 1). Position 7 stays narrowed, 34 a candidate, 38
-"objects". Not in the shim yet: it has no 018/019 objects.
+"objects". Now in the shim (`crates/shim/src/objects.rs`):
+the confirmed positions, with getters on pipe 2 stopping (no objects for
+the game server pipe).
 
 ## Three new games with stats (loop iteration 12a)
 

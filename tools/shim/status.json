@@ -261,7 +261,7 @@
     ],
     "6": [
       "candidate",
-      "GetAchievement, GetStat or GetGlobalStat"
+      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
@@ -271,7 +271,7 @@
     ],
     "5": [
       "candidate",
-      "GetAchievement, GetStat or GetAchievementAchievedPercent"
+      "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ]
   },
   "SteamInput001": {
@@ -303,7 +303,7 @@
   "STEAMREMOTESTORAGE_INTERFACE_VERSION016": {
     "13": [
       "candidate",
-      "FileExists, FilePersisted or FileForget"
+      "a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others)"
     ]
   }
 }

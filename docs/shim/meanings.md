@@ -1246,42 +1246,49 @@ an honest answer needs the account's inventory from Valve's servers.
 
 ## `STEAMREMOTESTORAGE_INTERFACE_VERSION016` position 13 (loop iteration 7)
 
+Page: <https://partner.steamgames.com/doc/api/ISteamRemoteStorage>
+(re-read 2026-11-22).
+
 - **Recorded** (reference runs): Bongo Cat and Linsips called it once
-  early, the only `STEAMREMOTESTORAGE_INTERFACE_VERSION016` call of the
-  run, with a file name as text in `rdx` (`presets.json`,
-  `progress.dat`); the result was 0 both times. Neither file had been
-  written to the test account's cloud.
-- **Fit:** the same shape as position 13 of
-  `STEAMREMOTESTORAGE_INTERFACE_VERSION014` above (a file name, a
-  true/false result; there the result was 1 for a file that existed).
-  The page (<https://partner.steamgames.com/doc/api/ISteamRemoteStorage>)
-  documents several functions that take only a file name and return true
-  or false. Candidates as for 014: `FileExists`, `FilePersisted` or
-  `FileForget`.
-- **No experiment yet:** all three return false for a file that is not
-  there and true for one that is; telling them apart needs to see
-  whether a file is still synced after the call, which the proxy cannot
-  observe. `FileForget` changes what is synced, so a shim answer waits
-  until the meaning is confirmed.
+  early (about 0.7 and 1.5 seconds), the only
+  `STEAMREMOTESTORAGE_INTERFACE_VERSION016` call of the run, with a file
+  name as text in `rdx` (`presets.json`, `progress.dat`); the result was
+  0 both times. In Bongo Cat `r8` held bytes of the file name, not an
+  address.
+- **Fit:** every function on the page that takes only a file name:
+  `FileExists`, `FilePersisted`, `FileForget`, `FileDelete` (true or
+  false), and `GetFileSize`, `GetFileTimestamp`, `GetSyncPlatforms`,
+  `FileShare`, `FileWriteStreamOpen` (other results, 0 possible for a
+  missing file). Position 13 of version 014 was narrowed to the first
+  three, but nothing shows that 016 keeps 014's order, and here no call
+  follows that would rule `FileDelete` out. All stay candidates.
+- **No experiment yet**, and no shim answer: several candidates change
+  what is stored or synced.
 
 ## UserStats: reading a value by name (loop iteration 7)
 
-Page: <https://partner.steamgames.com/doc/api/ISteamUserStats> (read
-2026-11-22 for experiment 12).
+Page: <https://partner.steamgames.com/doc/api/ISteamUserStats> (re-read
+2026-11-22).
 
 - **`STEAMUSERSTATS_INTERFACE_VERSION012` position 6:** One's Own Exile
   called it 16 times early with a name as text in `rdx` (for example
-  `Adornments`), `r8` an address, result 1; Fallout Shelter 35 times with
-  no text in `rdx`, result 0. Same shape as position 6 of
-  `STEAMUSERSTATS_INTERFACE_VERSION011` above. Candidates as there:
-  `GetAchievement`, `GetStat` or `GetGlobalStat`.
+  `Adornments`), the same `r8` address each time, result 1. Fallout
+  Shelter called it 35 times, 27 of them with a name as text in `rdx` and
+  `r9` the length of the name plus one (a leftover), all with result 0.
 - **`STEAMUSERSTATS_INTERFACE_VERSION013` position 5:** Cartapli called it
   19 times within 5 ms at start, each with an achievement-like name as
-  text in `rdx` (`CLEAR_TUTORIAL_ACHIEVEMENT` and so on), `r8` an address,
-  `r9` the length of the name plus one (a leftover); 11 results were 1, 8
-  were 0. Bongo Cat called it once with `PET_1`, result 1. Candidates:
-  the page's functions that take a name and an output pointer and return
-  true or false: `GetAchievement`, `GetStat` (two kinds),
-  `GetAchievementAchievedPercent`. Not tested yet: telling them apart
-  needs the bytes written at `r8` (ADR 0043, 0053) and a game whose
-  achievement state is known.
+  text in `rdx` (`CLEAR_TUTORIAL_ACHIEVEMENT` and so on), the same `r8`
+  address each time, `r9` the length of the name plus one; 12 results
+  were 1, 7 were 0. Bongo Cat called it once with `PET_1`, result 1.
+- **Fit, for both:** the functions on the page that take a name and an
+  output pointer and return true or false: `GetAchievement`, `GetStat`
+  (two kinds), `GetGlobalStat` (two kinds),
+  `GetAchievementAchievedPercent`. (Experiment 2 ruled the last one out
+  for position 6 of version 011, not for these versions.)
+  `GetAchievementAndUnlockTime` needs a pointer in `r9`, which held a
+  length in Fallout Shelter and Cartapli. If `r8` were a leftover too,
+  the name-only writes `SetAchievement`, `ClearAchievement` and
+  `SetStat` (float, value in a floating-point register) would also fit;
+  a constant `r8` across 19 different names fits an output slot better,
+  but nothing recorded rules them out. All stay candidates; telling them
+  apart needs the bytes written at `r8` (ADR 0043, 0053).

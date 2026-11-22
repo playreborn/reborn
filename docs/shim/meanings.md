@@ -1557,6 +1557,70 @@ with the account's own stats and may show a mismatch. The three
 `…VERSION011` games, Cave Crawlers, Gravitas and Dark Deception, got
 exactly one 0x44d per run in experiments 20 and 21.
 
+### Experiment 30 (planned 2026-11-22, before the runs; loop iteration 14a)
+
+The first live run of the stats shadow above, in Cave Crawlers
+(2143030), Gravitas (1067310) and Dark Deception (332950), one fresh
+`run.sh` run each, armed with `reborn-observe arm --app <id>`.
+
+**Conditions for the runs.** `rebornd` is signed in to the test account
+with the stored login while the official client runs and stays signed in
+to the same account (the maintainer allowed such shadow runs on
+2026-11-22, ADR 0055 stage 1). The agent stops at once, and the run does
+not count, if Steam asks for Steam Guard or any other sign-in step, or
+if either client is logged off or kicked (ADR 0055, "Two sign-ins at
+once"; LOOP.md "Stop and ask the maintainer"). Each game stays running
+for at least a minute after its start, so that the shadow worker (which
+waits up to 30 s for `StatsReceived`) can write its line before the game
+exits. `rebornd` is shut down after the runs.
+
+**What the proxy writes** (`crates/shim-observe/src/proxy.rs`,
+`observe_return` and `answer_asks`; `daemon.rs`,
+`compare_stats_received`): the step-4b line
+`<ms> ms ThreadId(<t>) Steam_BGetCallback return <n> wrote rdx->[…] …`
+for a header naming 0x44d, and later, from the shadow worker,
+`<ms> ms ThreadId(<t>) Steam_BGetCallback return <n> callback 0x44d <note>`
+with the same `<ms>`, `<t>` and `<n>`, where `<note>` is
+`shadow match`, `shadow mismatch`, `shadow: no Reborn answer (<why>)`,
+`shadow: no app ID given`, `shadow: skipped, <why>` or
+`shadow: no worker thread`.
+
+**Predictions** (`tools/shim/experiments/030_stats_shadow.py`), per
+game:
+
+- A: the log has at least one step-4b line for callback 0x44d;
+- B: every such line is followed by exactly one stats shadow line with
+  the same thread and call number, and no stats shadow line is without
+  one;
+- C: every stats shadow line says exactly `shadow match` (no mismatch,
+  no "no Reborn answer", nothing skipped).
+
+All three games must match. The script rejects a log given twice, logs
+not recorded by `run.sh` for these games (`observelog.app_of`) and logs
+whose start (`observelog.start_of`) is earlier than the plan commit
+(`PLAN_COMMITTED`, set in a follow-up commit). It prints only counts,
+the kind of each note and match or MISMATCH: no payload bytes, IDs,
+registers or reason texts.
+
+**What a full match confirms** (ADR 0055 stage 1, `RequestCurrentStats`
+"compared by 0x44d's size and … its confirmed fields"): in three games
+the stats-received callback Reborn would deliver agrees with the official
+one in size (24), app ID (bytes 0..4) and `EResult` (bytes 8..12), with
+`rebornd`'s `StatsReceived` from Valve's servers. **What stays open:**
+
+- bytes 12..20 (read as the user's Steam ID) are not compared; the
+  experiment ADR 0055 stage 0 asks for (compare them with the account's
+  own Steam ID, match or mismatch only) still has to run before the shim
+  writes that field; bytes 4..8 and 20..24 stay unexplained;
+- achievement names are not covered (0x44d has none); they need the
+  separate `GetAchievementDisplayAttribute` shadow;
+- answer mode for stats is not allowed by this result: it needs the
+  maintainer's OK and, per game, every account-data call matched in
+  shadow mode (ADR 0055 stage 2).
+
+A mismatch or "no Reborn answer" is recorded as such; nothing is
+changed in the shim to make it match without a new plan.
+
 ## Callback delivery: `Steam_BGetCallback`, `Steam_FreeLastCallback`, `Steam_GetAPICallResult` (loop iteration 9b)
 
 Pages read 2026-11-22, both opened without signing in:

@@ -61,3 +61,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0053](0053-agent-adds-reads.md) | The agent adds proxy reads itself | Accepted |
 | [0054](0054-agent-lists-callbacks.md) | The agent lists callback numbers itself | Accepted |
 | [0055](0055-real-account-data-for-the-shim.md) | Real account data for the shim | Accepted |
+| [0056](0056-call-results-persona-name-extra-recordings.md) | Call results, the persona name, and recordings of other games | Accepted |

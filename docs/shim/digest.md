@@ -16,6 +16,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: experiment 25 planned (parallel agent, no runs): first
+  recordings of VPet-Simulator (1920960), Pixel Puzzles Ultimate Jigsaw
+  Puzzles (351030) and Super Jigsaw Puzzle: Generations (1036950), a
+  survey of their calls and a search for a third `StoreStats` → 0x44e
+  game (ADR 0055); no license added, PR on `loop/plan-12a`.
 - 2026-11-22: ADR 0055 stage 0, first part (parallel agent, no runs):
   shim protocol 0.2 with `AppOwnership`, `Ownership` and `Unavailable`;
   once shim mode is entered, `rebornd` takes the run's ownership set from

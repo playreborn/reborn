@@ -2759,3 +2759,138 @@ the per-interface getters (`GetISteamUser`, `GetISteamGameServer`,
 `GetISteamGenericInterface`, 23 `BShutdownIfAllPipesClosed`; P and Q are
 pipes (positions 9 and 1). Position 7 stays narrowed, 34 a candidate, 38
 "objects". Not in the shim yet: it has no 018/019 objects.
+
+## Three new games with stats (loop iteration 12a)
+
+ADR 0055 ("Decided by the maintainer") asks for a third recorded game that
+calls `StoreStats` before its stats-store stage; today only Cave Crawlers
+(`…VERSION011` position 10) and Bongo Cat (`…VERSION013` position 9) are
+recorded doing it (experiment 23). This iteration plans first recordings
+of three free games from `recording-candidates.md` whose store pages list
+**Stats** and **Steam Achievements**. A feature on the store page makes a
+stats call likely, not certain; which `STEAMUSERSTATS_INTERFACE_VERSION0xx`
+a game asks for, and which positions it calls, shows only in a recording.
+
+| App | Name | Store page, re-read 2026-11-22 (one fetch each) | Min. disk |
+| --- | --- | --- | --- |
+| 1920960 | VPet-Simulator | free to play; Single-player, Online Co-op, Steam Achievements, Steam Workshop, Steam Cloud, Stats, Steam Leaderboards; no EULA, third-party account or anti-cheat named | 1 GB |
+| 351030 | Pixel Puzzles Ultimate Jigsaw Puzzles | free to play (paid DLC); Single-player, Steam Achievements, Steam Cloud, Stats, Steam Leaderboards; no EULA, third-party account or anti-cheat named | 300 MB |
+| 1036950 | Super Jigsaw Puzzle: Generations | free to play (paid DLC); Single-player, Steam Achievements, Stats, Steam Leaderboards, Steam Cloud; no EULA, third-party account or anti-cheat named | 650 MB |
+
+None of the three pages says whether the game is 64-bit; that shows only
+after installing (`m4-games.md`). A 32-bit game cannot be recorded by the
+proxy yet (noted for M5), and its part of the experiment is then a
+mismatch.
+
+This plan names the three games, so under ADR 0044 and 0052 their free
+licenses may be added to the test account for this experiment (3 of the
+50 a day), each after checking size and price once more right before
+adding it. Ownership stays real (red line 3); the account owns none of
+their paid DLC, and nothing claims otherwise.
+
+### Experiment 25 (planned 2026-11-22, before the runs)
+
+0x44e and 703 are already in `PAYLOAD_LISTED` (experiments 20 and 22);
+nothing new to list.
+
+**Runs:** one fresh log per game with `tools/shim/run.sh <app id>`, each
+run to the game's first screen and closed by a close request ("first
+screen + close"). **No input is planned.** Under ADR 0049 input would be
+allowed only to reach the screen this run needs (past a launcher or a
+language choice); it is never sent to play, to change a stat or to earn an
+achievement or any other reward (red lines 4 and 5). Any stats write in
+these runs is one the game makes by itself through the official client, as
+in experiment 23; it is not the Reborn-initiated live stats write of ADR
+0055, for which the maintainer is asked again before its single run.
+
+**Honest expectation:** games call `StoreStats` when a stat changed. A
+game that changes nothing between its first screen and the close request
+stores nothing, and then A to E below have nothing to check, which counts
+as a **mismatch** ("nothing checked" is not a match). A store may also
+come only at close; if the game exits before polling its callbacks
+again, the 0x44e is missing and A mismatches (the risk named in
+experiment 23). Both outcomes are recorded as they are; the run is not
+repeated with input to provoke a store.
+
+**Risk, VPet-Simulator:** a desktop pet may hide in the notification area
+on a close request instead of exiting. If it has not exited two minutes
+after the close request, the agent stops and reports (ADR 0044); it does
+not force a kill.
+
+**Predictions** (`tools/shim/experiments/025_new_stats_games.py`, one log
+per game). The positions are not known in advance, so `StoreStats` is
+predicted over **any position of the game's
+`STEAMUSERSTATS_INTERFACE_VERSION0xx`**: a position T *qualifies* when
+its calls pair one to one, in order, with the 0x44e callbacks of the log
+(as many calls as callbacks, the i-th callback 0 to 1000 ms after the
+i-th call, no 0x44e before the first call). This is the shape of
+experiment 23's A, with the position found instead of named.
+
+- S (survey, no verdict): every interface and position the game called,
+  with call counts. LOOP step 2 data for later rows of `gaps.md`.
+- U: the game calls at least one position of a
+  `STEAMUSERSTATS_INTERFACE_VERSION0xx` interface.
+- A: at least one 0x44e callback, and exactly one (interface, position)
+  of the game's UserStats interfaces qualifies as T.
+- B: every 0x44e has size 16, bytes 0..4 the app ID, bytes 4..8 zero,
+  bytes 8..12 = 1 (`k_EResultOK`). Bytes 12..16 are not predicted.
+- C: every call of T returns a `bool` true (lowest byte 1, upper 32 bits
+  zero, not a call handle), and no 703 between the i-th call of T and the
+  i-th 0x44e has 1102 in bytes 8..12 (a 703 in between without payload
+  bytes is a mismatch).
+- D: no call of T has a text argument (rules out
+  `IndicateAchievementProgress`).
+- E: at least one call of T has a lowest `rdx` byte other than 0 and 1
+  (rules out `ResetAllStats` under experiment 23's assumption that a
+  `bool` argument arrives as 0 or 1 in the lowest byte of `rdx`).
+- F: if T's interface has a confirmed `StoreStats` position (`…VERSION011`
+  position 10, `…VERSION013` position 9), T is that position. For any
+  other version (including `…VERSION012`, whose position 10 is narrowed to
+  `StoreStats` or `ResetAllStats`, experiment 13) F only prints T.
+
+The script prints a verdict per game (U, A to F) and "experiment 25:
+match" only when all three named games have a fresh log and every
+prediction matches.
+
+**What a match confirms** (fixed now, before the runs):
+
+- **Per game** (U and A to F all match for that game): that game is a
+  recorded game showing the `StoreStats` → `UserStatsStored_t` exchange
+  (a call of T, then exactly one 0x44e with the app ID, zero and result
+  1). ADR 0055's three-game rule asks for such a recording, not for a new
+  meaning, so each game that matches counts as a game for that rule. If T
+  is `…VERSION011` position 10 or `…VERSION013` position 9, it is a
+  further game for an already confirmed meaning (experiment 23).
+- **Full match** (all three games): the above for each, and B and C in
+  three more games for the layout of 0x44e (experiment 23's confirmation
+  is not widened: still among the structs of the `ISteamUserStats` page).
+- **Not confirmed by a match:** the meaning of any T that is **not** an
+  already confirmed position (`…VERSION012` position 10, a position of
+  another version, or a new version). Such a T was picked by the data,
+  not named in advance, so it is recorded as **"narrowed: `StoreStats`
+  (experiment 25)"** under experiment 23's assumption and needs its own
+  experiment that names it beforehand. For `…VERSION012` position 10 a
+  match with E is written down as evidence against `ResetAllStats` there,
+  not as a confirmation.
+
+**What stays a candidate:** bytes 12..16 of 0x44e; any other result code;
+a struct of another page with the same content and trigger (as in
+experiment 23); every position in the survey S (S is data, not a test).
+
+**A game that matches nothing:** if a game shows no 0x44e (no store, a
+store only at exit, or no UserStats interface at all), its part is a
+mismatch and the three-game rule stays open; the next attempt is a new
+plan, not a re-run with input.
+
+**Freshness:** a log whose `start` line in `starts.log` is earlier than
+`PLAN_COMMITTED` is rejected; the script holds the commit time of the
+final plan on `loop/plan-12a` (local time, as `run.sh` writes
+`starts.log`), set in a follow-up commit. Until then the placeholder
+(2099) rejects every log.
+
+**Already seen:** with `GAMES` changed to Bongo Cat and Cave Crawlers and
+the plan time lifted (a scratch copy, not committed), the script finds
+`…VERSION013` position 9 in `observe-42296` and `…VERSION011` position 10
+in `observe-20708` as the only qualifying positions, and U and A to F
+match in both. That checks the search, not the new games: none of the
+three was ever recorded.

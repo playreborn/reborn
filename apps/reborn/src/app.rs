@@ -11,8 +11,9 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Subscription, Task};
 use reborn_ipc::protocol::{
-    AchievementInfo, ChatMessageInfo, CloudRestoreResult, FriendInfo, FriendRelationship,
-    FriendStatus, GuardCode, InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp,
+    AchievementInfo, ChatMessageInfo, CloudAnswer, CloudChoice, CloudConflictFile,
+    CloudRestoreResult, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job,
+    JobKind, JobResult, JobState, OwnStatus, OwnedApp,
 };
 use reborn_ipc::{ChatText, Client, Event, Request, Response, Secret};
 
@@ -132,6 +133,9 @@ pub enum Message {
     Quit,
     QuitDone(Result<Response, String>),
     Play(u32),
+    /// The user answered a cloud conflict (ADR 0055): start again with this
+    /// version; `None` cancels.
+    CloudChoice(u32, Option<CloudChoice>),
     PlayDone(u32, Result<Response, String>),
     Uninstall(u32),
     UninstallDone(Result<Response, String>),
@@ -192,6 +196,9 @@ pub struct App {
     starting: BTreeSet<u32>,
     /// The app whose "Uninstall" was clicked once; a second click deletes.
     confirm_uninstall: Option<u32>,
+    /// A shim-mode launch refused by a true cloud conflict, waiting for the
+    /// user to pick a version (ADR 0055).
+    cloud_conflict: Option<(u32, Vec<CloudConflictFile>)>,
     settings: Option<SettingsView>,
     library_input: String,
     /// `None` until loaded.
@@ -240,6 +247,7 @@ impl App {
             running: BTreeSet::new(),
             starting: BTreeSet::new(),
             confirm_uninstall: None,
+            cloud_conflict: None,
             settings: None,
             library_input: String::new(),
             friends: None,
@@ -656,22 +664,17 @@ impl App {
                     None => iced::exit(),
                 }
             }
-            Message::Play(app_id) => {
-                self.starting.insert(app_id);
-                self.notice = None;
-                match &self.client {
-                    Some(client) => Task::perform(
-                        daemon::request(
-                            Arc::clone(client),
-                            Request::Launch {
-                                app_id,
-                                library: None,
-                                option: None,
-                            },
-                        ),
-                        move |result| Message::PlayDone(app_id, result),
-                    ),
-                    None => Task::none(),
+            Message::Play(app_id) => self.launch(app_id, None),
+            Message::CloudChoice(app_id, choice) => {
+                // The answer names exactly the conflicts the user was shown;
+                // any other the daemon finds is asked again.
+                let shown = self.cloud_conflict.take();
+                match (choice, shown) {
+                    (Some(choice), Some((shown_app, files))) if shown_app == app_id => {
+                        let answer = CloudAnswer::for_conflicts(choice, &files);
+                        self.launch(app_id, Some(answer))
+                    }
+                    _ => Task::none(),
                 }
             }
             Message::Uninstall(app_id) => {
@@ -747,6 +750,9 @@ impl App {
                     Ok(Response::Launched { app_id }) => {
                         self.running.insert(app_id);
                     }
+                    Ok(Response::CloudConflict { app_id, files }) => {
+                        self.cloud_conflict = Some((app_id, files));
+                    }
                     Ok(_) => {}
                     Err(error) => self.notice = Some(format!("Cannot start the game: {error}")),
                 }
@@ -760,6 +766,61 @@ impl App {
                 iced::exit()
             }
         }
+    }
+
+    /// The name of an owned app, or `App <ID>`.
+    fn app_name(&self, app_id: u32) -> String {
+        self.owned
+            .iter()
+            .find(|app| app.app_id == app_id)
+            .map(|app| app.name.clone())
+            .unwrap_or_else(|| format!("App {app_id}"))
+    }
+
+    /// Asks the daemon to start a game, with the user's answer to a cloud
+    /// conflict if there was one.
+    fn launch(&mut self, app_id: u32, cloud_choice: Option<CloudAnswer>) -> Task<Message> {
+        self.starting.insert(app_id);
+        self.notice = None;
+        match &self.client {
+            Some(client) => Task::perform(
+                daemon::request(
+                    Arc::clone(client),
+                    Request::Launch {
+                        app_id,
+                        library: None,
+                        option: None,
+                        cloud_choice,
+                    },
+                ),
+                move |result| Message::PlayDone(app_id, result),
+            ),
+            None => Task::none(),
+        }
+    }
+
+    /// The question after a true cloud conflict (ADR 0055): which version
+    /// to play with; the other is kept as a backup.
+    fn cloud_conflict_view(&self) -> Option<Element<'_, Message>> {
+        let (app_id, files) = self.cloud_conflict.as_ref()?;
+        let app_id = *app_id;
+        let name = self.app_name(app_id);
+        let mut question =
+            column![text(cloud_conflict_question(&name, files)).style(text::warning)].spacing(6);
+        for file in files {
+            question = question.push(text(cloud_conflict_line(file)).size(12));
+        }
+        question = question.push(
+            row![
+                button("Play with Reborn's saves")
+                    .on_press(Message::CloudChoice(app_id, Some(CloudChoice::Local))),
+                button("Play with the Steam Cloud saves")
+                    .on_press(Message::CloudChoice(app_id, Some(CloudChoice::Cloud))),
+                button("Cancel").on_press(Message::CloudChoice(app_id, None)),
+            ]
+            .spacing(8),
+        );
+        Some(question.into())
     }
 
     fn can_sign_in(&self) -> bool {
@@ -986,12 +1047,7 @@ impl App {
                 Task::none()
             }
             Event::CloudRestore { app_id, result } => {
-                let name = self
-                    .owned
-                    .iter()
-                    .find(|app| app.app_id == app_id)
-                    .map(|app| app.name.clone())
-                    .unwrap_or_else(|| format!("App {app_id}"));
+                let name = self.app_name(app_id);
                 self.notice = Some(cloud_restore_notice(&name, &result));
                 Task::none()
             }
@@ -1040,6 +1096,9 @@ impl App {
         let mut page = column![self.header(), rule::horizontal(1)].spacing(12);
         if let Some(notice) = &self.notice {
             page = page.push(text(notice.clone()).style(text::warning));
+        }
+        if let Some(question) = self.cloud_conflict_view() {
+            page = page.push(question);
         }
         page = page.push(body);
         if let Some(path) = &self.library_path {
@@ -1702,6 +1761,38 @@ impl App {
     }
 }
 
+/// The question after a true cloud conflict in shim mode (ADR 0055).
+fn cloud_conflict_question(name: &str, files: &[CloudConflictFile]) -> String {
+    let count = match files.len() {
+        1 => "1 save differs".to_owned(),
+        count => format!("{count} saves differ"),
+    };
+    format!(
+        "{name} was not started: {count} between Reborn's cloud folder and Steam Cloud, and \
+         Reborn cannot tell on its own which one to keep. Reborn's cloud folder was not \
+         changed. Which version do you want to play with? The other one is kept as a backup. \
+         Saves made here stay on this computer; the official client does not see them."
+    )
+}
+
+/// One conflicting file, with readable times.
+fn cloud_conflict_line(file: &CloudConflictFile) -> String {
+    let time = |seconds: u64| u32::try_from(seconds).map_or_else(|_| seconds.to_string(), utc_time);
+    let how = if file.had_base {
+        "both changed since the last download"
+    } else {
+        "no earlier download known"
+    };
+    format!(
+        "{}: here {} bytes (changed {}), in Steam Cloud {} bytes (changed {}); {how}",
+        file.name,
+        file.local_size,
+        file.local_modified.map_or_else(|| "?".to_owned(), time),
+        file.cloud_size,
+        time(file.cloud_modified)
+    )
+}
+
 /// The notice for saves restored before a game start (ADR 0035).
 fn cloud_restore_notice(name: &str, result: &CloudRestoreResult) -> String {
     match result {
@@ -1854,6 +1945,48 @@ mod tests {
             .map(|a| a.name.as_str())
             .collect();
         assert_eq!(names, ["d", "b", "a", "c"]);
+    }
+
+    #[test]
+    fn the_cloud_conflict_question_says_nothing_changed_and_what_is_kept() {
+        let file = CloudConflictFile {
+            name: "MainPlayerData.json".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 10,
+            local_modified: Some(0),
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 11,
+            cloud_modified: 86_400,
+            had_base: false,
+        };
+        let question = cloud_conflict_question("Cave Crawlers", std::slice::from_ref(&file));
+        assert!(question.starts_with("Cave Crawlers was not started: 1 save differs"));
+        assert!(question.contains("cloud folder was not changed"));
+        assert!(question.contains("kept as a backup"));
+        assert!(question.contains("official client does not see them"));
+        let two = cloud_conflict_question("Demo", &[file.clone(), file.clone()]);
+        assert!(two.contains("2 saves differ"), "{two}");
+        let line = cloud_conflict_line(&file);
+        assert!(line.contains("1970-01-01 00:00 UTC"), "{line}");
+        assert!(line.contains("1970-01-02 00:00 UTC"), "{line}");
+        assert!(line.contains("no earlier download known"), "{line}");
+    }
+
+    #[test]
+    fn a_cloud_answer_names_exactly_the_shown_conflicts() {
+        let file = CloudConflictFile {
+            name: "a.json".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 1,
+            local_modified: None,
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 1,
+            cloud_modified: 1,
+            had_base: true,
+        };
+        let answer = CloudAnswer::for_conflicts(CloudChoice::Local, &[file]);
+        assert_eq!(answer.files.len(), 1);
+        assert_eq!(answer.files[0].cloud_sha1, "cc".repeat(20));
     }
 
     #[test]

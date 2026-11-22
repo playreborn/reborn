@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Incompatible changes increase the major version.
 pub const PROTOCOL_MAJOR: u16 = 1;
 /// Compatible additions increase the minor version.
-pub const PROTOCOL_MINOR: u16 = 12;
+pub const PROTOCOL_MINOR: u16 = 13;
 
 /// A password or Steam Guard code on its way to the daemon.
 ///
@@ -164,6 +164,14 @@ pub enum Request {
         library: Option<PathBuf>,
         /// Launch entry index (`None`: the default entry for this computer).
         option: Option<u32>,
+        /// The user's answer to a [`Response::CloudConflict`] (ADR 0055):
+        /// which version to play with, and the conflicts the user was
+        /// shown. It resolves only those exact conflicts; any other is
+        /// asked again. `None`: no answer, so a true conflict refuses a
+        /// shim-mode launch. Ignored outside shim mode. Added in
+        /// protocol 1.13.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cloud_choice: Option<CloudAnswer>,
     },
     /// Remove an installed app: its game folder, download leftovers and
     /// appmanifest (ADR 0018). Permanent. Refused while the app is running,
@@ -369,6 +377,18 @@ pub enum Response {
     Launched {
         /// The app.
         app_id: u32,
+    },
+    /// Answer to [`Request::Launch`] in shim mode: both the file in
+    /// Reborn's cloud folder and the cloud version changed since the
+    /// version last downloaded (a true conflict, ADR 0055). Nothing was
+    /// written and the game was not started. The frontend asks the user
+    /// which version to play with and sends the launch again with
+    /// `cloud_choice`. Added in protocol 1.13.
+    CloudConflict {
+        /// The app.
+        app_id: u32,
+        /// The files in conflict.
+        files: Vec<CloudConflictFile>,
     },
     /// The request was carried out.
     Ok,
@@ -596,6 +616,77 @@ pub enum Event {
         /// What happened.
         result: CloudRestoreResult,
     },
+}
+
+/// Which version of conflicting cloud files to play with (ADR 0055).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudChoice {
+    /// The file in Reborn's cloud folder; the cloud version is kept as a
+    /// backup.
+    Local,
+    /// The version in Steam Cloud; the local file is kept as a backup.
+    Cloud,
+}
+
+/// The user's answer to a [`Response::CloudConflict`] (ADR 0055).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudAnswer {
+    /// The version to play with.
+    pub choice: CloudChoice,
+    /// The conflicts the user was shown when choosing.
+    pub files: Vec<CloudShownFile>,
+}
+
+impl CloudAnswer {
+    /// The answer `choice` for exactly the conflicts in `files`, as a
+    /// [`Response::CloudConflict`] listed them.
+    pub fn for_conflicts(choice: CloudChoice, files: &[CloudConflictFile]) -> Self {
+        Self {
+            choice,
+            files: files
+                .iter()
+                .map(|file| CloudShownFile {
+                    name: file.name.clone(),
+                    local_sha1: file.local_sha1.clone(),
+                    cloud_sha1: file.cloud_sha1.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One conflict as the user was shown it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudShownFile {
+    /// The file's name in the cloud.
+    pub name: String,
+    /// SHA-1 of the local file shown.
+    pub local_sha1: String,
+    /// SHA-1 of the cloud version shown.
+    pub cloud_sha1: String,
+}
+
+/// One file in a true cloud conflict (ADR 0055), for asking the user.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudConflictFile {
+    /// The file's name in the cloud.
+    pub name: String,
+    /// SHA-1 of the file in Reborn's folder (40 lowercase hex digits).
+    pub local_sha1: String,
+    /// Size of the file in Reborn's folder.
+    pub local_size: u64,
+    /// Its change time, seconds since 1970, if known.
+    pub local_modified: Option<u64>,
+    /// SHA-1 of the cloud version (40 lowercase hex digits).
+    pub cloud_sha1: String,
+    /// Size of the cloud version.
+    pub cloud_size: u64,
+    /// Change time in the cloud, seconds since 1970.
+    pub cloud_modified: u64,
+    /// Whether Reborn knew the version last downloaded: `true` means both
+    /// changed since, `false` that Reborn cannot tell which is newer.
+    pub had_base: bool,
 }
 
 /// What restoring saves before a game start did (ADR 0035). The game
@@ -930,11 +1021,20 @@ mod tests {
                 app_id: 480,
                 library: None,
                 option: None,
+                cloud_choice: None,
             },
         };
+        // Without a choice the frame is the same as before protocol 1.13.
         assert_eq!(
             serde_json::to_string(&frame).unwrap(),
             r#"{"id":2,"request":{"type":"launch","app_id":480,"library":null,"option":null}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<ClientFrame>(
+                r#"{"id":2,"request":{"type":"launch","app_id":480,"library":null,"option":null}}"#
+            )
+            .unwrap(),
+            frame
         );
         assert_eq!(
             serde_json::to_string(&Event::GameExited {
@@ -943,6 +1043,53 @@ mod tests {
             })
             .unwrap(),
             r#"{"type":"game_exited","app_id":480,"exit_code":0}"#
+        );
+    }
+
+    #[test]
+    fn cloud_conflict_json() {
+        let file = CloudConflictFile {
+            name: "MainPlayerData.json".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 44_800,
+            local_modified: Some(1_763_800_000),
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 44_850,
+            cloud_modified: 1_763_800_100,
+            had_base: true,
+        };
+        let response = Response::CloudConflict {
+            app_id: 2_143_030,
+            files: vec![file.clone()],
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let (aa, cc) = ("aa".repeat(20), "cc".repeat(20));
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"type":"cloud_conflict","app_id":2143030,"files":[{{"name":"MainPlayerData.json","local_sha1":"{aa}","local_size":44800,"local_modified":1763800000,"cloud_sha1":"{cc}","cloud_size":44850,"cloud_modified":1763800100,"had_base":true}}]}}"#
+            )
+        );
+        assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);
+
+        // The answer names exactly the conflicts shown.
+        let request = Request::Launch {
+            app_id: 2_143_030,
+            library: None,
+            option: None,
+            cloud_choice: Some(CloudAnswer::for_conflicts(CloudChoice::Cloud, &[file])),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"type":"launch","app_id":2143030,"library":null,"option":null,"cloud_choice":{{"choice":"cloud","files":[{{"name":"MainPlayerData.json","local_sha1":"{aa}","cloud_sha1":"{cc}"}}]}}}}"#
+            )
+        );
+        assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), request);
+        assert_eq!(
+            serde_json::to_string(&CloudChoice::Local).unwrap(),
+            r#""local""#
         );
     }
 

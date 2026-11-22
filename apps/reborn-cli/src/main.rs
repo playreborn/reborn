@@ -1042,6 +1042,12 @@ enum DaemonCommand {
         /// Launch entry index (defaults to the entry for this computer).
         #[arg(long)]
         option: Option<u32>,
+        /// After a cloud conflict in shim mode (ADR 0055): play with the
+        /// `local` files in Reborn's cloud folder or the `cloud` version,
+        /// after confirming the conflicting files; the other is kept as a
+        /// backup.
+        #[arg(long, value_parser = ["local", "cloud"])]
+        cloud: Option<String>,
     },
     /// Print events from the daemon until Ctrl+C.
     Watch,
@@ -1088,19 +1094,78 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             app_id: *app_id,
             library: library.clone(),
         },
+        // Always sent without an answer first: a cloud conflict is only
+        // resolved after the user saw it (below).
         DaemonCommand::Launch {
             app_id,
             library,
             option,
+            ..
         } => Request::Launch {
             app_id: *app_id,
             library: library.clone(),
             option: *option,
+            cloud_choice: None,
         },
         DaemonCommand::Shutdown => Request::Shutdown,
     };
+    let cloud_choice = match &command {
+        DaemonCommand::Launch { cloud, .. } => cloud.as_deref().map(|choice| match choice {
+            "cloud" => reborn_ipc::protocol::CloudChoice::Cloud,
+            _ => reborn_ipc::protocol::CloudChoice::Local,
+        }),
+        _ => None,
+    };
 
-    let response = client.request(request).await?;
+    let mut response = client.request(request.clone()).await?;
+    if let (Response::CloudConflict { app_id, files }, Request::Launch { .. }) =
+        (&response, &request)
+    {
+        print_cloud_conflict(*app_id, files);
+        let Some(choice) = cloud_choice else {
+            println!(
+                "Start it again with `--cloud local` to play with Reborn's files or \
+                 `--cloud cloud` to play with the Steam Cloud version; you are asked to \
+                 confirm the files first, and the other version is kept as a backup."
+            );
+            return Ok(());
+        };
+        let version = match choice {
+            reborn_ipc::protocol::CloudChoice::Cloud => "the Steam Cloud version",
+            _ => "Reborn's files",
+        };
+        let confirm = prompt_line(&format!(
+            "Play with {version} for these {} files? Type `yes` to confirm: ",
+            files.len()
+        ))?;
+        if confirm != "yes" {
+            println!("Not started; nothing was changed.");
+            return Ok(());
+        }
+        let Request::Launch {
+            app_id,
+            library,
+            option,
+            ..
+        } = request
+        else {
+            unreachable!("matched above");
+        };
+        let answer = reborn_ipc::protocol::CloudAnswer::for_conflicts(choice, files);
+        response = client
+            .request(Request::Launch {
+                app_id,
+                library,
+                option,
+                cloud_choice: Some(answer),
+            })
+            .await?;
+        if let Response::CloudConflict { app_id, files } = &response {
+            print_cloud_conflict(*app_id, files);
+            println!("The saves changed again while you chose; start it again to see them.");
+            return Ok(());
+        }
+    }
     match response {
         Response::Error { message } => bail!("rebornd: {message}"),
         Response::Status {
@@ -1214,6 +1279,35 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
         other => println!("{other:?}"),
     }
     Ok(())
+}
+
+/// Prints a cloud conflict that refused a shim-mode launch (ADR 0055).
+fn print_cloud_conflict(app_id: u32, files: &[reborn_ipc::protocol::CloudConflictFile]) {
+    println!(
+        "App {app_id} was not started: these saves differ between Reborn's cloud folder and \
+         Steam Cloud. Reborn's cloud folder was not changed."
+    );
+    for file in files {
+        println!("{}", cloud_conflict_line(file));
+    }
+}
+
+/// One conflicting file, with readable times.
+fn cloud_conflict_line(file: &reborn_ipc::protocol::CloudConflictFile) -> String {
+    let time = |seconds: u64| u32::try_from(seconds).map_or_else(|_| seconds.to_string(), utc_time);
+    let how = if file.had_base {
+        "both changed since the last download"
+    } else {
+        "no earlier download known, so which is newer is unknown"
+    };
+    format!(
+        "  {}: here {} bytes (changed {}), Steam Cloud {} bytes (changed {}); {how}",
+        file.name,
+        file.local_size,
+        file.local_modified.map_or_else(|| "?".to_owned(), time),
+        file.cloud_size,
+        time(file.cloud_modified)
+    )
 }
 
 async fn chat(
@@ -1456,6 +1550,29 @@ fn init_tracing(verbose: u8) {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn cloud_conflicts_print_readable_times() {
+        let mut file = reborn_ipc::protocol::CloudConflictFile {
+            name: "MainPlayerData.json".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 10,
+            local_modified: Some(0),
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 11,
+            cloud_modified: 86_400,
+            had_base: true,
+        };
+        let line = cloud_conflict_line(&file);
+        assert!(line.contains("changed 1970-01-01 00:00 UTC"), "{line}");
+        assert!(line.contains("changed 1970-01-02 00:00 UTC"), "{line}");
+        assert!(line.contains("both changed"), "{line}");
+        file.had_base = false;
+        file.local_modified = None;
+        let line = cloud_conflict_line(&file);
+        assert!(line.contains("which is newer is unknown"), "{line}");
+        assert!(line.contains("changed ?"), "{line}");
+    }
 
     #[test]
     fn cli_definition_is_valid() {

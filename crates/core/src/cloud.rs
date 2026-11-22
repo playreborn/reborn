@@ -135,7 +135,8 @@ pub async fn compare_app_cloud(
     library: Option<&Path>,
 ) -> Result<CloudReport, CoreError> {
     let app_info = session.app_info_text(app_id).await?;
-    let app = AppCloud::load(session, app_id, library, &app_info).await?;
+    let files = session.cloud_files(app_id).await?;
+    let app = AppCloud::load(session, app_id, library, &app_info, files)?;
     let resolve = |root: &str| app.resolve(root);
     let place = app.place(&resolve);
     Ok(CloudReport {
@@ -270,7 +271,22 @@ pub async fn restore_missing_saves_with(
     library: Option<&Path>,
     app_info: &str,
 ) -> Result<RestoreOutcome, CoreError> {
-    let app = AppCloud::load(session, app_id, library, app_info).await?;
+    let files = session.cloud_files(app_id).await?;
+    restore_missing_saves_listed(session, app_id, library, app_info, files).await
+}
+
+/// [`restore_missing_saves_with`] with the app's cloud file list already
+/// fetched ([`Session::cloud_files`]), so a shim-mode launch lists the
+/// cloud only once for the restore and for filling the run's cloud folder
+/// (ADR 0055, "one cloud listing and the needed downloads at launch").
+pub async fn restore_missing_saves_listed(
+    session: &Session,
+    app_id: u32,
+    library: Option<&Path>,
+    app_info: &str,
+    files: Vec<CloudFile>,
+) -> Result<RestoreOutcome, CoreError> {
+    let app = AppCloud::load(session, app_id, library, app_info, files)?;
     // Planned in its own scope: the folder lookup is not `Send` and must be
     // gone before the downloads are awaited.
     let planned = {
@@ -325,16 +341,16 @@ struct AppCloud {
 }
 
 impl AppCloud {
-    async fn load(
+    fn load(
         session: &Session,
         app_id: u32,
         library: Option<&Path>,
         app_info: &str,
+        files: Vec<CloudFile>,
     ) -> Result<Self, CoreError> {
         let document = vdf::parse(app_info)
             .map_err(|error| reborn_cm::Error::AppInfo(app_id, error.to_string()))?;
         let found = cloud_config(&document);
-        let files = session.cloud_files(app_id).await?;
         let library = match library {
             Some(library) => library.to_path_buf(),
             None => settings::default_library()?,

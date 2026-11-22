@@ -26,17 +26,20 @@
 //! the last part after the check is caught when the file is opened. A
 //! *folder* on the way swapped for a link between the check and the open
 //! is not caught: std has no handle-relative open (`openat`, or
-//! `NtCreateFile` with a root directory). The write stage must use
-//! handle-relative opens before it writes anything. Hard links are not
+//! `NtCreateFile` with a root directory). The launch side
+//! ([`crate::run_cloud_fill`]) writes with the same limit: it checks every
+//! part of the path for links right before creating, moving or
+//! downloading, and accepts that a folder swapped in between is not
+//! caught (the threat is a process of the same user, which could change
+//! the saves directly anyway). Writes by the game during a run are a
+//! separate stage and decide this again. Hard links are not
 //! detected: a hard link in the folder is a regular file, and its content
 //! is handed out like any other (making one needs write access to the
 //! folder and, on Windows, to the target).
 //!
-//! What is **not** here yet (ADR 0055, "What is cached, and where" and
-//! "Cloud"): the base file (SHA-1, size and time of the version last
-//! downloaded), filling the folder at launch, and writes. Until the launch
-//! side exists, the folder holds only what was put there by hand, so a
-//! game finds its files missing.
+//! Filling the folder at launch from Valve's cloud, with the base file
+//! (SHA-1, size and time of the version last downloaded), is
+//! [`crate::run_cloud_fill`]. Writes by the game are not here yet.
 
 use std::fs::{File, Metadata};
 use std::io::{self, Read};
@@ -44,6 +47,7 @@ use std::path::{Path, PathBuf};
 
 use reborn_content::path::install_path;
 use reborn_formats::{CloudConfig, cloud_config, vdf};
+use sha1::{Digest, Sha1};
 
 use crate::CoreError;
 use crate::cloud::split_root;
@@ -174,6 +178,62 @@ impl RunCloud {
         Ok(Some(data))
     }
 
+    /// The Reborn data folder the run's folder lies below.
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// The run's folder relative to the data folder:
+    /// `cloud/<account ID>/<app ID>`.
+    pub(crate) fn relative(&self) -> &Path {
+        &self.relative
+    }
+
+    /// SHA-1 (40 lowercase hex digits), size and change time of the local
+    /// file `name`, `None` if there is none. Hashes the whole file,
+    /// whatever its size (it is only read here, never handed out); opened
+    /// like [`RunCloud::read`], without following links.
+    pub(crate) fn local_file(&self, name: &str) -> Result<Option<LocalFile>, RunCloudError> {
+        let Some(found) = self.find(name)? else {
+            return Ok(None);
+        };
+        if !found.is_file() {
+            return Err(RunCloudError::NotAFile);
+        }
+        let path = self.path_of(name)?;
+        let Some(mut file) = open_no_follow(&path, &found)? else {
+            return Ok(None);
+        };
+        let metadata = file.metadata()?;
+        let mut hasher = Sha1::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut size = 0u64;
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            size += read as u64;
+        }
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|time| time.as_secs());
+        Ok(Some(LocalFile {
+            sha1: hex(&hasher.finalize()),
+            size,
+            modified,
+        }))
+    }
+
+    /// Whether nothing at all (no file, folder or link) is at `name`; a
+    /// link on the way is an error.
+    pub(crate) fn is_free(&self, name: &str) -> Result<bool, RunCloudError> {
+        Ok(self.find(name)?.is_none())
+    }
+
     fn check(&self, metadata: &Metadata) -> Result<(), RunCloudError> {
         if !metadata.is_file() {
             return Err(RunCloudError::NotAFile);
@@ -215,6 +275,27 @@ impl RunCloud {
         }
         Ok(None)
     }
+}
+
+/// A file in the run's folder as found on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalFile {
+    /// SHA-1, 40 lowercase hex digits.
+    pub sha1: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Change time, seconds since the Unix epoch, if the system has one.
+    pub modified: Option<u64>,
+}
+
+/// Lowercase hex digits of `bytes`.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Opens the file at `path` for reading without following a link in its
@@ -281,13 +362,29 @@ fn same_file(opened: &Metadata, found: &Metadata) -> bool {
     opened.file_type() == found.file_type() && !opened.file_type().is_symlink()
 }
 
+/// The suffix `download_cloud_file_into` gives a file while writing it
+/// (`crates/content/src/cloud.rs`, `PART_SUFFIX`).
+pub const PART_SUFFIX: &str = ".reborn-part";
+
 /// A game's cloud file name as a checked relative path: a plain relative
-/// path ([`install_path`]), no root token, at most [`MAX_NAME`] bytes.
+/// path ([`install_path`]), no root token, at most [`MAX_NAME`] bytes, and
+/// a last part that does not end in [`PART_SUFFIX`] (any case): such a
+/// file would be truncated when the file without the suffix is
+/// downloaded.
 pub fn api_name_path(name: &str) -> Result<PathBuf, RunCloudError> {
     if name.len() > MAX_NAME || split_root(name).is_some() {
         return Err(RunCloudError::UnsafeName);
     }
-    install_path(name).map_err(|_| RunCloudError::UnsafeName)
+    let path = install_path(name).map_err(|_| RunCloudError::UnsafeName)?;
+    let part = path.file_name().is_some_and(|last| {
+        last.to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(PART_SUFFIX)
+    });
+    if part {
+        return Err(RunCloudError::UnsafeName);
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -445,6 +542,8 @@ mod tests {
             "CON.txt",
             "COM1",
             "slots/LPT1.sav",
+            "MainPlayerData.json.reborn-part",
+            "slots/1.sav.Reborn-Part",
             "\\\\?\\C:\\x",
             "\\\\.\\NUL",
             "//server/share/x",

@@ -122,18 +122,18 @@ response types are in steam-vent-proto-steam
 - **Limits:** the threat is another process of the same user changing
   the folder during a read. A *folder* on the way swapped for a link
   between check and open is not caught (std has no handle-relative open);
-  the write stage must use handle-relative opens. Hard links are regular
-  files and are not detected.
+  the launch side below accepts the same limit, writes by the game decide
+  it again. Hard links are regular files and are not detected. Names
+  whose last part ends in `.reborn-part` (any case) are refused: that is
+  the part file a download writes first.
 - **Requests:** none per call. The quota comes from the app info that the
   launch already fetches for restoring saves (ADR 0035): one fetch for
   both, under the restore's time limit. In shim mode, a launch whose app
   info cannot be fetched is refused, like one without the ownership set.
 - **Logs:** only sizes and the refusal reason, never names or contents;
   `Debug` of the file data shows only its length.
-- **Not yet:** the base file (SHA-1, size, time of the last downloaded
-  version), filling the folder at launch (the L/C/B rules of ADR 0055),
-  writes, and the shim sending these requests. Until then the folder
-  holds only what was put there by hand, so every file is missing.
+- **Not yet:** writes by the game, and the shim sending these requests.
+  Filling the folder at launch is below.
 - **Source:** ADR 0055 ("Protocol messages", "What is cached, and
   where", "Cloud"); no Valve protocol is involved.
 - **Verified:** unit tests in `crates/core` and `apps/rebornd` with
@@ -142,6 +142,77 @@ response types are in steam-vent-proto-steam
   systems that allow making them, a link swapped in before the open,
   other accounts and apps, quota, a
   200 000-byte answer over a served in-memory connection); no live run.
+
+### Filling the run's cloud folder at a shim-mode launch (`rebornd`, ADR 0055 stage 0)
+
+- **What:** before a game starts in shim mode, the run's cloud folder is
+  brought up to date from Valve's cloud (`reborn_core::run_cloud_fill`),
+  extending ADR 0035. For each listed file without a root token, with L
+  the SHA-1 of the local file, C the cloud's and B the base:
+  - L = C: nothing (the base is set to C);
+  - no local file: downloaded;
+  - L = B, C ≠ B (only the cloud changed): the local file is moved to
+    `<Reborn data>/cloud-backup/<account ID>/<app ID>/<unix time>/local/`,
+    then the cloud version is downloaded; a failed download moves it back;
+  - C = B, L ≠ B (only the local file changed): kept, waits for uploads;
+  - otherwise (both changed, or no base and L ≠ C): a **true conflict**.
+    Nothing at all is written and the launch is answered with
+    `Response::CloudConflict { app_id, files }` (IPC 1.13): name, SHA-1,
+    size and time of both versions, and whether a base was known. The
+    frontend asks the user and sends the launch again with
+    `cloud_choice { choice, files }`: `local` or `cloud`, and the
+    conflicts the user was shown (name and both SHA-1s). The answer
+    resolves only conflicts it names exactly; if any current conflict is
+    missing from it or its versions changed since, nothing is written and
+    all current conflicts are asked again (AGENTS.md section 5: the user
+    decides). `cloud`: as "only the cloud changed". `local`: the local
+    file stays, the cloud version is downloaded to `.../<unix time>/cloud/`
+    as the backup and becomes the base, so the next launch keeps the
+    local file without asking again.
+- **Base file:** `<Reborn data>/cloud/<account ID>/<app ID>.base.json`
+  ("next to" the folder), JSON `{"version": 1, "files": {name: {"sha1",
+  "size", "timestamp"}}}` with the cloud's SHA-1 (lowercase), size and
+  time of the version last downloaded (or found equal). Written to a
+  part file, then renamed. A damaged or unknown file counts as no base:
+  then every differing file is a conflict the user decides, so nothing
+  can be overwritten because of it.
+- **Never:** upload, delete, or overwrite. Local files that are not in
+  the cloud and base entries for files gone from the cloud are left
+  alone. Downloads go through `download_cloud_file_into` (SHA-1 checked,
+  never over an existing file).
+- **Refusals (the game does not start in shim mode):** a true conflict
+  without an answer that names it; the listing failed; a download failed
+  (the other files are still handled and the base saved); a local file
+  is a link, a folder or unreadable; two cloud names that meet in one
+  path (compared part by part, case ignored, so `a\b` and `A/B` meet); a
+  link on the way to the base file or the backup folder; a file in the
+  place of a download's part file. The fill runs before shim mode is
+  entered (`ActiveProcess`), so a refusal leaves nothing to undo.
+  Skipped, not refused: names with a root token (Auto-Cloud files,
+  restored into the game's save folders by ADR 0035), unsafe names
+  (including a last part ending in `.reborn-part`), files above the
+  run's limit, SHA-1s that are not 40 hex digits.
+- **Requests:** the cloud is listed once per launch and shared by the
+  ADR 0035 restore and the fill; only files that need it are downloaded.
+  A launch answered with `CloudConflict` lists again when it is sent
+  with the choice (the download links of the first listing are not
+  kept). Downloads are bounded by the CDN client's timeouts, not by a
+  limit around the whole fill, so a file moved aside is never left
+  without its replacement or its way back.
+- **Logs:** counts only (downloaded, replaced, kept, conflicts), never
+  names or contents.
+- **Limits:** as for reads, a folder swapped for a link between the
+  check and the write is not caught (std has no handle-relative open);
+  the threat is another process of the same user.
+- **Source:** ADR 0055 ("Cloud", "What is cached, and where", decided by
+  the maintainer 2026-11-22: a true conflict asks the user before the
+  game starts); downloads as in "Download a file" above. The backup
+  folder's place and the base file's format are Reborn's choice; the ADR
+  names neither.
+- **Verified:** unit tests in `crates/core` (temporary folders, a fake
+  cloud: every L/C/B case, both choices, failed downloads, skipped and
+  refused names, junctions on the way, damaged base) and `apps/rebornd`
+  (conflict and failure answers); no live run.
 
 ## Known, not implemented
 

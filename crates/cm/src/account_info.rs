@@ -240,10 +240,6 @@ mod tests {
     /// run time, not with `include_bytes!`, so the crate builds before the
     /// file exists.
     #[test]
-    #[ignore = "fixture crates/cm/tests/data/account_info.bin is not recorded yet: \
-                record it with `reborn-cli friends --record <dir>` on the test account \
-                (maintainer's OK), check it by hand, commit it with its README row and \
-                remove this ignore"]
     fn replays_the_recorded_account_info() -> Result<(), Box<dyn std::error::Error>> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")

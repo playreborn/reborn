@@ -73,8 +73,9 @@ Read-only part of M3 (ADR 0020). Each section names its sources.
 - **Privacy:** the name is account data: never logged, never in a
   fixture (the recorder replaces it by `Player 1` and drops every other
   field).
-- **Verified:** no. Needs a recording: `reborn-cli friends --record
-  <dir>` writes `account_info.bin`.
+- **Verified:** yes (2026-11-22, test account): replay of the recorded
+  fixture `crates/cm/tests/data/account_info.bin`, written by
+  `reborn-cli friends --record <dir>`.
 
 ### Own online status
 

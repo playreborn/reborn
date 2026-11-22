@@ -46,7 +46,9 @@ registry is virtualized) repeats it until stopped. Every rule of
    after shadow mode matched in three games.
 8. **Merge** under ADR 0051: CI green, no new CodeQL alerts, and a review
    pass by a fresh agent that only sees the diff and `AGENTS.md`.
-9. **Report:** one line in `digest.md`: date, position, result, PR.
+9. **Report:** one line in `digest.md`: date, position, result, PR. When
+   a number in `PROGRESS.md` changes (confirmed positions, shim, callbacks,
+   games), update it and its "Last updated" line in the same pull request.
 
 ## Stop and ask the maintainer
 

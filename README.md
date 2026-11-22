@@ -33,7 +33,7 @@ background**, because they talk to it through Steamworks. See the
 
 - QR-code sign-in, game details, group chats.
 - Run Steamworks games **without the official Steam client** through Reborn's
-  own `steamclient` replacement.
+  own `steamclient` replacement. Progress: [`docs/shim/PROGRESS.md`](docs/shim/PROGRESS.md).
 
 ## Install
 

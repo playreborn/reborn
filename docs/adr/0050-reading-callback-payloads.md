@@ -1,6 +1,6 @@
 # 0050: Reading what a callback carries (step 4d)
 
-- **Status:** Accepted (by the maintainer, 2026-11-22)
+- **Status:** Accepted (by the maintainer, 2026-11-22); listing amended by ADR 0054
 - **Date:** 2026-11-22
 
 ## Context

@@ -1375,3 +1375,47 @@ text results because they are addresses, `StartVRDashboard` because a
 void function in every frame of three games does not fit, and the
 true/false ones because they return 0 or 1. The second Gravitas run used
 the changed `run.sh`.
+
+## Callback 0x44d: stats received (loop iteration 9)
+
+Pages read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamUserStats>
+(callback structs, no numeric IDs on the page) and
+<https://partner.steamgames.com/doc/api/steam_api> (`k_EResultOK` = 1,
+`k_EResultFail` = 2; the layout of a game ID is not described).
+
+- **Recorded** (step 4d logs of 2026-11-22: Cave Crawlers, Gravitas, Dark
+  Deception, all `STEAMUSERSTATS_INTERFACE_VERSION011`): one callback
+  with number 0x44d per run, data size 24, 250 to 310 ms after the first
+  call of `STEAMUSERSTATS_INTERFACE_VERSION011` position 0 (candidate
+  `RequestCurrentStats` or `StoreStats`).
+- **Every callback on the page, by size** (fields as listed there,
+  `uint64` and `CSteamID` 8 bytes, `EResult` and `int` 4): 24 bytes fit
+  `UserStatsReceived_t` (`m_nGameID`, `m_eResult`, `m_steamIDUser`) and
+  `LeaderboardScoresDownloaded_t` (two handles and a count); 16 bytes fit
+  `UserStatsStored_t`, `GlobalStatsReceived_t` and
+  `GlobalAchievementPercentagesReady_t`; the others are larger or
+  smaller. Callbacks of other pages could also have 24 bytes; the
+  predictions below are about content, which rules those out unless they
+  also start with the app ID followed by a result code and the same
+  8-byte value in every game.
+- **Candidates:** 0x44d `UserStatsReceived_t`; position 0 of
+  `STEAMUSERSTATS_INTERFACE_VERSION011` `RequestCurrentStats` (the page:
+  its result arrives as `UserStatsReceived_t`).
+
+### Experiment 20 (planned 2026-11-22, before the runs)
+
+The proxy logs the first 64 bytes of callbacks 0x44d and 0x44e (ADR
+0050, 0054). 0x44d carries a Steam ID in bytes 16 to 24 if the candidate
+is right; that value stays in the local log, the script only compares
+it. 0x44e (16 bytes) is recorded, not predicted. Agent runs of Cave
+Crawlers, Gravitas and Dark Deception, each closed after about 30
+seconds.
+
+**Predictions** (`tools/shim/experiments/020_stats_received_callback.py`):
+
+- A: one 0x44d callback per game, size 24, bytes 0 to 4 the game's app
+  ID, bytes 8 to 12 equal to 1 or 2.
+- B: bytes 16 to 24 are the same in all three games.
+- C: the callback comes after the first call of
+  `STEAMUSERSTATS_INTERFACE_VERSION011` position 0, at most 5 seconds
+  later.

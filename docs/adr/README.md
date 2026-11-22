@@ -57,4 +57,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0049](0049-agent-input-in-games.md) | Input in games during agent runs | Accepted |
 | [0050](0050-reading-callback-payloads.md) | Reading what a callback carries (step 4d) | Accepted |
 | [0051](0051-autonomous-development.md) | Autonomous development of the shim | Accepted |
-| [0052](0052-no-daily-start-cap.md) | No daily cap on agent-run game starts | Accepted |
+| [0052](0052-no-daily-start-cap.md) | No daily cap on agent-run game starts; 50 free games a day | Accepted |

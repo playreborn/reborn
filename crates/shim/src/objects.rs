@@ -187,29 +187,44 @@ fn client_023() -> &'static Built {
     })
 }
 
-// ---- SteamUtils010 (meanings.md, confirmed) ----
+// ---- SteamUtils009 and SteamUtils010 (meanings.md, confirmed) ----
 
-/// `GetAppID`, confirmed (experiments 3 to 5): the app `rebornd` started
-/// this process for.
+/// `GetAppID`, confirmed (experiments 3 to 5 for 010, 15 for 009): the
+/// app `rebornd` started this process for.
 extern "C" fn get_app_id(_this: *const Object) -> u32 {
     match session::get() {
         Some(session) => session.app_id,
-        None => not_implemented("SteamUtils010 position 9 without a session"),
+        None => not_implemented("SteamUtils position 9 without a session"),
     }
 }
 
-/// `GetCurrentBatteryPower`, confirmed (experiment 10): 255 on AC power,
+/// `GetCurrentBatteryPower`, confirmed (experiment 10 for 010, 15 for
+/// 009): 255 on AC power,
 /// otherwise the battery level in percent (`crate::power`).
 extern "C" fn get_current_battery_power(_this: *const Object) -> u8 {
     crate::power::battery_power()
+}
+
+/// Positions 9 and 14, the same in 009 and 010 (experiments 3, 10, 15).
+fn add_utils(table: &mut [usize; SLOTS]) {
+    table[9] = get_app_id as *const () as usize;
+    table[14] = get_current_battery_power as *const () as usize;
+}
+
+fn utils_009() -> &'static Built {
+    static OBJECT: OnceLock<Built> = OnceLock::new();
+    OBJECT.get_or_init(|| {
+        let mut table = stubs!("SteamUtils009");
+        add_utils(&mut table);
+        Built::new(table)
+    })
 }
 
 fn utils_010() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
         let mut table = stubs!("SteamUtils010");
-        table[9] = get_app_id as *const () as usize;
-        table[14] = get_current_battery_power as *const () as usize;
+        add_utils(&mut table);
         Built::new(table)
     })
 }
@@ -220,6 +235,7 @@ pub fn known_interfaces() -> &'static [&'static str] {
         "SteamClient020",
         "SteamClient021",
         "SteamClient023",
+        "SteamUtils009",
         "SteamUtils010",
     ]
 }
@@ -234,6 +250,7 @@ fn built_for(version: &str) -> Option<&'static Built> {
         "SteamClient020" => client_020(),
         "SteamClient021" => client_021(),
         "SteamClient023" => client_023(),
+        "SteamUtils009" => utils_009(),
         "SteamUtils010" => utils_010(),
         _ => return None,
     };
@@ -261,7 +278,7 @@ mod tests {
             assert!(interface_for(version).is_some(), "{version}");
         }
         assert!(interface_for("SteamClient017").is_none());
-        assert!(interface_for("SteamUtils009").is_none());
+        assert!(interface_for("SteamUtils008").is_none());
         assert!(interface_for("SteamUser023").is_none());
         assert_eq!(
             object("SteamClient020"),
@@ -352,11 +369,13 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn battery_power_is_a_percentage_or_255() {
-        // SAFETY: position 14 holds `get_current_battery_power`.
-        let power: extern "C" fn(*const Object) -> u8 =
-            unsafe { std::mem::transmute(slot_of("SteamUtils010", 14)) };
-        let value = power(object("SteamUtils010").cast());
-        assert!(value == 255 || value <= 100, "{value}");
+        for version in ["SteamUtils009", "SteamUtils010"] {
+            // SAFETY: position 14 holds `get_current_battery_power`.
+            let power: extern "C" fn(*const Object) -> u8 =
+                unsafe { std::mem::transmute(slot_of(version, 14)) };
+            let value = power(object(version).cast());
+            assert!(value == 255 || value <= 100, "{version}: {value}");
+        }
     }
 
     #[test]
@@ -365,10 +384,12 @@ mod tests {
             version: PROTOCOL_VERSION,
             app_id: 2_143_030,
         });
-        let utils = object("SteamUtils010");
-        // SAFETY: position 9 holds `get_app_id`.
-        let app_id: extern "C" fn(*const Object) -> u32 =
-            unsafe { std::mem::transmute(slot_of("SteamUtils010", 9)) };
-        assert_eq!(app_id(utils.cast()), 2_143_030);
+        for version in ["SteamUtils009", "SteamUtils010"] {
+            let utils = object(version);
+            // SAFETY: position 9 holds `get_app_id`.
+            let app_id: extern "C" fn(*const Object) -> u32 =
+                unsafe { std::mem::transmute(slot_of(version, 9)) };
+            assert_eq!(app_id(utils.cast()), 2_143_030, "{version}");
+        }
     }
 }

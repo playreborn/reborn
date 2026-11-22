@@ -92,13 +92,15 @@ def after_u32(call, register):
 
 
 def app_of(path):
-    """The app ID `run.sh` recorded for this log in `starts.log`, or None."""
+    """The app ID `run.sh` recorded for this log in `starts.log`, or None.
+    The last matching line wins (a log name is reused when a process ID
+    is)."""
     name = Path(path).name
     try:
         lines = open(log_dir() / "starts.log", encoding="utf-8").read().splitlines()
     except OSError:
         return None
-    for line in lines:
+    for line in reversed(lines):
         parts = line.split()
         if len(parts) == 5 and parts[2] == "log" and parts[4] == name:
             return int(parts[3])

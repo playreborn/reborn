@@ -1292,3 +1292,86 @@ Page: <https://partner.steamgames.com/doc/api/ISteamUserStats> (re-read
   a constant `r8` across 19 different names fits an output slot better,
   but nothing recorded rules them out. All stay candidates; telling them
   apart needs the bytes written at `r8` (ADR 0043, 0053).
+
+## `SteamUtils009` positions 9 and 14 (loop iteration 8)
+
+Page re-read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamUtils>.
+
+- **Recorded** (reference runs, `coverage.md`): position 9 in all five
+  `SteamUtils009` games (Cave Crawlers, Outcore, UNBEATABLE [white
+  label], Gravitas, Dark Deception), position 14 in four of them, both
+  without arguments; the same positions as `GetAppID` and
+  `GetCurrentBatteryPower` in `SteamUtils010` (experiments 3 and 10).
+- **Every function on the page without arguments** (LOOP step 3):
+  `BOverlayNeedsPresent`, `GetAppID`, `GetConnectedUniverse`,
+  `GetCurrentBatteryPower`, `GetEnteredGamepadTextLength`,
+  `GetIPCCallCount`, `GetIPCountry`, `GetSecondsSinceAppActive`,
+  `GetSecondsSinceComputerActive`, `GetServerRealTime`,
+  `GetSteamHardwareDefaultConfig`, `GetSteamUILanguage`,
+  `InitFilterText`, `IsOverlayEnabled`, `IsRunningOnSteamHardware`,
+  `IsRunningUnderProton`, `IsSteamChinaLauncher`,
+  `IsSteamInBigPictureMode`, `IsSteamRunningInVR`,
+  `IsSteamRunningOnSteamDeck`, `IsVRHeadsetStreamingEnabled`,
+  `StartVRDashboard`.
+  - Only `GetAppID` is described as returning the app ID; a result equal
+    to the app ID in four different games rules the others out (the
+    true/false ones return 0 or 1, the counters and times are not equal
+    to four different app IDs, the texts are addresses).
+  - Only `GetCurrentBatteryPower` documents the value 255 ("Returns 255
+    when the user is on AC power"). The two hardware enums have no values
+    on the page; that 255 stands for one of them on a desktop is not
+    ruled out by the page, only by the same reading as experiment 10.
+
+### Experiment 15 (planned 2026-11-22, before the runs)
+
+Agent runs of Cave Crawlers, Gravitas, Dark Deception and UNBEATABLE
+[white label] (Outcore needs its launch dialog and is left out), each
+closed by a close request. `run.sh` arms with `--app`; answer mode covers
+only `SteamUtils010`, so `SteamUtils009` calls reach the official client.
+
+**Predictions** (`tools/shim/experiments/015_utils009.py`):
+
+- A (all four): position 9 is called, and every result's low 32 bits are
+  the game's app ID.
+- B (Cave Crawlers, Dark Deception, UNBEATABLE): position 14 is called,
+  and every result's lowest byte is 255.
+
+**Result of experiment 15** (agent runs after the plan was committed at
+11:14:42; logs recorded by `run.sh` in `starts.log`: `observe-48520`
+Cave Crawlers, `observe-22464` Gravitas, `observe-9812` Dark Deception,
+`observe-54100` UNBEATABLE [white label]): **match**, checked by the
+script.
+
+```text
+observe-48520.log (Cave Crawlers) A: 2 calls, results [2143030] -> match
+observe-48520.log (Cave Crawlers) B: 52 calls, lowest bytes [255] -> match
+observe-22464.log (Gravitas) A: 5 calls, results [1067310] -> match
+observe-9812.log (Dark Deception) A: 5 calls, results [332950] -> match
+observe-9812.log (Dark Deception) B: 63 calls, lowest bytes [255] -> match
+observe-54100.log (UNBEATABLE [white label]) A: 2 calls, results [1290490] -> match
+observe-54100.log (UNBEATABLE [white label]) B: 61 calls, lowest bytes [255] -> match
+experiment 15: match
+```
+
+Gravitas wrote no `[S_API]` debug line, so the first run's log was not
+recorded in `starts.log`; `run.sh` now also records a log by the game's
+process ID, and Gravitas was started a second time (the first log,
+`observe-50860`, is not used). Under ADR 0051, positions 9 and 14 of
+`SteamUtils009` are confirmed as `GetAppID` and `GetCurrentBatteryPower`
+(for 14 with the caveat written above). Added to the shim (same answers
+as for 010) and to shadow mode; a shadow run of Dark Deception
+(`observe-53604`) matched in all 68 logged calls (5 at position 9, 63 at
+position 14).
+
+**Corrections from the review (before merge):** the plan said the two
+hardware enums have no values on the page; it does list them
+(`ESteamHardwareType` 0 to 3, `ESteamHardwareDefaultConfig` 0 to 7), so
+255 rules out `IsRunningOnSteamHardware` and
+`GetSteamHardwareDefaultConfig` too, and the caveat for position 14 does
+not apply. The counters and times (`GetIPCCallCount`,
+`GetSecondsSince…`, `GetServerRealTime`) are ruled out because their
+lowest byte would not stay 255 over 52 to 63 calls in three games, the
+text results because they are addresses, `StartVRDashboard` because a
+void function in every frame of three games does not fit, and the
+true/false ones because they return 0 or 1. The second Gravitas run used
+the changed `run.sh`.

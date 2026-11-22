@@ -60,7 +60,7 @@ first two rows are counts from [`coverage.md`](coverage.md).
 2. **Real data from Valve.** Ownership, DLC, achievements and cloud must
    come from the user's account through `rebornd`. This touches sign-in
    and the account, so the maintainer decides each step.
-3. **The other 105 positions**, mostly friends, the user's own data (such
+3. **The other 98 positions**, mostly friends, the user's own data (such
    as the Steam ID) and controllers. Many of them look the same as other
    functions on Valve's pages or involve account data, so they go slower.
 4. **A real test** on a computer (a virtual machine) where Steam was never

@@ -21,7 +21,7 @@ first, so the maintainer can read a day's work quickly and stop anything.
   `RunFrame` (SteamController007/008 2, SteamInput006 3),
   `SetRichPresence`, `GetFriendCount`, `GetFriendByIndex` (SteamFriends017
   43, 3, 4). Narrowed: SteamInput001 2, SteamFriends017 36, SteamUser020
-  12. Waiting for the maintainer: see below. PR #22.
+  12. Waiting for the maintainer: see the section above. PR #22.
 - 2026-11-22: loop iteration 9b (planned by a parallel agent, run by the
   main session): experiment 19 **matched** (Dark Deception, Gravitas,
   Bongo Cat, Coin Maker, Cave Crawlers): how callbacks are delivered is

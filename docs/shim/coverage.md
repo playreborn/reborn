@@ -49,12 +49,12 @@ Positions are listed in the order of their numbers.
 
 | Interface version | Games | Positions called | Status |
 | --- | --- | --- | --- |
-| `STEAMAPPS_INTERFACE_VERSION008` | 10 | 7 (CC, PT, OC); 4 (LS, FS); 0 (AC, GR, DD); 6 7 (PY); 0 7 (PK) | not known |
+| `STEAMAPPS_INTERFACE_VERSION008` | 10 | 7 (CC, PT, OC); 4 (LS, FS); 0 (AC, GR, DD); 6 7 (PY); 0 7 (PK) | 0 `BIsSubscribed`: confirmed; 7 `BIsDlcInstalled` or `BIsSubscribedApp`: confirmed as one of the two (experiment 8); 6: candidate; 4: candidate; rest not known |
 | `SteamClient018` | 1 | 0 1 2 3 4 5 6 7 9 12 23 34 | not known |
 | `SteamClient019` | 1 | 0 1 2 3 4 5 6 7 9 12 23 26 34 38 | not known |
-| `SteamClient020` | 9 | 0 1 2 4 5 12 23 34 (CC, OC, HC); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (BB, PT); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (PL, PY); 0 2 5 12 34 (TW); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 30 31 34 35 36 37 38 39 40 (UB) | 12 and per-interface positions hand out objects by version text (`objects.md`); rest not known |
-| `SteamClient021` | 6 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE, PK) | as for 020 |
-| `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | as for 020 |
+| `SteamClient020` | 9 | 0 1 2 4 5 12 23 34 (CC, OC, HC); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (BB, PT); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 23 24 27 28 29 30 31 34 35 36 37 38 39 40 (PL, PY); 0 2 5 12 34 (TW); 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 30 31 34 35 36 37 38 39 40 (UB) | 0 `CreateSteamPipe`, 2 `ConnectToGlobalUser`, 9 `GetISteamUtils`, 12 and per-interface positions `GetISteam…`, 4/1/23 release and shutdown: confirmed (experiment 7); rest not known |
+| `SteamClient021` | 6 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 19 22 23 24 26 27 28 29 32 33 34 35 36 37 38 (BC, CH, FS); 0 1 2 4 5 12 23 32 (AC, OE, PK) | 0, 2, 9, 12 and per-interface positions as for 020: confirmed (experiment 7); rest not known |
+| `SteamClient023` | 3 | 0 1 2 4 5 8 9 10 11 12 13 15 16 17 18 21 22 23 25 26 27 30 31 32 33 34 35 36 (CM, CA); 0 1 2 4 5 12 22 30 (LS) | as for 021: confirmed (experiment 7); rest not known |
 | `SteamController007` | 4 | 2 | not known |
 | `SteamController008` | 14 | 2 | not known |
 | `SteamFriends017` | 8 | 43 44 (CC); 0 (PL, AC, DD, UB, PK); 3 4 36 37 (PT); 3 4 (FS) | not known |
@@ -77,7 +77,7 @@ Positions are listed in the order of their numbers.
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | not known |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 4 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA) | not known |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | 9 `GetAppID`: candidate; rest not known |
-| `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | 9 `GetAppID`: confirmed, answered by Reborn (experiments 4, 5); rest not known |
+| `SteamUtils010` | 15 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC) | 9 `GetAppID`: confirmed, answered by Reborn (experiments 4, 5); 5 `GetImageSize`, 6 `GetImageRGBA`: confirmed (experiment 9); rest not known |
 
 Beyond these, the exported entry points (`entry-points.md`) and the
 callback numbers seen through `Steam_BGetCallback` are needed by every

@@ -97,6 +97,7 @@ Added 2026-11-22; no live run yet.
   official client's local file differs from the cloud version at arm
   time (for example a save not yet uploaded); it is then noted here, not
   explained away.
+- **First run:** planned as experiment 33 (end of this file).
 
 ### Position 13: candidates `FileExists`, `FilePersisted`, `FileForget`
 
@@ -3804,6 +3805,10 @@ been made**, and no result is claimed.
   `CMsgClientAccountInfo` (`reborn-cli friends --record` now writes
   `account_info.bin` with the name replaced by `Player 1`), recorded by a
   person on the test account.
+  Recorded since: `crates/cm/tests/data/account_info.bin` (2026-11-22,
+  test account, `crates/cm/tests/data/README.md`).
+- **First run:** planned as experiment 33 (end of this file).
+
 ## Top rows of the gap list (loop iteration 15a)
 
 `python tools/shim/coverage.py` on `main` (2026-11-22, then 205 positions,
@@ -4411,3 +4416,217 @@ As fixed beforehand: `STEAMUSERSTATS_INTERFACE_VERSION011` and `…012` 14
 32, under A2); `…013` 22 `FindLeaderboard` (experiment 32), 30
 `UploadLeaderboardScore` (experiment 32, under A2) and 23
 `GetLeaderboardName` (experiment 32).
+
+## First live runs of the cloud read and persona name shadows (loop iteration 16b)
+
+Two shadows are merged and have never run against a game: the cloud reads
+(`STEAMREMOTESTORAGE_INTERFACE_VERSION014` 15 and 1, PR #47, "Shadow mode
+for positions 15 and 1" near the top of this file) and the persona name
+(`SteamFriends017` 0, PR #45, "Shadow comparison for `SteamFriends017`
+position 0"). Experiment 33 is their first live run. No game was run for
+this plan.
+
+### Experiment 33 (planned 2026-11-22, before the runs)
+
+**Games, from the recordings** (every log in `tools/shim/games.json` and
+the later `run.sh` logs, scanned with `observelog.calls` on 2026-11-22):
+
+- **Cloud part: Cave Crawlers (2143030).** It is the only recorded game
+  that calls `014` 15 or 1. In both its runs (reference `observe-21180`,
+  experiment 30 `observe-52568`) it called 15 and then 1 once each, about
+  1.1 s after the start, then position 0 (`FileWrite`, not shadowed) about
+  2.5 s after the start and again later.
+- **Persona part: Dark Deception (332950) and A Park Full of Cats
+  (2610090).** `SteamFriends017` 0 is recorded in Paper Lily, An Arcade
+  Full of Cats, Dark Deception, UNBEATABLE, A Park Full of Cats and
+  VPet-Simulator. Dark Deception called it twice in each of its three
+  later runs (`observe-60764`, `observe-62168`, `observe-64816`: about
+  1.3 s and 12.5 s after the start), A Park Full of Cats once at about
+  70 ms (`observe-62092`). Both closed normally in every `run.sh` run and
+  were already used for shadow runs (`BIsSubscribed`, experiment 30).
+  VPet-Simulator is left out (long runs, closed from the tray by the
+  maintainer).
+
+**Status of the positions before the run.** `014` 15 (`GetFileSize`) and
+1 (`FileRead`) are confirmed (experiment 1); the cloud part tests
+Reborn's answer, not the meaning. `SteamFriends017` 0 is narrowed to
+`GetPersonaName` or `ClearRichPresence` ("Positions 0 and 44", loop
+iteration 9a: the only two of the page's 74 functions without an
+argument that fit a heap address as result); the persona part tests the
+meaning and Reborn's answer together.
+
+**Conditions for the runs.** As for experiment 30: `rebornd` signed in to
+the test account with the stored login while the official client runs and
+stays signed in to the same account (the maintainer allowed such shadow
+runs on 2026-11-22, ADR 0055 stage 1). The redacted fixture of
+`CMsgClientAccountInfo` that the persona section asked for before a run
+is recorded (`crates/cm/tests/data/account_info.bin`). One counted run
+per game. Each arm makes `rebornd` fill a shadow cloud folder for that
+game (one app info, one listing, bounded downloads; reads only, at most
+one fill a minute); for Dark Deception and A Park Full of Cats this is a
+side effect, not compared.
+
+**Steps for the main session** (in a normal terminal, not the desktop
+app; on this plan's branch at the commit that sets `PLAN_COMMITTED`):
+
+1. Check: the official client runs and is signed in to the test account;
+   no game runs; `target/debug/reborn-observe.exe status` says not armed.
+2. Build: `cargo build -p rebornd -p reborn-cli -p reborn-shim-observe`.
+3. Start `rebornd` in the background with its output in a local file
+   outside the repository (for example `target/debug/rebornd.exe >
+   <scratch>/rebornd-033.log 2>&1`); this log stays on the computer and
+   is never quoted beyond the lines named here (it can name the account).
+4. Sign `rebornd` in with the stored login: `target/debug/reborn-cli.exe
+   daemon library > /dev/null` (the list is account data; it is not
+   shown), then `target/debug/reborn-cli.exe daemon status` must say
+   `signed in`. Nothing is typed: no password, no code.
+5. `tools/shim/run.sh 2143030 60` (Cave Crawlers). `run.sh` itself arms
+   with `reborn-observe arm --proxy … --app 2143030`, starts the game
+   through the official client, waits 60 s after Steam loaded, asks the
+   game to close normally, waits up to two minutes and disarms. **Do not
+   run `reborn-observe arm --app` by hand before `run.sh`:** that would
+   register and fill once, and `run.sh`'s own arm within the next minute
+   would replace the registration while the fill is in its cooldown
+   (`FILL_COOLDOWN`, `apps/rebornd/src/shim_shadow.rs`), leaving cloud
+   reads without a shadow folder. After the run, `rebornd`'s log must have
+   the line `shadow mode: shadow cloud folder filled` for app 2143030
+   with `failed=0`; only that and the error kinds are looked at, no
+   counts or names go into `docs/shim/`.
+6. `tools/shim/run.sh 332950 60` (Dark Deception), then
+   `tools/shim/run.sh 2610090 60` (A Park Full of Cats). `run.sh` keeps
+   the one-minute gap itself (ADR 0052), which also keeps each arm's fill
+   out of the previous fill's cooldown. The 60 s wait (default 40) leaves
+   room for the shadow worker, which handles the stats (up to 30 s),
+   ownership, persona and cloud comparisons of a game one after another.
+7. `target/debug/reborn-cli.exe daemon shutdown`;
+   `target/debug/reborn-observe.exe status` says not armed (if `run.sh`
+   ended early, `reborn-observe disarm`).
+8. Check `rebornd`'s log for `connection to Steam lost`, `signed out` and
+   `reconnecting failed` during the runs (there must be none), then run
+   `python tools/shim/experiments/033_cloud_and_persona_shadow.py` with the
+   three logs `run.sh` named (`log observe-<pid>.log`), full paths.
+
+Each run takes about two to three minutes (Cave Crawlers took about 2.5
+minutes in experiment 30 with the default wait); the three runs with
+their gaps take about ten minutes.
+
+**Stop rule** (ADR 0055 "Two sign-ins at once", ADR 0044, LOOP.md "Stop
+and ask the maintainer"):
+
+- If `rebornd` or `reborn-cli` asks for Steam Guard, a code, a mobile
+  confirmation or a password, or the sign-in fails: stop, no retry, shut
+  `rebornd` down, no game is started; the maintainer decides.
+- If either client is logged off or kicked during the runs (the official
+  client shows itself offline or signed out, or a dialog about another
+  sign-in; `rebornd`'s log shows `connection to Steam lost`, `signed out`
+  or `reconnecting failed`): no further start; the running game is left to
+  `run.sh`'s normal close request and two-minute wait, `run.sh` disarms,
+  `rebornd` is shut down, the run does not count, and neither client is
+  signed in again by the agent.
+- Any dialog of the official client (for example a cloud conflict, which
+  Cave Crawlers could raise): stop and leave it for the maintainer.
+- A game that does not close within two minutes of the close request
+  (`run.sh` prints `STILL RUNNING`) is reported and left running; it is
+  never force-killed (ADR 0044).
+
+A run that a stop ends, a game that does not start, or a Cave Crawlers run
+whose `rebornd` log lacks the `shadow cloud folder filled` line with
+`failed=0` does not count and may be repeated once with this plan, after
+the cause is gone. A run that completed counts, whatever it shows; it is
+not repeated to get another result.
+
+**What the proxy writes** (`crates/shim-observe/src/proxy.rs`, the step-4
+return line, then the ADR 0046 block and `answer_asks`; `daemon.rs`,
+`compare_file_size`, `compare_file_read`, `compare_persona_name`), for a
+logged call `<n>` on thread `<t>`: the call line `… ThreadId(<t>)
+<Interface>#<pos> call <n> …`, the result line `… return <n> rax hidden
+(account data)` (cloud reads) or `… return <n> rax=0x…` (`017` 0), and
+later, with the same prefix, the shadow line `… return <n> <note>`, where
+`<note>` is `shadow match`, `shadow mismatch`, `shadow mismatch (<why>)`
+(persona name only, for example no text at the result), `shadow: no
+Reborn answer (<why>)`, `shadow: skipped, <why>`, `shadow: no app ID
+given` or `shadow: no worker thread`.
+
+**Predictions** (`tools/shim/experiments/033_cloud_and_persona_shadow.py`),
+per game:
+
+- A: the log has at least one call with a result line of each expected
+  position (Cave Crawlers: `014` 15 and `014` 1; Dark Deception and A
+  Park Full of Cats: `017` 0);
+- B: every call of `014` 15, `014` 1 or `017` 0 in the log has a result
+  line, and exactly one shadow line with the same position, call number
+  and thread after it; no shadow line of these positions is without its
+  call;
+- C: every such shadow line says exactly `shadow match`.
+
+All three games must match ("experiment 33: match"); the script also
+prints a verdict per part ("cloud part", "persona part"), because the
+parts confirm different things. It rejects a log given twice, logs not
+recorded by `run.sh` for these games (`observelog.app_of`), more than
+one log per game, and logs whose start (`observelog.start_of`) is earlier
+than the plan commit (`PLAN_COMMITTED`, set in a follow-up commit; while
+it is unset every log is rejected). It prints only counts, the kind of
+each note and match or MISMATCH: no file names, sizes, digests, addresses,
+registers or reason texts.
+
+Checked before the plan time on three earlier logs (Cave Crawlers
+`observe-52568`, Dark Deception `observe-64816`, A Park Full of Cats
+`observe-62092`, recorded before the two shadows were in the proxy;
+script with the plan time disabled): A matches in all three, B and C
+mismatch (no shadow lines), as expected. A made-up log with all notes
+`shadow match` gives match; one `shadow: no Reborn answer` gives a
+MISMATCH of C.
+
+**What a match of the cloud part confirms** (Reborn's answer, ADR 0055
+stage 1, "compared by size and SHA-1 only"): in Cave Crawlers, for the
+file the game reads at start, the size `rebornd` reads in its shadow
+folder (filled from Valve's cloud listing and SHA-1-checked downloads at
+arm time) equals the official `GetFileSize` result, and the bytes it
+reads have the same count and SHA-1 as those the official `FileRead`
+put into the game's buffer. **What stays open:** it is one game, and no
+other recorded game calls these positions, so LOOP.md step 7's three
+games for answer mode are not reached; a missing file is never compared
+(the official answer for one is not recorded); `FileWrite` (position 0)
+is never shadowed (ADR 0055 stage 3); positions 13, 21 and 22 stay
+candidates; answer mode for the game needs ADR 0055 stage 2 (every
+account-data call of the game matched in shadow mode, and the
+maintainer's OK).
+
+**What a match of the persona part confirms** (ADR 0056 decision 2, ADR
+0051): in both games, at every logged call, the official result points
+to a text whose SHA-256 equals that of the account's persona name as
+`rebornd` has it from `CMsgClientAccountInfo`. Of the two candidates only
+`GetPersonaName` returns a text; `ClearRichPresence` returns nothing, so
+its `rax` would be a leftover. Assumption **A1**: a leftover `rax` of a
+function without a result does not point to a NUL-terminated copy of the
+account's persona name at every call in both games (about the compiled
+code, not from the page). With A1, a full match of the persona part
+confirms `SteamFriends017` 0 as "`GetPersonaName` (experiment 33, under
+A1)", and `meanings.md`, `status.json` and the shim's comments carry
+that tag; it also shows that Reborn's persona name agrees with the
+official one in two games. **What stays open:** position 44 stays
+narrowed (not covered); the shim cannot answer `GetPersonaName` yet: the
+shim protocol has only `ComparePersonaName`, and handing the name itself
+to a shim needs a new message and a decision about account data (ADR
+0055's table has no persona entry), so it waits for the maintainer;
+answer mode in the proxy needs a third game (for example An Arcade Full
+of Cats).
+
+**How a mismatch is recorded.** Each part is judged on its own, with the
+script's output quoted here and nothing changed in the shim, the proxy or
+`rebornd` to make it match without a new plan.
+
+- Cloud part: a `shadow mismatch` is recorded as such. A local save that
+  differs from the cloud version at arm time (for example one not yet
+  uploaded) is one possible cause, written down as a possibility, not a
+  finding; telling it apart needs a new plan. `014` 15 and 1 stay
+  confirmed (experiment 1); only Reborn's answer is in question.
+- Persona part: a `shadow mismatch` does not confirm `ClearRichPresence`
+  (Reborn's name could differ, for example after a rename during the
+  run); `shadow mismatch (no text at the result)` is recorded as a hint
+  towards `ClearRichPresence`, not a confirmation. The position stays
+  narrowed.
+- `shadow: no Reborn answer`, `shadow: skipped`, `shadow: no worker
+  thread` or a missing shadow line (for example the game exited first)
+  means the call was not compared: recorded as "not compared" with the
+  kind of note, a MISMATCH of B or C, and no conclusion either way.

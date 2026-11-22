@@ -1642,7 +1642,8 @@ A2 must be checked at least once across all logs, and a `wrote` line
 without a readable header is a mismatch. **Freshness:** a log whose
 `start` line in `starts.log` (the last `start` of the same app before its
 `log` line) is earlier than the commit time of the final plan is rejected;
-the script holds that time as `PLAN_COMMITTED` (local time, as `run.sh`
+the script holds that time as `PLAN_COMMITTED`, 2026-11-22 12:41:02 (commit
+`ea39f6e`; local time, as `run.sh`
 writes `starts.log`). `Steam_BGetCallback` call lines are logged only for calls 1 to 50 (and
 every 10000th), so A2 covers only headers from those polls, and "before
 the next poll" in D means the next *logged* poll line.

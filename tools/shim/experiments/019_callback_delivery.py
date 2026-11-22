@@ -57,7 +57,7 @@ import observelog  # noqa: E402
 
 COMPLETED = 703  # the number after which Steam_GetAPICallResult was seen (entry-points.md)
 LOGGED = 50  # LOG_FIRST in crates/shim-observe/src/proxy.rs
-PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # set to the final plan commit's time
+PLAN_COMMITTED = datetime(2026, 11, 22, 12, 41, 2)  # commit ea39f6e on loop/plan-9b (final plan)
 low = observelog.low32
 
 

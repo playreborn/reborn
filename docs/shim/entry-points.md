@@ -199,7 +199,36 @@ read.
 
 - **Meaning:** not known. What the number and the eight bytes after it
   are, and what lies beyond the first 16 bytes, is not observed; reading
-  further needs a new ADR (ADR 0042).
+  further needs a new ADR (ADR 0042). ADR 0050 is that ADR; see step 4d
+  below.
+
+### Windows: what the callback header points to (step 4d, ADR 0050)
+
+- **Fact:** in an agent run of Cave Crawlers (2026-11-22, `observe-22072.log`,
+  stays local), all 14 `Steam_BGetCallback` calls that returned 1 had, at
+  `rdx` bytes 16 to 20, a number from 1 to 784 that, together with the
+  address in bytes 8 to 16, made a readable range; bytes 20 to 24 were 0
+  every time. Number (bytes 4 to 8, hex) and that size, with how often:
+
+  | Number | Size | Calls |
+  | --- | --- | --- |
+  | `0x44e` | 16 | 3 |
+  | `0x44d` | 24 | 1 |
+  | `0x130` | 16 | 2 |
+  | `0x150` | 12 | 2 |
+  | `0x125c` | 8 | 2 |
+  | `0x125d` | 4 | 1 |
+  | `0x125e` | 1 | 1 |
+  | `0xfde8b` | 260 | 1 |
+  | `0xfdeac` | 784 | 1 |
+
+  The same number always came with the same size. Only sizes and SHA-256
+  hashes were logged (no number is listed yet).
+- **Recorded, recorder:** as above, agent run under ADR 0044.
+- **Meaning:** not confirmed. The observation fits bytes 8 to 16 being the
+  address of the callback's data and bytes 16 to 20 its size; giving a
+  number a meaning needs a candidate from a public page and an
+  experiment (ADR 0042, 0050).
 
 ### Windows: `Steam_GetAPICallResult` (stage 2 and 4b)
 

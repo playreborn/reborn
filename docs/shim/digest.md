@@ -9,6 +9,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 4: ADR 0050 in the proxy: 24 header bytes
+  at `rdx`, size and SHA-256 of the callback data, the first 64 bytes only
+  for listed numbers (none listed yet). Live in Cave Crawlers: all 14
+  callbacks had a readable size (1 to 784), the same size per number
+  (`entry-points.md`).
 - 2026-11-22: loop iteration 3: seven new candidates and one narrowed (UserStats012 0/10,
   UserStats013 15, SteamInput006 0/6, SteamInput001 2, SteamUser023 1,
   SteamFriends017 0). Experiment 12 **mismatched** as scripted: the check

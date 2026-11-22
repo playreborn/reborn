@@ -3034,11 +3034,15 @@ own app. The game always got the official answer; the log shows only
 | An Arcade Full of Cats (2368470) | `observe-29424` | shadow match |
 
 No logoff or kick of either client and no Steam Guard prompt during the
-runs; `rebornd` was shut down afterwards. A first attempt failed before
-the proxy was installed (VPet-Simulator, still running from experiment
-25, held the proxy file); that run is not counted.
+runs (`rebornd`'s local log shows none; observed by the agent); `rebornd`
+was shut down afterwards. A first attempt failed before the proxy was
+installed (VPet-Simulator, still running from experiment 25, held the
+proxy file); that run is not counted.
 
-Under ADR 0046/0055 shadow mode for ownership of the game itself has now
-matched in three games. Answer mode (the shim asking `rebornd` instead of
-the official client) is the next step and needs the maintainer's OK per
-ADR 0055.
+Shadow mode for `BIsSubscribed` (ownership of the game itself, this one
+call) has matched in three games. **Maintainer decision (2026-11-22):**
+answer mode for this call is allowed: in shim mode the shim asks
+`rebornd` instead of the official client, for the game itself only. A
+game qualifies for answer mode as a whole only when all of its
+account-data calls (position 7, cloud, stats and so on) have matched in
+shadow mode (ADR 0055 stage 2); none of those is shadowed yet.

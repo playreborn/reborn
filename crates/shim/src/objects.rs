@@ -71,17 +71,17 @@ macro_rules! stubs {
 const PIPE: i32 = 1;
 const USER: i32 = 1;
 
-/// `CreateSteamPipe` candidate, matched in experiment 7.
+/// `CreateSteamPipe` confirmed in experiment 7.
 extern "C" fn create_steam_pipe(_this: *const Object) -> i32 {
     PIPE
 }
 
-/// `ConnectToGlobalUser` candidate, matched in experiment 7.
+/// `ConnectToGlobalUser` confirmed in experiment 7.
 extern "C" fn connect_to_global_user(_this: *const Object, _pipe: i32) -> i32 {
     USER
 }
 
-/// `GetISteamUtils` candidate (pipe, version text), matched in experiment 7.
+/// `GetISteamUtils` (pipe, version text), confirmed in experiment 7.
 extern "C" fn get_utils_interface(
     _this: *const Object,
     _pipe: i32,
@@ -93,7 +93,7 @@ extern "C" fn get_utils_interface(
 }
 
 /// `GetISteamGenericInterface` and the per-interface `GetISteam…`
-/// candidates (user, pipe, version text), matched in experiment 7.
+/// (user, pipe, version text), confirmed in experiment 7.
 extern "C" fn get_user_interface(
     _this: *const Object,
     _user: i32,
@@ -104,16 +104,16 @@ extern "C" fn get_user_interface(
     interface_or_stop(unsafe { text_arg(version) })
 }
 
-/// `ReleaseUser` candidate (020 position 4), matched in experiment 7.
+/// `ReleaseUser`, confirmed (position 4 in 020, 021, 023; experiments 7, 11).
 extern "C" fn release_user(_this: *const Object, _pipe: i32, _user: i32) {}
 
-/// `BReleaseSteamPipe` candidate (020 position 1), matched in experiment 7.
+/// `BReleaseSteamPipe`, confirmed (position 1; experiments 7, 11).
 extern "C" fn release_steam_pipe(_this: *const Object, _pipe: i32) -> bool {
     true
 }
 
-/// `BShutdownIfAllPipesClosed` candidate (020 position 23), matched in
-/// experiment 7.
+/// `BShutdownIfAllPipesClosed`, confirmed (23 in 020 and 021, 22 in 023;
+/// experiments 7, 11).
 extern "C" fn shutdown_if_all_pipes_closed(_this: *const Object) -> bool {
     true
 }

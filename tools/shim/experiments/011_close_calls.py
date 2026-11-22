@@ -29,6 +29,9 @@ for path in sys.argv[1:]:
     for c in calls:
         first.setdefault(c.position, c)
     P, U = low(first[0].rax) if 0 in first else None, low(first[2].rax) if 2 in first else None
+    if P is None or U is None:
+        print(f"{Path(path).name} {version}: no pipe or user handle recorded (counts neither way)")
+        continue
     shutdown = SHUTDOWN[version]
     # The close calls are the last calls at positions 4, 1 and the shutdown.
     close = [c for c in calls if c.position in (4, 1, shutdown) and c.ms > calls[0].ms + 5000]
@@ -38,6 +41,12 @@ for path in sys.argv[1:]:
     checked += 1
     seq = [c.position for c in close]
     ok = seq[-3:] == [4, 1, shutdown]
+    # Every close call is checked, not only the last of each position.
+    for c in close:
+        if c.position == 4 and not (low(c.reg("rdx")) == P and low(c.reg("r8")) == U):
+            ok = False
+        if c.position == 1 and low(c.reg("rdx")) != P:
+            ok = False
     by = {c.position: c for c in close}
     ok &= low(by[4].reg("rdx")) == P and low(by[4].reg("r8")) == U if 4 in by else False
     ok &= low(by[1].reg("rdx")) == P and (by[1].rax or 0) & 0xFF == 1 if 1 in by else False

@@ -987,6 +987,23 @@ observe-11536.log SteamClient023: P=1 U=1 close calls [4, 1, 22] -> match
 experiment 11: match
 ```
 
+The logs: `observe-35536.log` Chronigma, `observe-45648.log` Fallout
+Shelter (both 021), `observe-21344.log` Linsips, `observe-11536.log`
+Cartapli (both 023); Windows 11, 2026-11-22, step 4c proxy with
+`GetAppID` answered by Reborn; recorded by the agent (ADR 0044).
+
+Evidence (Linsips, the close calls; floating-point registers and the
+`rcx` note left out):
+
+```text
+88945 ms ThreadId(1) SteamClient023#4 call 1 rcx=0x7ffceac30808 rdx=0x1 r8=0x1 r9=0x1
+88945 ms ThreadId(1) SteamClient023#4 return 1 rax=0x5
+88945 ms ThreadId(1) SteamClient023#1 call 1 rcx=0x7ffceac30808 rdx=0x1 r8=0x27ee0a23c00 r9=0x1c
+88945 ms ThreadId(1) SteamClient023#1 return 1 rax=0xffffff01
+88945 ms ThreadId(1) SteamClient023#22 call 1 rcx=0x7ffceac30808 rdx=0x0 r8=0x27ee0a23c00 r9=0x1c
+88945 ms ThreadId(1) SteamClient023#22 return 1 rax=0x1
+```
+
 Under ADR 0051, positions 4, 1 and 23 of `SteamClient021` and 4, 1 and
 22 of `SteamClient023` are confirmed as `ReleaseUser`,
 `BReleaseSteamPipe` and `BShutdownIfAllPipesClosed`.

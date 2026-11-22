@@ -26,6 +26,9 @@
 //! - `SteamUtils009` and `SteamUtils010` position 9, `GetAppID`
 //!   (`meanings.md`, experiments 3 to 5 and 15, confirmed), and position
 //!   14, `GetCurrentBatteryPower` (experiments 10 and 15, confirmed).
+//!   `SteamUtils009` position 16, `SetWarningMessageHook` (experiment 31,
+//!   under A1 and A2, confirmed): the hook is accepted and never called
+//!   (Reborn's choice); 010 position 16 was never recorded and stops.
 //! - `Steam_BGetCallback` and `Steam_FreeLastCallback`: handing over and
 //!   freeing queued callbacks (`meanings.md`, experiment 19, confirmed
 //!   for the header's number, address and size and the poll and free

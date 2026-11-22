@@ -595,3 +595,90 @@ confirmed for the shim.
 - No candidate: none of the functions on the `ISteamUtils` page that
   take no or simple arguments obviously gives the same 32-bit value
   every frame in every game.
+
+## `SteamClient020`, `SteamClient021` and `SteamClient023`
+
+- **Page:** <https://partner.steamgames.com/doc/api/ISteamClient>, read
+  2026-11-22. It opened without signing in. Unlike the other pages it
+  names no version constant, so which `SteamClient` version it describes
+  is not known; every entry here is for the version text recorded, and
+  positions come only from `objects.md` and the raw logs.
+- **Recording:** the 20 games of `coverage.md`; the examples below are
+  from Cave Crawlers (020), Baldi's Basics (020) and Cartapli (023).
+- In all calls `rcx` held the object. Handles appear in the low 32 bits
+  of `rdx`, `r8` and `r9`; the upper 32 bits were often leftovers
+  (`0xcf00000001`), so only the low 32 bits are compared below.
+
+### Position 0: candidate `CreateSteamPipe`
+
+- **Recorded:** the first call through every `SteamClient` object, in
+  every game; `rdx` 0, `r9` a small number; the result was 1.
+- **Fit:** the page documents a function without arguments that opens a
+  communication pipe to the client and returns its handle.
+
+### Position 2: candidate `ConnectToGlobalUser`
+
+- **Recorded:** the second call; `rdx` 1 (the result of position 0),
+  `r8` an address on the stack; the result was 1.
+- **Fit:** the page documents a function that takes a pipe handle and
+  returns the handle of the user signed in to the client.
+
+### Per-interface positions and position 12: candidates `GetISteam…` and `GetISteamGenericInterface`
+
+- **Recorded:** `rdx` 1 or 0, `r8` 1, `r9` an interface version text
+  (`objects.md`); the result an object. Position 9 differs: `rdx` 1 and
+  the text in `r8`. Position 12 took every kind of text; the positions
+  of their own took one kind each (for example `STEAMHTTP_…` only at 24
+  of 020 and 021, 23 of 023).
+- **Fit:** the page documents one function per interface that takes a
+  user handle, a pipe handle and a version text and returns that
+  interface; one generic function with the same arguments for any
+  interface; and one for `ISteamUtils` that takes only a pipe handle and
+  a version text. The two-argument shape matches position 9, where only
+  `SteamUtils…` texts were passed. Which documented function belongs to
+  which position number is not taken from the page; it follows only
+  from which texts a position was called with.
+
+### At exit (Cave Crawlers, `SteamClient020`): positions 4, 1, 23
+
+- **Recorded:** right before the game exited, in this order: position 4
+  with `rdx` 1, `r8` 1 (result register leftover `0x13`); position 1
+  with `rdx` 1 (result low byte 1); position 23 with `rdx` 0 (result 1).
+- **Fit (candidates):** position 4 `ReleaseUser` (takes a pipe and a user
+  handle, returns nothing); position 1 `BReleaseSteamPipe` (takes a pipe
+  handle, returns true or false); position 23
+  `BShutdownIfAllPipesClosed` (no arguments, returns true or false).
+
+### Position 34 (020) and 30 (023): candidate `SetWarningMessageHook`
+
+- **Recorded:** once at start; `rdx` an address in the range where
+  Windows loads program modules (for example `0x7ffe4c783820`); result
+  0.
+- **Fit:** the page documents a function that takes a pointer to a
+  function and returns nothing. Not part of experiment 7: the proxy
+  does not check whether the address is code.
+
+### Experiment 7 (planned 2026-11-22, before the runs)
+
+Four agent runs (ADR 0044) with the step 4c proxy and `GetAppID`
+answered by Reborn as usual: Plant Therapy (020), Outcore (020),
+Chronigma (021) and Cartapli (023). Each game runs to its first screen
+and is closed by a close request.
+
+**Predictions from the page**, on the low 32 bits, for each game:
+
+1. The first call through the `SteamClient` object is position 0; call
+   its result `P`.
+2. The next call is position 2 with `rdx` = `P`; call its result `U`.
+3. Every call of position 9 has `rdx` = `P` and a `SteamUtils…` text in
+   `r8`.
+4. Every call of position 12 and of the per-interface positions has
+   `r8` = `P` and `rdx` = `U` or 0.
+5. For the `SteamClient020` games, if the game calls positions 4, 1 and
+   23 when it closes: position 4 has `rdx` = `P` and `r8` = `U`,
+   position 1 has `rdx` = `P`, and position 23 comes after position 1.
+   A game that does not call them at close counts neither way for this
+   point.
+
+A single call that breaks 1 to 4, or a call at close that breaks 5, is a
+mismatch for that position.

@@ -1304,7 +1304,7 @@ mod tests {
         assert_eq!(read_local(&cloud, "MainPlayerData.json"), b"new");
         assert_eq!(std::fs::read(&moved).unwrap(), b"old");
         assert_eq!(base_sha(&cloud, "MainPlayerData.json"), Some(sha(b"new")));
-        // This launch's backup folder is a new one.
+        // Nothing was moved this launch, so it used no backup folder.
         assert_eq!(report.backup, None);
     }
 

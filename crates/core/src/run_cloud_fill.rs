@@ -14,8 +14,11 @@
 //! - otherwise (both changed, or no base and they differ): a **true
 //!   conflict**. Without a choice by the user nothing at all is written
 //!   and the caller gets the conflicts ([`FillOutcome::Conflicts`]) so a
-//!   frontend can ask before the game starts. With a choice, the chosen
-//!   version is played with and the other is kept in the backup folder.
+//!   frontend can ask before the game starts. With the user's answer
+//!   ([`CloudAnswer`]), which names each conflict it was given for (name
+//!   and both SHA-1s), the chosen version is played with and the other is
+//!   kept in the backup folder. A conflict the answer does not name, or
+//!   one whose versions changed since, is asked again.
 //!
 //! Nothing is ever uploaded, deleted or overwritten: a file is replaced
 //! only after it was moved to the backup folder, and downloads go through
@@ -72,8 +75,7 @@ const BASE_VERSION: u32 = 1;
 /// The largest base file read; Reborn's own bound against a damaged file.
 const MAX_BASE: u64 = 4 * 1024 * 1024;
 
-/// Suffix of a file while it is being written.
-const PART_SUFFIX: &str = ".reborn-part";
+use crate::run_cloud::PART_SUFFIX;
 
 /// The base of one file: the version last downloaded from the cloud.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +123,39 @@ pub enum CloudChoice {
     Local,
     /// The cloud version; the local file is kept as a backup.
     Cloud,
+}
+
+/// One conflict as the user was shown it: the name and both versions'
+/// SHA-1. An answer covers a conflict only while both are unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShownConflict {
+    /// The file's cloud name.
+    pub name: String,
+    /// SHA-1 of the local file shown.
+    pub local_sha1: String,
+    /// SHA-1 of the cloud version shown.
+    pub cloud_sha1: String,
+}
+
+/// The user's answer to a set of conflicts (AGENTS.md section 5: the user
+/// decides). It resolves only the exact conflicts it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloudAnswer {
+    /// The version to play with.
+    pub choice: CloudChoice,
+    /// The conflicts the user saw when choosing.
+    pub shown: Vec<ShownConflict>,
+}
+
+impl CloudAnswer {
+    /// Whether the answer covers `conflict` as it is now.
+    pub fn covers(&self, conflict: &Conflict) -> bool {
+        self.shown.iter().any(|shown| {
+            shown.name == conflict.name
+                && shown.local_sha1.eq_ignore_ascii_case(&conflict.local_sha1)
+                && shown.cloud_sha1.eq_ignore_ascii_case(&conflict.cloud_sha1)
+        })
+    }
 }
 
 /// What a file needs at launch.
@@ -179,6 +214,8 @@ pub struct Planned {
     pub local: Option<LocalFile>,
     /// What it needs.
     pub action: Action,
+    /// Whether the base file had an entry for it.
+    pub had_base: bool,
 }
 
 /// What filling the run's folder would do. Only read to make it.
@@ -200,10 +237,13 @@ impl FillPlan {
                 let local = planned.local.as_ref()?;
                 Some(Conflict {
                     name: planned.file.name.clone(),
+                    local_sha1: local.sha1.clone(),
                     local_size: local.size,
                     local_modified: local.modified,
+                    cloud_sha1: planned.file.sha1.to_ascii_lowercase(),
                     cloud_size: u64::from(planned.file.size),
                     cloud_modified: planned.file.timestamp,
+                    had_base: planned.had_base,
                 })
             })
             .collect()
@@ -215,14 +255,21 @@ impl FillPlan {
 pub struct Conflict {
     /// The file's name in the cloud (and in the run's folder).
     pub name: String,
+    /// SHA-1 of the local file, 40 lowercase hex digits.
+    pub local_sha1: String,
     /// Size of the local file.
     pub local_size: u64,
     /// Change time of the local file, seconds since the Unix epoch.
     pub local_modified: Option<u64>,
+    /// SHA-1 of the cloud version, 40 lowercase hex digits.
+    pub cloud_sha1: String,
     /// Size of the cloud version.
     pub cloud_size: u64,
     /// Change time in the cloud, seconds since the Unix epoch.
     pub cloud_modified: u64,
+    /// Whether a base was known: `true` means both versions changed since
+    /// the last download, `false` that Reborn cannot tell which is newer.
+    pub had_base: bool,
 }
 
 /// Why the run's folder could not be looked at or filled. Messages carry
@@ -394,8 +441,8 @@ pub fn plan_fill(
     let mut plan = FillPlan::default();
     let mut seen = HashSet::new();
     for file in files {
-        match api_name_path(&file.name) {
-            Ok(_) => {}
+        let relative = match api_name_path(&file.name) {
+            Ok(relative) => relative,
             Err(_) if crate::cloud::split_root(&file.name).is_some() => {
                 plan.skipped.push((file.name.clone(), Skip::RootToken));
                 continue;
@@ -404,8 +451,8 @@ pub fn plan_fill(
                 plan.skipped.push((file.name.clone(), Skip::UnsafeName));
                 continue;
             }
-        }
-        if !seen.insert(file.name.to_lowercase()) {
+        };
+        if !seen.insert(collision_key(&relative)) {
             return Err(FillError::DuplicateName);
         }
         if !is_sha1(&file.sha1) {
@@ -417,38 +464,82 @@ pub fn plan_fill(
             continue;
         }
         let local = cloud.local_file(&file.name)?;
+        let base_sha = base.files.get(&file.name).map(|entry| entry.sha1.as_str());
         let action = decide(
             local.as_ref().map(|local| local.sha1.as_str()),
             &file.sha1,
-            base.files.get(&file.name).map(|entry| entry.sha1.as_str()),
+            base_sha,
         );
         plan.files.push(Planned {
             file: file.clone(),
             local,
             action,
+            had_base: base_sha.is_some(),
         });
     }
     Ok(plan)
 }
 
+/// Whether the part file a download of `relative` (below the data folder)
+/// writes first is free. `download_cloud_file_into` creates
+/// `<name>.reborn-part` and would truncate a file of that name; names
+/// ending in the suffix are refused by [`api_name_path`], and this check
+/// guards against one put there by other means.
+fn part_free(data_dir: &Path, relative: &Path) -> bool {
+    let mut part = data_dir.join(relative).into_os_string();
+    part.push(PART_SUFFIX);
+    std::fs::symlink_metadata(PathBuf::from(part))
+        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+}
+
+/// Downloads `file` to `relative` below the data folder unless its part
+/// file's place is taken.
+async fn fetch_to<F: CloudFetch>(
+    cloud: &RunCloud,
+    fetch: &F,
+    relative: &Path,
+    file: &CloudFile,
+) -> Result<(), String> {
+    if !part_free(cloud.data_dir(), relative) {
+        return Err("a file named like the download's part file is in the way".to_owned());
+    }
+    fetch.fetch(cloud.data_dir(), relative, file).await
+}
+
+/// The key under which two names meet in one file on Windows: the checked
+/// path's parts, lowercased, joined with `/` (so `a\b` and `A/B` meet).
+fn collision_key(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Fills the run's folder from the cloud list `files` (fetched once by
-/// the caller), applying `choice` to true conflicts. `now` (seconds since
-/// the Unix epoch) names the backup folder. See the module documentation.
+/// the caller). True conflicts are resolved only by an `answer` that
+/// covers every one of them exactly as they are now
+/// ([`CloudAnswer::covers`]); otherwise nothing is written and all current
+/// conflicts are returned to be asked again. `now` (seconds since the Unix
+/// epoch) names the backup folder. See the module documentation.
 pub async fn fill_run_cloud<F: CloudFetch>(
     cloud: &RunCloud,
     files: &[CloudFile],
-    choice: Option<CloudChoice>,
+    answer: Option<&CloudAnswer>,
     fetch: &F,
     now: u64,
 ) -> Result<FillOutcome, FillError> {
     let mut base = load_base(cloud)?;
     let plan = plan_fill(cloud, files, &base)?;
     let conflicts = plan.conflicts();
-    if choice.is_none() && !conflicts.is_empty() {
+    let answered = conflicts
+        .iter()
+        .all(|conflict| answer.is_some_and(|answer| answer.covers(conflict)));
+    if !answered {
         return Ok(FillOutcome::Conflicts(conflicts));
     }
-    // Only used for conflicts, and there are none without a choice.
-    let choice = choice.unwrap_or(CloudChoice::Local);
+    // Only used for conflicts, and each one is covered by the answer.
+    let choice = answer.map_or(CloudChoice::Local, |answer| answer.choice);
     let mut report = FillReport {
         skipped: plan.skipped,
         ..FillReport::default()
@@ -474,21 +565,24 @@ pub async fn fill_run_cloud<F: CloudFetch>(
             }
             (Action::Download, _) => {
                 // It was free when planned; something there now is not
-                // overwritten, and the fill stops.
-                if !cloud.is_free(&name)? {
-                    return Err(FillError::Io(
-                        "a cloud file appeared in the run's folder during the launch".to_owned(),
-                    ));
-                }
-                match fetch
-                    .fetch(cloud.data_dir(), &run_folder.join(&relative), &planned.file)
-                    .await
-                {
-                    Ok(()) => {
-                        report.downloaded += 1;
-                        Ok(true)
+                // overwritten.
+                match cloud.is_free(&name) {
+                    Ok(true) => {
+                        match fetch_to(cloud, fetch, &run_folder.join(&relative), &planned.file)
+                            .await
+                        {
+                            Ok(()) => {
+                                report.downloaded += 1;
+                                Ok(true)
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
-                    Err(error) => Err(error),
+                    Ok(false) => Err(
+                        "a file appeared in the run's folder during the launch; not overwritten"
+                            .to_owned(),
+                    ),
+                    Err(error) => Err(error.to_string()),
                 }
             }
             (Action::CloudChanged, _) | (Action::Conflict, CloudChoice::Cloud) => {
@@ -511,7 +605,7 @@ pub async fn fill_run_cloud<F: CloudFetch>(
                 match backup.folder(cloud, "cloud") {
                     Ok(folder) => {
                         let target = folder.join(&relative);
-                        match fetch.fetch(cloud.data_dir(), &target, &planned.file).await {
+                        match fetch_to(cloud, fetch, &target, &planned.file).await {
                             Ok(()) => {
                                 report.chose_local += 1;
                                 Ok(true)
@@ -567,15 +661,13 @@ async fn replace<F: CloudFetch>(
     if std::fs::symlink_metadata(&to).is_ok() {
         return Err("the backup already exists; nothing replaced".to_owned());
     }
+    let destination = cloud.relative().join(relative);
+    // Checked before the move, so a refusal moves nothing.
+    if !part_free(cloud.data_dir(), &destination) {
+        return Err("a file named like the download's part file is in the way".to_owned());
+    }
     std::fs::rename(&from, &to).map_err(|error| format!("backing up failed: {error}"))?;
-    match fetch
-        .fetch(
-            cloud.data_dir(),
-            &cloud.relative().join(relative),
-            &planned.file,
-        )
-        .await
-    {
+    match fetch_to(cloud, fetch, &destination, &planned.file).await {
         Ok(()) => Ok(()),
         Err(error) => {
             // Put the local file back, but never over something new.
@@ -744,6 +836,7 @@ mod tests {
     struct FakeCloud {
         contents: HashMap<String, Vec<u8>>,
         fail: HashSet<String>,
+        squat: HashSet<String>,
         fetched: Mutex<Vec<PathBuf>>,
     }
 
@@ -771,6 +864,13 @@ mod tests {
             file: &CloudFile,
         ) -> Result<(), String> {
             self.fetched.lock().unwrap().push(relative.to_path_buf());
+            let path = folder.join(relative);
+            if self.squat.contains(&file.name) {
+                // Another process takes the place, then the download fails.
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, b"squatter").unwrap();
+                return Err("HTTP 500".to_owned());
+            }
             if self.fail.contains(&file.name) {
                 return Err("HTTP 500".to_owned());
             }
@@ -778,7 +878,6 @@ mod tests {
                 .contents
                 .get(&file.sha1.to_ascii_lowercase())
                 .ok_or("not in the fake cloud")?;
-            let path = folder.join(relative);
             if path.exists() {
                 return Err("exists; not overwritten".to_owned());
             }
@@ -791,14 +890,30 @@ mod tests {
     fn run(
         cloud: &RunCloud,
         files: &[CloudFile],
-        choice: Option<CloudChoice>,
+        answer: Option<&CloudAnswer>,
         fake: &FakeCloud,
     ) -> FillOutcome {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
-            .block_on(fill_run_cloud(cloud, files, choice, fake, NOW))
+            .block_on(fill_run_cloud(cloud, files, answer, fake, NOW))
             .unwrap()
+    }
+
+    /// The answer `choice` for the conflict over `name` between the local
+    /// content `local` and the cloud content `cloud`.
+    fn answer(choice: CloudChoice, shown: &[(&str, &[u8], &[u8])]) -> CloudAnswer {
+        CloudAnswer {
+            choice,
+            shown: shown
+                .iter()
+                .map(|(name, local, cloud)| ShownConflict {
+                    name: (*name).to_owned(),
+                    local_sha1: sha(local),
+                    cloud_sha1: sha(cloud).to_uppercase(),
+                })
+                .collect(),
+        }
     }
 
     fn done(outcome: FillOutcome) -> FillReport {
@@ -995,7 +1110,86 @@ mod tests {
             None,
             &fake,
         );
-        assert!(matches!(outcome, FillOutcome::Conflicts(conflicts) if conflicts.len() == 1));
+        let FillOutcome::Conflicts(conflicts) = outcome else {
+            panic!("expected a conflict");
+        };
+        assert_eq!(conflicts.len(), 1);
+        assert!(!conflicts[0].had_base);
+        assert_eq!(conflicts[0].local_sha1, sha(b"local"));
+        assert_eq!(conflicts[0].cloud_sha1, sha(b"cloud"));
+    }
+
+    #[test]
+    fn an_answer_resolves_only_the_conflicts_it_names() {
+        let (_temp, cloud) = setup("answer-set");
+        write_local(&cloud, "a.json", b"local a");
+        write_local(&cloud, "b.json", b"local b");
+        let files = [
+            listed("a.json", b"cloud a", 1),
+            listed("b.json", b"cloud b", 1),
+        ];
+        let fake = FakeCloud::with(&[b"cloud a", b"cloud b"]);
+        // The user saw only a.json: b.json is asked again, nothing written.
+        let partial = answer(CloudChoice::Cloud, &[("a.json", b"local a", b"cloud a")]);
+        let outcome = run(&cloud, &files, Some(&partial), &fake);
+        assert!(
+            matches!(&outcome, FillOutcome::Conflicts(c) if c.len() == 2),
+            "{outcome:?}"
+        );
+        assert!(fake.fetched().is_empty());
+        assert_eq!(read_local(&cloud, "a.json"), b"local a");
+
+        // The cloud version changed after the user saw it: asked again.
+        let stale = answer(
+            CloudChoice::Cloud,
+            &[
+                ("a.json", b"local a", b"older cloud a"),
+                ("b.json", b"local b", b"cloud b"),
+            ],
+        );
+        assert!(matches!(
+            run(&cloud, &files, Some(&stale), &fake),
+            FillOutcome::Conflicts(_)
+        ));
+        // So did the local file.
+        let stale_local = answer(
+            CloudChoice::Cloud,
+            &[
+                ("a.json", b"older local a", b"cloud a"),
+                ("b.json", b"local b", b"cloud b"),
+            ],
+        );
+        assert!(matches!(
+            run(&cloud, &files, Some(&stale_local), &fake),
+            FillOutcome::Conflicts(_)
+        ));
+        assert!(fake.fetched().is_empty());
+
+        // Naming both exactly resolves both.
+        let full = answer(
+            CloudChoice::Cloud,
+            &[
+                ("a.json", b"local a", b"cloud a"),
+                ("b.json", b"local b", b"cloud b"),
+            ],
+        );
+        let report = done(run(&cloud, &files, Some(&full), &fake));
+        assert_eq!(report.chose_cloud, 2);
+        assert_eq!(read_local(&cloud, "b.json"), b"cloud b");
+    }
+
+    #[test]
+    fn an_answer_without_conflicts_changes_nothing_else() {
+        let (_temp, cloud) = setup("answer-none");
+        let fake = FakeCloud::with(&[b"x"]);
+        let unused = answer(CloudChoice::Cloud, &[("a.json", b"l", b"c")]);
+        let report = done(run(
+            &cloud,
+            &[listed("a.json", b"x", 1)],
+            Some(&unused),
+            &fake,
+        ));
+        assert_eq!(report.downloaded, 1);
     }
 
     #[test]
@@ -1007,7 +1201,10 @@ mod tests {
         let report = done(run(
             &cloud,
             &[listed("MainPlayerData.json", b"cloud", 30)],
-            Some(CloudChoice::Cloud),
+            Some(&answer(
+                CloudChoice::Cloud,
+                &[("MainPlayerData.json", b"local", b"cloud")],
+            )),
             &fake,
         ));
         assert_eq!(report.chose_cloud, 1);
@@ -1026,7 +1223,8 @@ mod tests {
         set_base(&cloud, "slots/1.sav", b"old");
         let files = [listed("slots/1.sav", b"cloud", 30)];
         let fake = FakeCloud::with(&[b"cloud"]);
-        let report = done(run(&cloud, &files, Some(CloudChoice::Local), &fake));
+        let chosen = answer(CloudChoice::Local, &[("slots/1.sav", b"local", b"cloud")]);
+        let report = done(run(&cloud, &files, Some(&chosen), &fake));
         assert_eq!(report.chose_local, 1);
         assert_eq!(read_local(&cloud, "slots/1.sav"), b"local");
         assert_eq!(
@@ -1060,6 +1258,127 @@ mod tests {
         assert_eq!(read_local(&cloud, "MainPlayerData.json"), b"old");
         assert!(!backup(&temp, "local", "MainPlayerData.json").exists());
         assert_eq!(base_sha(&cloud, "MainPlayerData.json"), Some(sha(b"old")));
+    }
+
+    #[test]
+    fn a_taken_place_keeps_the_backup_and_overwrites_nothing() {
+        let (temp, cloud) = setup("squat");
+        write_local(&cloud, "MainPlayerData.json", b"old");
+        set_base(&cloud, "MainPlayerData.json", b"old");
+        let mut fake = FakeCloud::with(&[b"new"]);
+        fake.squat.insert("MainPlayerData.json".to_owned());
+        let report = done(run(
+            &cloud,
+            &[listed("MainPlayerData.json", b"new", 20)],
+            None,
+            &fake,
+        ));
+        assert_eq!(report.failed.len(), 1);
+        // Whatever took the place stays; the local file is in the backup.
+        assert_eq!(read_local(&cloud, "MainPlayerData.json"), b"squatter");
+        assert_eq!(
+            std::fs::read(backup(&temp, "local", "MainPlayerData.json")).unwrap(),
+            b"old"
+        );
+        assert_eq!(base_sha(&cloud, "MainPlayerData.json"), Some(sha(b"old")));
+    }
+
+    #[test]
+    fn a_crash_between_move_and_download_recovers_at_the_next_launch() {
+        // State after a crash: the unchanged local file (L = B) was moved to
+        // the backup, the cloud version never arrived.
+        let (temp, cloud) = setup("crash");
+        set_base(&cloud, "MainPlayerData.json", b"old");
+        let moved = backup(&temp, "local", "MainPlayerData.json");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, b"old").unwrap();
+        let fake = FakeCloud::with(&[b"new"]);
+        let report = done(run(
+            &cloud,
+            &[listed("MainPlayerData.json", b"new", 20)],
+            None,
+            &fake,
+        ));
+        // Missing locally: downloaded; the earlier backup is untouched.
+        assert_eq!(report.downloaded, 1);
+        assert_eq!(read_local(&cloud, "MainPlayerData.json"), b"new");
+        assert_eq!(std::fs::read(&moved).unwrap(), b"old");
+        assert_eq!(base_sha(&cloud, "MainPlayerData.json"), Some(sha(b"new")));
+        // This launch's backup folder is a new one.
+        assert_eq!(report.backup, None);
+    }
+
+    #[test]
+    fn a_failure_in_the_middle_keeps_the_others_and_the_base() {
+        let (_temp, cloud) = setup("middle");
+        let mut fake = FakeCloud::with(&[b"a", b"b", b"c"]);
+        fake.fail.insert("b.json".to_owned());
+        let report = done(run(
+            &cloud,
+            &[
+                listed("a.json", b"a", 1),
+                listed("b.json", b"b", 1),
+                listed("c.json", b"c", 1),
+            ],
+            None,
+            &fake,
+        ));
+        assert_eq!(report.downloaded, 2);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(base_sha(&cloud, "a.json"), Some(sha(b"a")));
+        assert_eq!(base_sha(&cloud, "c.json"), Some(sha(b"c")));
+        assert_eq!(base_sha(&cloud, "b.json"), None);
+    }
+
+    #[test]
+    fn part_file_names_are_skipped_so_no_save_is_truncated() {
+        let (_temp, cloud) = setup("part");
+        // A local-only save whose name a download's part file would take.
+        write_local(&cloud, "save.json.reborn-part", b"precious");
+        let fake = FakeCloud::with(&[b"x"]);
+        let files = [
+            listed("save.json.reborn-part", b"x", 1),
+            listed("slots/1.sav.REBORN-PART", b"x", 1),
+        ];
+        let report = done(run(&cloud, &files, None, &fake));
+        assert_eq!(
+            report.skipped,
+            vec![
+                ("save.json.reborn-part".to_owned(), Skip::UnsafeName),
+                ("slots/1.sav.REBORN-PART".to_owned(), Skip::UnsafeName),
+            ]
+        );
+        assert!(fake.fetched().is_empty());
+        assert_eq!(read_local(&cloud, "save.json.reborn-part"), b"precious");
+
+        // Downloading `save.json` would write `save.json.reborn-part`
+        // first: refused while that name is taken, in both download paths.
+        let files = [listed("save.json", b"x", 1)];
+        let report = done(run(&cloud, &files, None, &fake));
+        assert_eq!(report.failed.len(), 1);
+        assert!(fake.fetched().is_empty());
+        assert_eq!(read_local(&cloud, "save.json.reborn-part"), b"precious");
+        write_local(&cloud, "save.json", b"old");
+        set_base(&cloud, "save.json", b"old");
+        let report = done(run(&cloud, &files, None, &fake));
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(read_local(&cloud, "save.json"), b"old", "nothing moved");
+        assert_eq!(read_local(&cloud, "save.json.reborn-part"), b"precious");
+    }
+
+    #[test]
+    fn names_that_meet_in_one_path_are_refused() {
+        let (_temp, cloud) = setup("case-path");
+        let files = [
+            listed("slots\\1.sav", b"a", 1),
+            listed("Slots/1.SAV", b"b", 1),
+        ];
+        let fake = FakeCloud::with(&[b"a", b"b"]);
+        let result = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(fill_run_cloud(&cloud, &files, None, &fake, NOW));
+        assert!(matches!(result, Err(FillError::DuplicateName)));
     }
 
     #[test]

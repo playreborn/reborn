@@ -18,12 +18,14 @@ use reborn_core::install::{InstallEvent, InstallOutcome, InstallRequest, install
 use reborn_core::launch::{LaunchRequest, plan_launch, spawn};
 use reborn_core::run_cloud::{RunCloud, quota_from_app_info};
 use reborn_core::run_cloud_fill::{
-    CdnFetch, CloudChoice as FillChoice, FillOutcome, fill_run_cloud,
+    CdnFetch, CloudAnswer as FillAnswer, CloudChoice as FillChoice, FillOutcome, ShownConflict,
+    fill_run_cloud,
 };
 use reborn_ipc::protocol::{
-    AchievementInfo, ChatMessageInfo, ChatText, CloudChoice, CloudConflictFile, CloudRestoreResult,
-    Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode, InstalledApp, Job, JobKind,
-    JobResult, JobState, OwnStatus, OwnedApp, Request, Response, Secret, UnreadChatInfo,
+    AchievementInfo, ChatMessageInfo, ChatText, CloudAnswer, CloudChoice, CloudConflictFile,
+    CloudRestoreResult, Event, FriendInfo, FriendRelationship, FriendStatus, GuardCode,
+    InstalledApp, Job, JobKind, JobResult, JobState, OwnStatus, OwnedApp, Request, Response,
+    Secret, UnreadChatInfo,
 };
 use reborn_platform::settings;
 use tokio::sync::{Notify, broadcast, mpsc, oneshot};
@@ -1162,7 +1164,7 @@ impl Daemon {
     /// Starts an installed game and reports when its process exits.
     /// `cloud_choice` answers a true cloud conflict of a shim-mode launch
     /// (ADR 0055).
-    async fn launch(&self, request: LaunchRequest, cloud_choice: Option<CloudChoice>) -> Response {
+    async fn launch(&self, request: LaunchRequest, cloud_choice: Option<CloudAnswer>) -> Response {
         let app_id = request.app_id;
         if self.running().contains(&app_id) {
             return Response::Error {
@@ -1238,14 +1240,56 @@ impl Daemon {
         if let Some(result) = cloud_restore_result(restore) {
             self.emit(Event::CloudRestore { app_id, result });
         }
+        // In shim mode the run's cloud folder (ADR 0055), with the size
+        // limit from the app's quota, read from the app info fetched above
+        // (no further request). Without that app info the launch is
+        // refused, like without the ownership set. An app without a quota
+        // has no cloud and gets no folder (its reads are refused).
+        let cloud = if shim_mode {
+            let cloud = match &app_info {
+                Ok(app_info) => {
+                    run_cloud(&session, app_id, app_info).map_err(|error| error.to_string())
+                }
+                Err(message) => Err(message.clone()),
+            };
+            match cloud {
+                Ok(cloud) => cloud.map(Arc::new),
+                Err(message) => {
+                    return Response::Error {
+                        message: format!("shim mode: cannot read the app's cloud quota: {message}"),
+                    };
+                }
+            }
+        } else {
+            None
+        };
+        // Fill the run's cloud folder from the listing above (ADR 0055,
+        // L/C/B rules), before shim mode is entered, so a refusal leaves
+        // nothing to undo. A true conflict the user's answer does not
+        // name, a missing listing or a failed download refuses the launch:
+        // the game never starts in shim mode on saves Reborn could not
+        // settle. Downloads are bounded by the CDN client's own timeouts,
+        // not by a limit around the whole fill, so a local file moved aside
+        // is never left without its replacement or its way back.
+        if let Some(cloud) = &cloud {
+            let filled = match &listing {
+                Ok(files) => fill_cloud(cloud, files, cloud_choice.as_ref()).await,
+                Err(message) => Err(format!(
+                    "cannot list the app's Steam Cloud files: {message}"
+                )),
+            };
+            if let Some(refusal) = cloud_fill_refusal(app_id, filled) {
+                return refusal;
+            }
+        }
         if shim_mode && let Err(message) = crate::shim_launch::enter() {
             return Response::Error {
                 message: format!("shim mode: {message}"),
             };
         }
         // In shim mode the run's ownership set, once shim mode is entered
-        // (so a launch that shim mode refuses asks Valve for nothing) and
-        // before the game starts (ADR 0055): without it the launch is
+        // (so a launch that shim mode refuses asks Valve for nothing more)
+        // and before the game starts (ADR 0055): without it the launch is
         // refused, so the shim never answers ownership without Valve.
         let ownership = if shim_mode {
             match self.licensed_apps(&session).await {
@@ -1259,50 +1303,6 @@ impl Daemon {
         } else {
             None
         };
-        // In shim mode the run's cloud folder (ADR 0055), with the size
-        // limit from the app's quota, read from the app info fetched above
-        // (no further request). Without that app info the launch is
-        // refused, like without the ownership set. An app without a quota
-        // has no cloud and gets no folder (its reads are refused). Reads
-        // only, so far.
-        let cloud = if shim_mode {
-            let cloud = match &app_info {
-                Ok(app_info) => {
-                    run_cloud(&session, app_id, app_info).map_err(|error| error.to_string())
-                }
-                Err(message) => Err(message.clone()),
-            };
-            match cloud {
-                Ok(cloud) => cloud.map(Arc::new),
-                Err(message) => {
-                    crate::shim_launch::leave();
-                    return Response::Error {
-                        message: format!("shim mode: cannot read the app's cloud quota: {message}"),
-                    };
-                }
-            }
-        } else {
-            None
-        };
-        // Fill the run's cloud folder from the listing above (ADR 0055,
-        // L/C/B rules). A true conflict without the user's answer, a
-        // missing listing or a failed download refuses the launch: the
-        // game never starts in shim mode on saves Reborn could not settle.
-        // Downloads are bounded by the CDN client's own timeouts, not by a
-        // limit around the whole fill, so a local file moved aside is
-        // never left without its replacement or its way back.
-        if let Some(cloud) = &cloud {
-            let filled = match &listing {
-                Ok(files) => fill_cloud(cloud, files, cloud_choice).await,
-                Err(message) => Err(format!(
-                    "cannot list the app's Steam Cloud files: {message}"
-                )),
-            };
-            if let Some(refusal) = cloud_fill_refusal(app_id, filled) {
-                crate::shim_launch::leave();
-                return refusal;
-            }
-        }
         let mut child = match spawn(&plan) {
             Ok(child) => child,
             Err(error) => {
@@ -1901,20 +1901,36 @@ fn run_cloud(
 async fn fill_cloud(
     cloud: &RunCloud,
     files: &[CloudFile],
-    choice: Option<CloudChoice>,
+    answer: Option<&CloudAnswer>,
 ) -> Result<FillOutcome, String> {
     let fetch = CdnFetch::new().map_err(|error| error.to_string())?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_secs())
         .unwrap_or_default();
-    let choice = choice.map(|choice| match choice {
-        CloudChoice::Local => FillChoice::Local,
-        CloudChoice::Cloud => FillChoice::Cloud,
-    });
-    fill_run_cloud(cloud, files, choice, &fetch, now)
+    let answer = answer.map(fill_answer);
+    fill_run_cloud(cloud, files, answer.as_ref(), &fetch, now)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// The frontend's answer as `reborn-core` takes it.
+fn fill_answer(answer: &CloudAnswer) -> FillAnswer {
+    FillAnswer {
+        choice: match answer.choice {
+            CloudChoice::Local => FillChoice::Local,
+            CloudChoice::Cloud => FillChoice::Cloud,
+        },
+        shown: answer
+            .files
+            .iter()
+            .map(|file| ShownConflict {
+                name: file.name.clone(),
+                local_sha1: file.local_sha1.clone(),
+                cloud_sha1: file.cloud_sha1.clone(),
+            })
+            .collect(),
+    }
 }
 
 /// The answer that refuses a shim-mode launch after filling the run's
@@ -1940,10 +1956,13 @@ fn cloud_fill_refusal(app_id: u32, filled: Result<FillOutcome, String>) -> Optio
                     .into_iter()
                     .map(|conflict| CloudConflictFile {
                         name: conflict.name,
+                        local_sha1: conflict.local_sha1,
                         local_size: conflict.local_size,
                         local_modified: conflict.local_modified,
+                        cloud_sha1: conflict.cloud_sha1,
                         cloud_size: conflict.cloud_size,
                         cloud_modified: conflict.cloud_modified,
+                        had_base: conflict.had_base,
                     })
                     .collect(),
             })
@@ -2226,24 +2245,41 @@ mod tests {
         // A true conflict asks the user through the launching frontend.
         let conflict = Conflict {
             name: "MainPlayerData.json".to_owned(),
+            local_sha1: "aa".repeat(20),
             local_size: 10,
             local_modified: Some(5),
+            cloud_sha1: "cc".repeat(20),
             cloud_size: 11,
             cloud_modified: 6,
+            had_base: true,
+        };
+        let shown = CloudConflictFile {
+            name: "MainPlayerData.json".to_owned(),
+            local_sha1: "aa".repeat(20),
+            local_size: 10,
+            local_modified: Some(5),
+            cloud_sha1: "cc".repeat(20),
+            cloud_size: 11,
+            cloud_modified: 6,
+            had_base: true,
         };
         assert_eq!(
-            cloud_fill_refusal(app, Ok(FillOutcome::Conflicts(vec![conflict]))),
+            cloud_fill_refusal(app, Ok(FillOutcome::Conflicts(vec![conflict.clone()]))),
             Some(Response::CloudConflict {
                 app_id: app,
-                files: vec![CloudConflictFile {
-                    name: "MainPlayerData.json".to_owned(),
-                    local_size: 10,
-                    local_modified: Some(5),
-                    cloud_size: 11,
-                    cloud_modified: 6,
-                }],
+                files: vec![shown.clone()],
             })
         );
+        // The frontend's answer for what it was shown covers exactly that
+        // conflict in `reborn-core`.
+        let answer = fill_answer(&CloudAnswer::for_conflicts(CloudChoice::Cloud, &[shown]));
+        assert_eq!(answer.choice, FillChoice::Cloud);
+        assert!(answer.covers(&conflict));
+        let changed = Conflict {
+            cloud_sha1: "dd".repeat(20),
+            ..conflict
+        };
+        assert!(!answer.covers(&changed));
         // A failed download or listing refuses with a clear error.
         let failed = FillReport {
             failed: vec![("MainPlayerData.json".to_owned(), "HTTP 500".to_owned())],

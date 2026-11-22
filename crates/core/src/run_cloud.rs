@@ -26,8 +26,13 @@
 //! the last part after the check is caught when the file is opened. A
 //! *folder* on the way swapped for a link between the check and the open
 //! is not caught: std has no handle-relative open (`openat`, or
-//! `NtCreateFile` with a root directory). The write stage must use
-//! handle-relative opens before it writes anything. Hard links are not
+//! `NtCreateFile` with a root directory). The launch side
+//! ([`crate::run_cloud_fill`]) writes with the same limit: it checks every
+//! part of the path for links right before creating, moving or
+//! downloading, and accepts that a folder swapped in between is not
+//! caught (the threat is a process of the same user, which could change
+//! the saves directly anyway). Writes by the game during a run are a
+//! separate stage and decide this again. Hard links are not
 //! detected: a hard link in the folder is a regular file, and its content
 //! is handed out like any other (making one needs write access to the
 //! folder and, on Windows, to the target).
@@ -357,13 +362,29 @@ fn same_file(opened: &Metadata, found: &Metadata) -> bool {
     opened.file_type() == found.file_type() && !opened.file_type().is_symlink()
 }
 
+/// The suffix `download_cloud_file_into` gives a file while writing it
+/// (`crates/content/src/cloud.rs`, `PART_SUFFIX`).
+pub const PART_SUFFIX: &str = ".reborn-part";
+
 /// A game's cloud file name as a checked relative path: a plain relative
-/// path ([`install_path`]), no root token, at most [`MAX_NAME`] bytes.
+/// path ([`install_path`]), no root token, at most [`MAX_NAME`] bytes, and
+/// a last part that does not end in [`PART_SUFFIX`] (any case): such a
+/// file would be truncated when the file without the suffix is
+/// downloaded.
 pub fn api_name_path(name: &str) -> Result<PathBuf, RunCloudError> {
     if name.len() > MAX_NAME || split_root(name).is_some() {
         return Err(RunCloudError::UnsafeName);
     }
-    install_path(name).map_err(|_| RunCloudError::UnsafeName)
+    let path = install_path(name).map_err(|_| RunCloudError::UnsafeName)?;
+    let part = path.file_name().is_some_and(|last| {
+        last.to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(PART_SUFFIX)
+    });
+    if part {
+        return Err(RunCloudError::UnsafeName);
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -521,6 +542,8 @@ mod tests {
             "CON.txt",
             "COM1",
             "slots/LPT1.sav",
+            "MainPlayerData.json.reborn-part",
+            "slots/1.sav.Reborn-Part",
             "\\\\?\\C:\\x",
             "\\\\.\\NUL",
             "//server/share/x",

@@ -122,8 +122,10 @@ response types are in steam-vent-proto-steam
 - **Limits:** the threat is another process of the same user changing
   the folder during a read. A *folder* on the way swapped for a link
   between check and open is not caught (std has no handle-relative open);
-  the write stage must use handle-relative opens. Hard links are regular
-  files and are not detected.
+  the launch side below accepts the same limit, writes by the game decide
+  it again. Hard links are regular files and are not detected. Names
+  whose last part ends in `.reborn-part` (any case) are refused: that is
+  the part file a download writes first.
 - **Requests:** none per call. The quota comes from the app info that the
   launch already fetches for restoring saves (ADR 0035): one fetch for
   both, under the restore's time limit. In shim mode, a launch whose app
@@ -155,14 +157,18 @@ response types are in steam-vent-proto-steam
   - C = B, L ≠ B (only the local file changed): kept, waits for uploads;
   - otherwise (both changed, or no base and L ≠ C): a **true conflict**.
     Nothing at all is written and the launch is answered with
-    `Response::CloudConflict { app_id, files }` (IPC 1.13): name, sizes
-    and times of both versions. The frontend asks the user and sends the
-    launch again with `cloud_choice` `local` or `cloud`. `cloud`: as
-    "only the cloud changed". `local`: the local file stays, the cloud
-    version is downloaded to `.../<unix time>/cloud/` as the backup and
-    becomes the base, so the next launch keeps the local file without
-    asking again. The choice applies to every true conflict found at
-    that launch.
+    `Response::CloudConflict { app_id, files }` (IPC 1.13): name, SHA-1,
+    size and time of both versions, and whether a base was known. The
+    frontend asks the user and sends the launch again with
+    `cloud_choice { choice, files }`: `local` or `cloud`, and the
+    conflicts the user was shown (name and both SHA-1s). The answer
+    resolves only conflicts it names exactly; if any current conflict is
+    missing from it or its versions changed since, nothing is written and
+    all current conflicts are asked again (AGENTS.md section 5: the user
+    decides). `cloud`: as "only the cloud changed". `local`: the local
+    file stays, the cloud version is downloaded to `.../<unix time>/cloud/`
+    as the backup and becomes the base, so the next launch keeps the
+    local file without asking again.
 - **Base file:** `<Reborn data>/cloud/<account ID>/<app ID>.base.json`
   ("next to" the folder), JSON `{"version": 1, "files": {name: {"sha1",
   "size", "timestamp"}}}` with the cloud's SHA-1 (lowercase), size and
@@ -175,13 +181,17 @@ response types are in steam-vent-proto-steam
   alone. Downloads go through `download_cloud_file_into` (SHA-1 checked,
   never over an existing file).
 - **Refusals (the game does not start in shim mode):** a true conflict
-  without a choice; the listing failed; a download failed; a local file
-  is a link, a folder or unreadable; two cloud names differ only in case
-  (they would meet in one file on Windows); a link on the way to the
-  base file or the backup folder. Skipped, not refused: names with a root
-  token (Auto-Cloud files, restored into the game's save folders by ADR
-  0035), unsafe names, files above the run's limit, SHA-1s that are not
-  40 hex digits.
+  without an answer that names it; the listing failed; a download failed
+  (the other files are still handled and the base saved); a local file
+  is a link, a folder or unreadable; two cloud names that meet in one
+  path (compared part by part, case ignored, so `a\b` and `A/B` meet); a
+  link on the way to the base file or the backup folder; a file in the
+  place of a download's part file. The fill runs before shim mode is
+  entered (`ActiveProcess`), so a refusal leaves nothing to undo.
+  Skipped, not refused: names with a root token (Auto-Cloud files,
+  restored into the game's save folders by ADR 0035), unsafe names
+  (including a last part ending in `.reborn-part`), files above the
+  run's limit, SHA-1s that are not 40 hex digits.
 - **Requests:** the cloud is listed once per launch and shared by the
   ADR 0035 restore and the fill; only files that need it are downloaded.
   A launch answered with `CloudConflict` lists again when it is sent

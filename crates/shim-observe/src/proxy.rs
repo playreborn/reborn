@@ -355,8 +355,9 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
 /// The compared fields of callback 0x44d, if the callback `Steam_BGetCallback`
 /// wrote at `rdx` is one (`rax` 1): its header (step 4d, ADR 0050) names
 /// 0x44d and a readable payload of 1 to [`MAX_PAYLOAD`] bytes. Only the
-/// first [`crate::daemon::STATS_READ`] payload bytes are read; the Steam ID
-/// behind them is not.
+/// first [`crate::daemon::STATS_READ`] payload bytes are read: the
+/// comparison does not read bytes 12..20 (the Steam ID). The step-4b line
+/// still logs the 0x44d payload locally (ADR 0050, 0054).
 fn stats_received_at(rax: u64, rdx: u64) -> Option<crate::daemon::OfficialStats> {
     if rax & 0xff != 1 {
         return None;

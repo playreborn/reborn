@@ -1542,9 +1542,11 @@ gets the official callback unchanged.
 
 Left out on purpose:
 
-- bytes 12..20 (read as the user's Steam ID): not read and not compared
-  until the experiment from the review findings above has compared them
-  with the account's own Steam ID (ADR 0055, stage 0);
+- bytes 12..20 (read as the user's Steam ID): not compared until the
+  experiment from the review findings above has compared them with the
+  account's own Steam ID (ADR 0055, stage 0). The comparison does not
+  read bytes 12..20; the step-4b line still logs the 0x44d payload
+  locally (ADR 0050, 0054), as before;
 - bytes 4..8 (never checked) and 20..24 (unexplained);
 - achievement names: 0x44d carries none; ADR 0055 shadows them
   separately, through `GetAchievementDisplayAttribute`.

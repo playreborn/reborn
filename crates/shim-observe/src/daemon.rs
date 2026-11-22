@@ -70,6 +70,10 @@ impl<R: BufRead> Lines for R {
 /// has no read timeout on Windows). The thread reads whole lines, so a
 /// wait that runs out never cuts one in half. It ends when the connection
 /// closes or fails, or when this value is gone and the next line arrives.
+/// The thread holds its own handle to the pipe: after a failed link drops
+/// the client, the pipe stays open until `rebornd` writes a line or the
+/// game's process exits. Nothing more is asked on it, and the read-only
+/// shadow session ends with the process.
 pub struct LineThread {
     lines: mpsc::Receiver<io::Result<String>>,
 }
@@ -446,7 +450,9 @@ pub fn compare_subscribed(rax: u64, reborn: Result<bool, String>) -> String {
 /// 8..12. Bytes 4..8 (the rest of the game ID) were never checked, and
 /// bytes 12..20 (read as the user's Steam ID) are not compared until the
 /// experiment ADR 0055 asks for has compared them with the account's own
-/// Steam ID; neither is read or kept. Bytes 20..24 are unexplained.
+/// Steam ID. The comparison does not read bytes 12..20 (nor 20..24, which
+/// are unexplained); the step-4b line still logs the 0x44d payload
+/// locally (ADR 0050, 0054).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OfficialStats {
     size: usize,
@@ -788,6 +794,50 @@ mod tests {
         };
         let answer = link.stats_result(1, DARK_DECEPTION, connect, Duration::from_millis(20));
         assert_eq!(answer, Err("no stats event within 0 s".to_owned()));
+        assert!(matches!(link.state, State::Ready(_)));
+    }
+
+    #[test]
+    fn a_late_stats_event_is_skipped_or_taken_as_documented() {
+        let (pipe, chunks) = mpsc::channel::<Vec<u8>>();
+        let send = |line: &str| {
+            let _ = pipe.send(format!("{line}\n").into_bytes());
+        };
+        let mut link = ShadowLink::default();
+        let short = Duration::from_millis(20);
+        let connect = || {
+            let lines = LineThread::spawn(BufReader::new(Pipe(chunks, Vec::new())))?;
+            send(SESSION);
+            send(r#"{"id":2,"response":{"type":"accepted"}}"#);
+            Ok(Client::new(lines, Vec::new()))
+        };
+        let answer = link.stats_result(1, DARK_DECEPTION, connect, short);
+        assert_eq!(answer, Err("no stats event within 0 s".to_owned()));
+
+        // The late event arrives before the next answer: the next question
+        // skips it and gets its own answer.
+        send(r#"{"event":{"type":"stats_received","result":2,"achievement_names":[]}}"#);
+        send(r#"{"id":3,"response":{"type":"ownership","owned":true}}"#);
+        assert_eq!(
+            link.subscribed(1, DARK_DECEPTION, || Err(io::Error::other("no"))),
+            Ok(true)
+        );
+
+        // Late again, then a stats question: `ask` skips the event that
+        // comes before `Accepted` and the event after it is taken; for one
+        // run `rebornd` sends the same cached answer each time.
+        send(r#"{"event":{"type":"stats_received","result":2,"achievement_names":[]}}"#);
+        send(r#"{"id":4,"response":{"type":"accepted"}}"#);
+        send(r#"{"event":{"type":"stats_received","result":2,"achievement_names":[]}}"#);
+        assert_eq!(
+            link.stats_result(
+                1,
+                DARK_DECEPTION,
+                || Err(io::Error::other("no")),
+                Duration::from_secs(10)
+            ),
+            Ok(2)
+        );
         assert!(matches!(link.state, State::Ready(_)));
     }
 

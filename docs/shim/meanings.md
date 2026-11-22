@@ -2885,8 +2885,7 @@ plan, not a re-run with input.
 **Freshness:** a log whose `start` line in `starts.log` is earlier than
 `PLAN_COMMITTED` is rejected; the script holds the commit time of the
 final plan on `loop/plan-12a` (local time, as `run.sh` writes
-`starts.log`), set in a follow-up commit. Until then the placeholder
-(2099) rejects every log.
+`starts.log`): 2026-11-22 14:50:51 (commit `09a72bb`).
 
 **Already seen:** with `GAMES` changed to Bongo Cat and Cave Crawlers and
 the plan time lifted (a scratch copy, not committed), the script finds

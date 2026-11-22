@@ -72,7 +72,7 @@ CONFIRMED_STORE = {
 STORED = 0x44E
 COMPLETED = 703
 WINDOW_MS = 1000
-PLAN_COMMITTED = datetime(2099, 1, 1, 0, 0, 0)  # placeholder, set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 14, 50, 51)  # commit 09a72bb on loop/plan-12a (final plan)
 
 
 def u32(data, at):

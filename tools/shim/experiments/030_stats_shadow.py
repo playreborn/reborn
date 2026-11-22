@@ -53,7 +53,7 @@ GAMES = {2143030: "Cave Crawlers", 1067310: "Gravitas", 332950: "Dark Deception"
 STATS_RECEIVED = 0x44D
 NAME = "Steam_BGetCallback"
 SHADOW = re.compile(r"^callback 0x44d (shadow.*)$")
-PLAN_COMMITTED = datetime(2026, 11, 22, 0, 0, 0)  # placeholder, set in the follow-up commit
+PLAN_COMMITTED = datetime(2026, 11, 22, 18, 57, 28)  # commit 6c40015 on loop/plan-14a (final plan)
 
 
 def kind_of(note):

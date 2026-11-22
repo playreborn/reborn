@@ -249,9 +249,6 @@ impl Daemon {
         lock(&self.launched).get(&pid).cloned()
     }
 
-    /// Drops the shadow registration and every shadow session (ADR 0055:
-    /// any logoff or kick stops the shadow stage), saying so in the log
-    /// when there was one.
     /// Puts `new` into the session slot (held by the caller). Every drop or
     /// replacement of a session goes through here: the shadow sessions were
     /// registered with the old one's data, so they stop (ADR 0055). They
@@ -267,6 +264,9 @@ impl Daemon {
         *slot = new;
     }
 
+    /// Drops the shadow registration and every shadow session (ADR 0055:
+    /// any logoff or kick stops the shadow stage), saying so in the log
+    /// when there was one.
     fn stop_shadows(&self, why: &str) {
         if self.shadows.stop_all() {
             warn!(why, "shadow mode stopped: shadow sessions dropped");
@@ -1782,7 +1782,8 @@ impl ShimHost for Daemon {
             Ok(now) if now.as_ref().is_some_and(|now| Arc::ptr_eq(now, &session))
         );
         if !current {
-            self.shadows.cancel();
+            // A claim may already have happened in between; drop it too.
+            self.shadows.stop_all();
             return unavailable(UnavailableReason::Offline);
         }
         ShimResponse::Accepted

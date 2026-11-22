@@ -54,3 +54,4 @@ for i in $(seq 1 24); do tasklist //FI "PID eq $PID_" //NH | grep -q "$PID_" || 
 tasklist //FI "PID eq $PID_" //NH | grep -q "$PID_" && echo "STILL RUNNING after 2 minutes; left as it is"
 ./target/debug/reborn-observe.exe disarm
 echo "log observe-$PID_.log"
+echo "$(date '+%F %T') log $APP observe-$PID_.log" >> "$STARTS"

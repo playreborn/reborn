@@ -18,7 +18,7 @@ first, so the maintainer can read a day's work quickly and stop anything.
   Experiment 13 **matched** (6 games): `STEAMUSERSTATS_INTERFACE_VERSION012`
   0 `RequestCurrentStats`, 10 `StoreStats`, `SteamInput006` 0 `Init`
   confirmed; not in the shim yet (needs those objects, stats from Valve
-  and callbacks).
+  and callbacks). PR #14.
 - 2026-11-22: loop iteration 4: ADR 0050 in the proxy: 24 header bytes
   at `rdx`, size and SHA-256 of the callback data, the first 64 bytes only
   for listed numbers (none listed yet). Live in Cave Crawlers: all 14

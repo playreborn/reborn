@@ -19,8 +19,9 @@
 //!   DLC list is left empty: reading the app's PICS info for its DLC is
 //!   not needed for `BIsSubscribed`, so DLC get `NotAllowed` like any
 //!   other app until a shadow for position 7 needs them.
-//! - **Reads only.** A shadow session gets `AppOwnership` and
-//!   `RequestStats`; every write is refused (`shim_server`). Cloud reads
+//! - **Reads only.** A shadow session gets `AppOwnership`,
+//!   `RequestStats` and `ComparePersonaName` (only `matches`, ADR 0056);
+//!   every write is refused (`shim_server`). Cloud reads
 //!   (`CloudFileSize`, `CloudRead`) get `NotAllowed` until the separate
 //!   shadow folder of ADR 0055 exists (stage 1).
 //! - **Any logoff stops the stage.** When the Valve session ends in any

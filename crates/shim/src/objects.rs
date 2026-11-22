@@ -722,6 +722,7 @@ mod tests {
             UnavailableReason::Offline,
             UnavailableReason::NotAllowed,
             UnavailableReason::TooLarge,
+            UnavailableReason::NotReceived,
         ] {
             assert_eq!(
                 subscribed_answer(&Ok(Response::Unavailable { reason })),

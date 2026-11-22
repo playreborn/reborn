@@ -25,6 +25,22 @@
 //! every write is refused with [`UnavailableReason::NotAllowed`]
 //! ([`Request::writes`]).
 //!
+//! Version 0.3 adds the persona name comparison below
+//! ([`Request::ComparePersonaName`], [`Response::PersonaNameCompared`],
+//! [`UnavailableReason::NotReceived`]). A 0.2 daemon does not know them and
+//! closes the connection on such a line, so a peer sends them only after
+//! the daemon's [`Session::version`] says 0.3 or later
+//! ([`Version::has_persona_name_comparison`]).
+//!
+//! Persona name comparison (ADR 0056, decision 2): a shadow session may
+//! send [`Request::ComparePersonaName`] with the SHA-256 of the text the
+//! official client returned at `SteamFriends017` position 0
+//! ([`NameDigest`]); the daemon answers [`Response::PersonaNameCompared`]
+//! with only whether it equals the account's persona name. The name never
+//! crosses the channel, and the daemon never hands it to the game process.
+//! A digest of a short name can be reversed by guessing, so it is treated
+//! like the name: `Debug` never shows it and nobody logs it.
+//!
 //! This crate holds only message types and framing (MIT OR Apache-2.0), so
 //! the shim never depends on GPL crates (AGENTS.md section 3).
 #![forbid(unsafe_code)]
@@ -33,7 +49,7 @@ use serde::{Deserialize, Serialize};
 
 /// The protocol version in [`Request::Hello`]. A daemon refuses a shim
 /// with another major version.
-pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 2 };
+pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 3 };
 
 /// A protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +58,14 @@ pub struct Version {
     pub major: u32,
     /// Changes when messages are only added.
     pub minor: u32,
+}
+
+impl Version {
+    /// Whether a daemon of this version knows
+    /// [`Request::ComparePersonaName`] (added in 0.3).
+    pub fn has_persona_name_comparison(self) -> bool {
+        self.major == 0 && self.minor >= 3
+    }
 }
 
 /// A line the shim sends.
@@ -127,6 +151,56 @@ pub enum Request {
         /// The app `reborn-observe arm --app` was given.
         app_id: u32,
     },
+    /// Whether the account's persona name has this SHA-256 (ADR 0056,
+    /// decision 2). Only on a shadow session; any other connection gets
+    /// [`UnavailableReason::NotAllowed`]. Answered with
+    /// [`Response::PersonaNameCompared`], or [`Response::Unavailable`]
+    /// (`NotReceived` when Valve sent no persona name in this session).
+    ComparePersonaName {
+        /// SHA-256 of the UTF-8 bytes of the official client's text (up to
+        /// its NUL, without it).
+        sha256: NameDigest,
+    },
+}
+
+/// A SHA-256 as 64 lowercase hex digits, of text that is account data
+/// (ADR 0056). `Debug` never shows it; there is no `Display`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct NameDigest(String);
+
+impl NameDigest {
+    /// The digest from 64 hex digits (upper case is folded to lower), or
+    /// `None` for anything else.
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        (hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| Self(hex.to_ascii_lowercase()))
+    }
+
+    /// The 64 lowercase hex digits, only to compare them.
+    pub fn as_hex(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for NameDigest {
+    type Error = &'static str;
+
+    fn try_from(hex: String) -> Result<Self, Self::Error> {
+        Self::from_hex(&hex).ok_or("not a SHA-256 in hex")
+    }
+}
+
+impl From<NameDigest> for String {
+    fn from(digest: NameDigest) -> Self {
+        digest.0
+    }
+}
+
+impl std::fmt::Debug for NameDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NameDigest(<redacted>)")
+    }
 }
 
 impl Request {
@@ -144,7 +218,8 @@ impl Request {
             | Request::CloudRead { .. }
             | Request::RegisterShadow { .. }
             | Request::CancelShadow
-            | Request::ShadowHello { .. } => false,
+            | Request::ShadowHello { .. }
+            | Request::ComparePersonaName { .. } => false,
         }
     }
 }
@@ -234,6 +309,12 @@ pub enum Response {
         /// The bytes, or `None` for a missing file.
         data: Option<Bytes>,
     },
+    /// The answer to [`Request::ComparePersonaName`]: only whether the
+    /// digest is the one of the account's persona name (ADR 0056).
+    PersonaNameCompared {
+        /// Whether they are the same.
+        matches: bool,
+    },
     /// The daemon cannot give the real answer to a request. The shim never
     /// makes one up (ADR 0055, "Honest failure").
     Unavailable {
@@ -255,6 +336,9 @@ pub enum UnavailableReason {
     NotAllowed,
     /// The data is larger than the protocol allows.
     TooLarge,
+    /// Valve has not sent the data in the current session (for
+    /// [`Request::ComparePersonaName`]: no persona name).
+    NotReceived,
 }
 
 /// File content in a message: base64 text (RFC 4648, standard alphabet,
@@ -468,7 +552,7 @@ mod tests {
         let line = encode(&message)?;
         assert_eq!(
             line,
-            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242}}\n"
+            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242}}\n"
         );
         assert_eq!(decode::<ShimMessage>(&line)?, message);
         Ok(())
@@ -490,7 +574,7 @@ mod tests {
         })?;
         assert_eq!(
             line,
-            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":2},\"app_id\":2143030}}\n"
+            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":3},\"app_id\":2143030}}\n"
         );
         Ok(())
     }
@@ -524,6 +608,7 @@ mod tests {
             UnavailableReason::Offline,
             UnavailableReason::NotAllowed,
             UnavailableReason::TooLarge,
+            UnavailableReason::NotReceived,
         ] {
             let message = DaemonMessage::Response {
                 id: 9,
@@ -607,7 +692,7 @@ mod tests {
                     pid: 4242,
                     app_id: 332_950,
                 },
-                "{\"id\":6,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242,\"app_id\":332950}}\n",
+                "{\"id\":6,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n",
             ),
         ] {
             let message = ShimMessage { id: 6, request };
@@ -616,6 +701,78 @@ mod tests {
             assert_eq!(decode::<ShimMessage>(&line)?, message);
         }
         Ok(())
+    }
+
+    /// SHA-256 of `foo` (not anyone's name).
+    const DIGEST: &str = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae";
+
+    #[test]
+    fn persona_name_messages_round_trip_as_one_line() -> Result<(), FrameError> {
+        let sha256 = NameDigest::from_hex(DIGEST).unwrap_or_else(|| panic!("no digest"));
+        let message = ShimMessage {
+            id: 8,
+            request: Request::ComparePersonaName { sha256 },
+        };
+        let line = encode(&message)?;
+        assert_eq!(
+            line,
+            format!(
+                "{{\"id\":8,\"request\":{{\"type\":\"compare_persona_name\",\"sha256\":\"{DIGEST}\"}}}}\n"
+            )
+        );
+        assert_eq!(decode::<ShimMessage>(&line)?, message);
+        let answer = DaemonMessage::Response {
+            id: 8,
+            response: Response::PersonaNameCompared { matches: true },
+        };
+        let line = encode(&answer)?;
+        assert_eq!(
+            line,
+            "{\"id\":8,\"response\":{\"type\":\"persona_name_compared\",\"matches\":true}}\n"
+        );
+        assert_eq!(decode::<DaemonMessage>(&line)?, answer);
+        let missing = DaemonMessage::Response {
+            id: 8,
+            response: Response::Unavailable {
+                reason: UnavailableReason::NotReceived,
+            },
+        };
+        assert_eq!(
+            encode(&missing)?,
+            "{\"id\":8,\"response\":{\"type\":\"unavailable\",\"reason\":\"not_received\"}}\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_0_3_daemons_compare_persona_names() {
+        assert!(PROTOCOL_VERSION.has_persona_name_comparison());
+        assert!(!Version { major: 0, minor: 2 }.has_persona_name_comparison());
+        assert!(Version { major: 0, minor: 4 }.has_persona_name_comparison());
+    }
+
+    #[test]
+    fn a_digest_is_64_hex_digits_and_never_printed() {
+        let upper = DIGEST.to_ascii_uppercase();
+        assert_eq!(
+            NameDigest::from_hex(&upper).map(|digest| digest.as_hex().to_owned()),
+            Some(DIGEST.to_owned())
+        );
+        assert!(NameDigest::from_hex(&DIGEST[1..]).is_none(), "too short");
+        assert!(NameDigest::from_hex(&format!("{}g", &DIGEST[1..])).is_none());
+        assert!(NameDigest::from_hex("Alice Example").is_none());
+        assert!(
+            decode::<ShimMessage>(
+                "{\"id\":1,\"request\":{\"type\":\"compare_persona_name\",\"sha256\":\"Alice\"}}"
+            )
+            .is_err(),
+            "only digests pass"
+        );
+        let request = Request::ComparePersonaName {
+            sha256: NameDigest::from_hex(DIGEST).unwrap_or_else(|| panic!("no digest")),
+        };
+        let shown = format!("{request:?}");
+        assert!(!shown.contains(&DIGEST[..8]), "{shown}");
     }
 
     #[test]
@@ -640,6 +797,9 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 pid: 1,
                 app_id: 1,
+            },
+            Request::ComparePersonaName {
+                sha256: NameDigest::from_hex(DIGEST).unwrap_or_else(|| panic!("no digest")),
             },
         ] {
             assert!(!request.writes(), "{request:?}");

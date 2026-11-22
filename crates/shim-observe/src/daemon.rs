@@ -15,17 +15,25 @@
 //!   game, the proxy sends `RequestStats` on the same shadow session and
 //!   waits for the event `StatsReceived` ([`ShadowLink::stats_result`]).
 //!
-//! Whether an app is owned, and the stats, are account data (ADR 0055):
-//! the log gets only `shadow match` or `shadow mismatch`
-//! ([`compare_subscribed`], [`compare_stats_received`]), never the values.
+//! - For `SteamFriends017` position 0 (`GetPersonaName` or
+//!   `ClearRichPresence`, ADR 0056 decision 2) the proxy sends only the
+//!   SHA-256 of the text the official client returned
+//!   (`ComparePersonaName`, [`ShadowLink::persona_name`]); `rebornd`
+//!   answers whether it is the account's persona name. Only to a `rebornd`
+//!   of protocol 0.3 or later.
+//!
+//! Whether an app is owned, the stats and the persona name are account
+//! data (ADR 0055, 0056): the log gets only `shadow match` or `shadow
+//! mismatch` ([`compare_subscribed`], [`compare_stats_received`],
+//! [`compare_persona_name`]) or why there is no answer, never the values.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use reborn_shim_protocol::{
-    DaemonMessage, Event, PROTOCOL_VERSION, RefusalReason, Request, Response, ShimMessage,
-    UnavailableReason, decode, encode,
+    DaemonMessage, Event, NameDigest, PROTOCOL_VERSION, RefusalReason, Request, Response,
+    ShimMessage, UnavailableReason, Version, decode, encode,
 };
 
 /// Longest line read from `rebornd`; no answer of protocol 0.2 comes near
@@ -183,19 +191,19 @@ impl<R: Lines, W: Write> Client<R, W> {
         }
     }
 
-    /// `ShadowHello`: `Ok(Ok(()))` when the session for `app_id` is this
-    /// process's, or why `rebornd` refused.
+    /// `ShadowHello`: the daemon's protocol version when the session for
+    /// `app_id` is this process's, or why `rebornd` refused.
     pub fn shadow_hello(
         &mut self,
         pid: u32,
         app_id: u32,
-    ) -> Result<Result<(), RefusalReason>, DaemonError> {
+    ) -> Result<Result<Version, RefusalReason>, DaemonError> {
         match self.ask(Request::ShadowHello {
             version: PROTOCOL_VERSION,
             pid,
             app_id,
         })? {
-            Response::Session(session) if session.app_id == app_id => Ok(Ok(())),
+            Response::Session(session) if session.app_id == app_id => Ok(Ok(session.version)),
             Response::Refused { reason } => Ok(Err(reason)),
             _ => Err(DaemonError::Unexpected),
         }
@@ -221,6 +229,19 @@ impl<R: Lines, W: Write> Client<R, W> {
         }
     }
 
+    /// `ComparePersonaName { sha256 }`: whether `rebornd` says the
+    /// account's persona name has this digest, or why it cannot say.
+    pub fn persona_name_matches(
+        &mut self,
+        sha256: NameDigest,
+    ) -> Result<Result<bool, UnavailableReason>, DaemonError> {
+        match self.ask(Request::ComparePersonaName { sha256 })? {
+            Response::PersonaNameCompared { matches } => Ok(Ok(matches)),
+            Response::Unavailable { reason } => Ok(Err(reason)),
+            _ => Err(DaemonError::Unexpected),
+        }
+    }
+
     /// Waits at most `wait` for the event `StatsReceived` of an accepted
     /// `RequestStats`: `Ok(Some(result))` with Valve's `EResult`, `Ok(None)`
     /// when the wait ran out (`rebornd` sends no event for a request that
@@ -231,7 +252,7 @@ impl<R: Lines, W: Write> Client<R, W> {
         let Some(line) = self.reader.next_line(Some(wait))? else {
             return Ok(None);
         };
-        // `StatsReceived` is the only event of protocol 0.2.
+        // `StatsReceived` is the only event of protocols 0.2 and 0.3.
         match decode::<DaemonMessage>(&line).map_err(|_| DaemonError::Unexpected)? {
             DaemonMessage::Event {
                 event: Event::StatsReceived { result, .. },
@@ -305,7 +326,8 @@ pub struct ShadowLink<R, W> {
 
 enum State<R, W> {
     NotYet,
-    Ready(Client<R, W>),
+    /// The session, with the daemon's protocol version.
+    Ready(Client<R, W>, Version),
     Failed(String),
 }
 
@@ -328,7 +350,7 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         app_id: u32,
         connect: impl FnOnce() -> io::Result<Client<R, W>>,
     ) -> Result<bool, String> {
-        let client = self.client(pid, app_id, connect)?;
+        let (client, _) = self.client(pid, app_id, connect)?;
         let answer = client.owned(app_id);
         match answer {
             Ok(Ok(owned)) => Ok(owned),
@@ -350,7 +372,7 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         connect: impl FnOnce() -> io::Result<Client<R, W>>,
         wait: Duration,
     ) -> Result<i32, String> {
-        let client = self.client(pid, app_id, connect)?;
+        let (client, _) = self.client(pid, app_id, connect)?;
         let answer = match client.request_stats() {
             Ok(Ok(())) => client.stats_event(wait),
             Ok(Err(reason)) => return Err(reason_name(reason)),
@@ -363,22 +385,50 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         }
     }
 
-    /// The session's client, made on the first question (one attempt per
-    /// run).
+    /// Reborn's side of the `SteamFriends017` position 0 comparison (ADR
+    /// 0056): whether `rebornd` says the account's persona name has the
+    /// digest `sha256`, or why there is no answer. Connects and claims the
+    /// session as [`Self::subscribed`] does, if not done yet. A daemon older
+    /// than protocol 0.3 is not asked (it would close the connection on the
+    /// unknown line, ending the other comparisons too).
+    pub fn persona_name(
+        &mut self,
+        pid: u32,
+        app_id: u32,
+        sha256: NameDigest,
+        connect: impl FnOnce() -> io::Result<Client<R, W>>,
+    ) -> Result<bool, String> {
+        let (client, version) = self.client(pid, app_id, connect)?;
+        if !version.has_persona_name_comparison() {
+            return Err(format!(
+                "rebornd speaks protocol {}.{}, the comparison needs 0.3",
+                version.major, version.minor
+            ));
+        }
+        let answer = client.persona_name_matches(sha256);
+        match answer {
+            Ok(Ok(matches)) => Ok(matches),
+            Ok(Err(reason)) => Err(reason_name(reason)),
+            Err(error) => Err(self.fail(error)),
+        }
+    }
+
+    /// The session's client and the daemon's protocol version, made on the
+    /// first question (one attempt per run).
     fn client(
         &mut self,
         pid: u32,
         app_id: u32,
         connect: impl FnOnce() -> io::Result<Client<R, W>>,
-    ) -> Result<&mut Client<R, W>, String> {
+    ) -> Result<(&mut Client<R, W>, Version), String> {
         if matches!(self.state, State::NotYet) {
             self.state = match open(pid, app_id, connect) {
-                Ok(client) => State::Ready(client),
+                Ok((client, version)) => State::Ready(client, version),
                 Err(why) => State::Failed(why),
             };
         }
         match &mut self.state {
-            State::Ready(client) => Ok(client),
+            State::Ready(client, version) => Ok((client, *version)),
             State::Failed(why) => Err(why.clone()),
             State::NotYet => Err("no session".to_owned()),
         }
@@ -396,10 +446,10 @@ fn open<R: Lines, W: Write>(
     pid: u32,
     app_id: u32,
     connect: impl FnOnce() -> io::Result<Client<R, W>>,
-) -> Result<Client<R, W>, String> {
+) -> Result<(Client<R, W>, Version), String> {
     let mut client = connect().map_err(|error| DaemonError::Io(error).to_string())?;
     match client.shadow_hello(pid, app_id) {
-        Ok(Ok(())) => Ok(client),
+        Ok(Ok(version)) => Ok((client, version)),
         Ok(Err(reason)) => Err(format!(
             "rebornd refused the shadow session ({}); was `reborn-observe arm --app {app_id}` registered?",
             refusal_name(reason)
@@ -415,6 +465,7 @@ pub fn reason_name(reason: UnavailableReason) -> String {
         UnavailableReason::Offline => "offline",
         UnavailableReason::NotAllowed => "not_allowed",
         UnavailableReason::TooLarge => "too_large",
+        UnavailableReason::NotReceived => "not_received",
     }
     .to_owned()
 }
@@ -504,6 +555,25 @@ pub fn compare_stats_received(
     }
 }
 
+/// The shadow note for `SteamFriends017` position 0 (ADR 0056): `client`
+/// is the digest of the official client's result text, or why there is no
+/// text; `reborn` is `rebornd`'s comparison. Only match, mismatch or a
+/// reason; the text and the digest are never part of it.
+pub fn compare_persona_name(
+    client: Result<(), &str>,
+    reborn: impl FnOnce() -> Result<bool, String>,
+) -> String {
+    match client {
+        // No text at the result: not `GetPersonaName`'s documented answer.
+        Err(why) => format!("shadow mismatch ({why})"),
+        Ok(()) => match reborn() {
+            Ok(true) => "shadow match".to_owned(),
+            Ok(false) => "shadow mismatch".to_owned(),
+            Err(why) => format!("shadow: no Reborn answer ({why})"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -587,12 +657,12 @@ mod tests {
         });
         assert_eq!(again, Err("not_allowed".to_owned()));
         assert_eq!(connects, 1);
-        let State::Ready(client) = &link.state else {
+        let State::Ready(client, _) = &link.state else {
             panic!("no session");
         };
         assert_eq!(
             sent(client),
-            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242,\"app_id\":332950}}\n\
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
              {\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":332950}}\n\
              {\"id\":3,\"request\":{\"type\":\"app_ownership\",\"app_id\":332950}}\n"
         );
@@ -681,14 +751,14 @@ mod tests {
             WAIT,
         );
         assert_eq!(again, Err("offline".to_owned()));
-        let State::Ready(client) = &link.state else {
+        let State::Ready(client, _) = &link.state else {
             panic!("no session");
         };
         // RequestStats carries no app ID: rebornd answers for the
         // session's own app only.
         assert_eq!(
             sent(client),
-            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":2},\"pid\":4242,\"app_id\":332950}}\n\
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
              {\"id\":2,\"request\":{\"type\":\"request_stats\"}}\n\
              {\"id\":3,\"request\":{\"type\":\"request_stats\"}}\n"
         );
@@ -794,7 +864,7 @@ mod tests {
         };
         let answer = link.stats_result(1, DARK_DECEPTION, connect, Duration::from_millis(20));
         assert_eq!(answer, Err("no stats event within 0 s".to_owned()));
-        assert!(matches!(link.state, State::Ready(_)));
+        assert!(matches!(link.state, State::Ready(..)));
     }
 
     #[test]
@@ -838,7 +908,7 @@ mod tests {
             ),
             Ok(2)
         );
-        assert!(matches!(link.state, State::Ready(_)));
+        assert!(matches!(link.state, State::Ready(..)));
     }
 
     fn official(size: usize, app_id: u32, result: u32) -> OfficialStats {
@@ -886,5 +956,102 @@ mod tests {
             Some(official(24, 0, 0))
         );
         assert_eq!(OfficialStats::new(24, &[0; STATS_READ - 1]), None);
+    }
+
+    /// SHA-256 of `foo` (not anyone's name).
+    const DIGEST: &str = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae";
+
+    fn digest() -> NameDigest {
+        NameDigest::from_hex(DIGEST).unwrap_or_else(|| panic!("no digest"))
+    }
+
+    #[test]
+    fn the_persona_name_is_compared_on_the_shadow_session() {
+        let mut link = ShadowLink::default();
+        let answer = link.persona_name(4242, DARK_DECEPTION, digest(), || {
+            Ok(scripted(&[
+                r#"{"id":1,"response":{"type":"session","version":{"major":0,"minor":3},"app_id":332950}}"#,
+                r#"{"id":2,"response":{"type":"persona_name_compared","matches":true}}"#,
+                r#"{"id":3,"response":{"type":"persona_name_compared","matches":false}}"#,
+                r#"{"id":4,"response":{"type":"unavailable","reason":"not_received"}}"#,
+                r#"{"id":5,"response":{"type":"ownership","owned":true}}"#,
+            ]))
+        });
+        assert_eq!(answer, Ok(true));
+        let no_connect = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(
+            link.persona_name(4242, DARK_DECEPTION, digest(), no_connect),
+            Ok(false)
+        );
+        assert_eq!(
+            link.persona_name(4242, DARK_DECEPTION, digest(), no_connect),
+            Err("not_received".to_owned())
+        );
+        // Another kind of answer breaks the link.
+        assert_eq!(
+            link.persona_name(4242, DARK_DECEPTION, digest(), no_connect),
+            Err("rebornd sent an unexpected answer".to_owned())
+        );
+        let State::Failed(_) = &link.state else {
+            panic!("not failed");
+        };
+    }
+
+    #[test]
+    fn only_the_digest_crosses_the_pipe() {
+        let mut client =
+            scripted(&[r#"{"id":1,"response":{"type":"persona_name_compared","matches":true}}"#]);
+        assert!(matches!(
+            client.persona_name_matches(digest()),
+            Ok(Ok(true))
+        ));
+        assert_eq!(
+            sent(&client),
+            format!(
+                "{{\"id\":1,\"request\":{{\"type\":\"compare_persona_name\",\"sha256\":\"{DIGEST}\"}}}}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn the_persona_note_says_only_match_mismatch_or_why() {
+        assert_eq!(compare_persona_name(Ok(()), || Ok(true)), "shadow match");
+        assert_eq!(
+            compare_persona_name(Ok(()), || Ok(false)),
+            "shadow mismatch"
+        );
+        assert_eq!(
+            compare_persona_name(Ok(()), || Err("not_signed_in".to_owned())),
+            "shadow: no Reborn answer (not_signed_in)"
+        );
+        // Without a text, rebornd is not asked.
+        assert_eq!(
+            compare_persona_name(Err("no text at the result"), || panic!("asked")),
+            "shadow mismatch (no text at the result)"
+        );
+    }
+
+    #[test]
+    fn an_older_rebornd_is_not_asked_and_ownership_keeps_working() {
+        let mut link = ShadowLink::default();
+        let answer = link.persona_name(4242, DARK_DECEPTION, digest(), || {
+            Ok(scripted(&[
+                r#"{"id":1,"response":{"type":"session","version":{"major":0,"minor":2},"app_id":332950}}"#,
+                r#"{"id":2,"response":{"type":"ownership","owned":true}}"#,
+            ]))
+        });
+        assert_eq!(
+            answer,
+            Err("rebornd speaks protocol 0.2, the comparison needs 0.3".to_owned())
+        );
+        let no_connect = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(link.subscribed(4242, DARK_DECEPTION, no_connect), Ok(true));
+        let State::Ready(client, _) = &link.state else {
+            panic!("no session");
+        };
+        assert!(
+            !sent(client).contains("compare_persona_name"),
+            "nothing a 0.2 daemon cannot read"
+        );
     }
 }

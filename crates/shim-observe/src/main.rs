@@ -141,7 +141,9 @@ fn register_shadow(app: u32) -> String {
                     " rebornd is reconnecting, signing in or could not load the licence list; \
                      wait a moment, then disarm and arm again."
                 }
-                UnavailableReason::NotAllowed | UnavailableReason::TooLarge => "",
+                UnavailableReason::NotAllowed
+                | UnavailableReason::TooLarge
+                | UnavailableReason::NotReceived => "",
             };
             format!(
                 "rebornd refused the shadow session ({}); ownership is not compared.{advice}",

@@ -24,6 +24,7 @@
 //! Not yet: QR-code login (needs upstream support in `steam-vent`).
 #![forbid(unsafe_code)]
 
+mod account_info;
 mod achievements;
 mod apps;
 mod chat;
@@ -38,6 +39,7 @@ mod secret;
 mod session;
 mod tickets;
 
+pub use account_info::{PersonaName, persona_name_from};
 pub use achievements::{
     Achievement, AchievementBlock, FALLBACK_LANGUAGE, StatValue, UserStats, achievements_from,
     user_stats_from, user_stats_from_bytes,

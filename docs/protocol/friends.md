@@ -57,6 +57,25 @@ Read-only part of M3 (ADR 0020). Each section names its sources.
   one friend; fixture `crates/cm/tests/data/persona_state_0.bin`). Online
   and in-game states not seen live yet.
 
+### Own persona name
+
+- **What:** The account's own display name, for the shadow comparison of
+  ADR 0056 (decision 2). Read-only; Reborn never changes it.
+- **Message:** `CMsgClientAccountInfo` (EMsg 768), field `persona_name`
+  (1). Steam sends it unasked around logon; Reborn sends no request and
+  keeps the latest one of the session (`crates/cm/src/account_info.rs`,
+  `Session::persona_name`). Field number and EMsg from the generated
+  types of `steam-vent-proto-steam` 0.5.2.
+- **Source:** node-steam-user `components/account.js` (the
+  `EMsg.ClientAccountInfo` handler reads `body.persona_name` into
+  `accountInfo.name`; no code requests the message; comment "Steam
+  appears to send this twice on logon").
+- **Privacy:** the name is account data: never logged, never in a
+  fixture (the recorder replaces it by `Player 1` and drops every other
+  field).
+- **Verified:** no. Needs a recording: `reborn-cli friends --record
+  <dir>` writes `account_info.bin`.
+
 ### Own online status
 
 - **What:** The client sets the account's status (online, away, ...).

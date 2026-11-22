@@ -3584,3 +3584,39 @@ As fixed beforehand, a match only narrows:
 `STEAMSCREENSHOTS_INTERFACE_VERSION003` position 3 is recorded as
 "narrowed: `HookScreenshots` (experiment 27)"; `TriggerScreenshot` is
 argued against, not ruled out (the page gives no callback numbers).
+
+**Result of experiment 26** (agent run by the main session after the
+plan time 19:14:46; log `observe-44048` recorded by `run.sh`): **match**,
+checked by the script. The official client showed its launch-options
+dialog; the maintainer chose "VPet spielen" there themselves (the plan had
+the main session do it; same button, so the run is unaffected). VPet did
+not exit on the close request (it stays in the tray); the maintainer
+closed it from its tray icon, no forced kill.
+
+```text
+observe-44048.log (VPet-Simulator) U2: 36 calls, arguments in the page's ranges and r9 the app ID, distinct handles -> match
+observe-44048.log (VPet-Simulator) U4: 36 calls, 0 not sending the latest new handle as a 64-bit call, 0 other uses of a handle before its first 5 -> match
+observe-44048.log (VPet-Simulator) T: 36 call handles (20 past the logging limit), 0 out of order, results 0/1 and 1: True/True, one size at 13: True, sizes at 11: 19 -> match
+observe-44048.log (VPet-Simulator) T13: 16 call results, 0 not read, 0 without the handle, result 1 and a fitting count, 16 with a count above 16 -> match
+observe-44048.log (VPet-Simulator) U5: 50 and 50 calls, 0 not on a completed query in index order or not true, 1 handles with more results than the r8 of their 2 -> match
+observe-44048.log (VPet-Simulator) H5: 0 calls not read, 50 pairs with a following 77, 0 not matching -> match
+observe-44048.log (VPet-Simulator) H9: 50 calls, 0 not read, 50 starting with the text http -> match
+observe-44048.log (VPet-Simulator) U12: 50 calls, 0 out of range or not true, 3 of 3 fully logged items with exactly the 13 statistics -> match
+observe-44048.log (VPet-Simulator) U77: 50 calls, 0 not false or not with the 9 buffer -> match
+observe-44048.log (VPet-Simulator) S12: 1 calls, one value in the decoder's range equal to the reference run's (reference found: True) -> match
+observe-44048.log (VPet-Simulator) R0: 2 calls, a new text, a buffer, a size and true in each -> match
+observe-44048.log (VPet-Simulator) R18: 2 sequences, 2 fully logged, 0 of them out of shape, 1 following pairs, count +1 in each: True -> match
+observe-44048.log (VPet-Simulator) H19: 1 pairs, 0 calls of 19 not read, 0 without the written size -> match
+observe-44048.log (VPet-Simulator): match
+experiment 26: match
+```
+
+As fixed beforehand, a match confirms, for these interface versions:
+`STEAMUGC_INTERFACE_VERSION020` 2 `CreateQueryAllUGCRequest`, 4
+`SendQueryUGCRequest`, 5 `GetQueryUGCResult`, 9 `GetQueryUGCPreviewURL`,
+12 `GetQueryUGCStatistic`; `SteamUtils010` 13 `GetAPICallResult`;
+`STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0 `FileWrite`, 19
+`GetFileNameAndSize`. Recorded as narrowed: `…VERSION016` 18
+`GetFileCount`, `SteamUtils010` 11 `IsAPICallCompleted`, `STEAMUGC…020`
+77 (an item-ID function returning false or 0) and `SteamUser023` 12
+`GetVoiceOptimalSampleRate` (all "experiment 26").

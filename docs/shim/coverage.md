@@ -71,19 +71,19 @@ Positions are listed in the order of their numbers.
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |
-| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 4 | 13 (BC, LS); 22 (CA); 0 18 19 (VP) | candidate: 0 FileWrite, 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others), 18 GetFileCount, 19 GetFileNameAndSize |
+| `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 4 | 13 (BC, LS); 22 (CA); 0 18 19 (VP) | confirmed: 0 FileWrite, 19 GetFileNameAndSize; candidate: 13 a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others), 18 narrowed: GetFileCount (experiment 26) |
 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 2 | 3 | candidate: 3 narrowed: HookScreenshots (experiment 27) |
 | `STEAMUGC_INTERFACE_VERSION016` | 1 | 67 | not known |
-| `STEAMUGC_INTERFACE_VERSION020` | 2 | 2 4 5 9 12 77 (VP); 74 (PP) | candidate: 2 CreateQueryAllUGCRequest, 4 SendQueryUGCRequest, 5 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 9 GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren, 12 GetQueryUGCStatistic, 77 a PublishedFileId_t function returning false or 0 (GetItemInstallInfo, GetItemDownloadInfo, GetItemState and others) |
+| `STEAMUGC_INTERFACE_VERSION020` | 2 | 2 4 5 9 12 77 (VP); 74 (PP) | confirmed: 2 CreateQueryAllUGCRequest, 4 SendQueryUGCRequest, 5 GetQueryUGCResult, 9 GetQueryUGCPreviewURL, 12 GetQueryUGCStatistic; candidate: 77 narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26) |
 | `SteamUser020` | 5 | 2 12 (CC, OC); 2 (GR, DD, UB) | candidate: 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | `SteamUser021` | 3 | 2 (BB, PL); 1 2 (HC) | candidate: 1 BLoggedOn, another no-argument bool, GetHSteamUser or others (one call), 2 GetSteamID |
 | `SteamUser022` | 1 | 2 | candidate: 2 GetSteamID |
-| `SteamUser023` | 13 | 1 2 (BC, AC, OE, FS, PK, PP); 2 (CM, LS, PT, PY, CH, CA); 2 12 (VP) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID, 12 GetVoiceOptimalSampleRate |
+| `SteamUser023` | 13 | 1 2 (BC, AC, OE, FS, PK, PP); 2 (CM, LS, PT, PY, CH, CA); 2 12 (VP) | candidate: 1 BLoggedOn, another no-argument bool or GetHSteamUser, 2 GetSteamID, 12 narrowed: GetVoiceOptimalSampleRate (experiment 26) |
 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 3 | 0 4 6 10 12 (CC); 0 14 15 (OC); 0 (DD) | confirmed: 0 RequestCurrentStats, 10 StoreStats, 12 GetAchievementDisplayAttribute; candidate: 4 SetStat, 6 GetAchievement, GetStat or GetGlobalStat |
 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 7 | 0 (PT, TW, HC); 0 10 (AC, PK); 0 6 10 14 15 (OE); 0 2 6 23 29 (FS) | confirmed: 0 RequestCurrentStats; candidate: 6 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write), 10 narrowed: StoreStats or ResetAllStats (experiment 13) |
 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 6 | 1 3 5 8 9 15 37 (BC); 22 37 39 (CM); 15 (LS); 5 15 (CA); 3 9 (VP); 1 3 5 9 22 23 30 (PP) | candidate: 5 GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write); confirmed: 9 StoreStats, 15 RequestUserStats |
 | `SteamUtils009` | 5 | 9 14 (CC, OC, UB); 9 16 (GR); 9 14 16 (DD) | confirmed: 9 GetAppID, 14 GetCurrentBatteryPower |
-| `SteamUtils010` | 17 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA, PP); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC); 9 11 13 14 (VP) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 14 GetCurrentBatteryPower; candidate: 11 IsAPICallCompleted, 13 GetAPICallResult |
+| `SteamUtils010` | 17 | 9 14 (BC, CM, BB, LS, PL, AC, PY, CH, PK, CA, PP); 5 6 9 14 34 (PT); 9 10 14 18 26 34 (TW); 9 23 (OE); 4 9 14 17 (FS); 9 14 34 (HC); 9 11 13 14 (VP) | confirmed: 5 GetImageSize, 6 GetImageRGBA, 9 GetAppID, 13 GetAPICallResult, 14 GetCurrentBatteryPower; candidate: 11 narrowed: IsAPICallCompleted (experiment 26) |
 
 Beyond these, the exported entry points (`entry-points.md`) and the
 callback numbers seen through `Steam_BGetCallback` are needed by every

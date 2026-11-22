@@ -259,10 +259,10 @@
     ],
     "11": [
       "candidate",
-      "IsAPICallCompleted"
+      "narrowed: IsAPICallCompleted (experiment 26)"
     ],
     "13": [
-      "candidate",
+      "confirmed",
       "GetAPICallResult"
     ]
   },
@@ -387,7 +387,7 @@
     ],
     "12": [
       "candidate",
-      "GetVoiceOptimalSampleRate"
+      "narrowed: GetVoiceOptimalSampleRate (experiment 26)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION012": {
@@ -474,15 +474,15 @@
       "a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others)"
     ],
     "0": [
-      "candidate",
+      "confirmed",
       "FileWrite"
     ],
     "18": [
       "candidate",
-      "GetFileCount"
+      "narrowed: GetFileCount (experiment 26)"
     ],
     "19": [
-      "candidate",
+      "confirmed",
       "GetFileNameAndSize"
     ]
   },
@@ -508,28 +508,28 @@
   },
   "STEAMUGC_INTERFACE_VERSION020": {
     "2": [
-      "candidate",
+      "confirmed",
       "CreateQueryAllUGCRequest"
     ],
     "4": [
-      "candidate",
+      "confirmed",
       "SendQueryUGCRequest"
     ],
     "5": [
-      "candidate",
-      "GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren"
+      "confirmed",
+      "GetQueryUGCResult"
     ],
     "9": [
-      "candidate",
-      "GetQueryUGCResult, GetQueryUGCPreviewURL, GetQueryUGCMetadata or GetQueryUGCChildren"
+      "confirmed",
+      "GetQueryUGCPreviewURL"
     ],
     "12": [
-      "candidate",
+      "confirmed",
       "GetQueryUGCStatistic"
     ],
     "77": [
       "candidate",
-      "a PublishedFileId_t function returning false or 0 (GetItemInstallInfo, GetItemDownloadInfo, GetItemState and others)"
+      "narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26)"
     ]
   }
 }

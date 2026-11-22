@@ -1114,3 +1114,24 @@ script afterwards:
 - Lesson for the loop: the check script must encode which games each
   prediction is about. A new experiment with such a script is needed to
   confirm these positions; until then they stay candidates.
+
+### Experiment 13 (planned 2026-11-22, before the runs)
+
+Experiment 12 again, with the lesson from its result: each prediction is
+checked only in the games it names, and a named game whose log lacks the
+interface counts as a mismatch. Agent runs of An Arcade Full of Cats,
+One's Own Exile and A Park Full of Cats (part A) and of Baldi's Basics
+Classic Remastered, Chronigma and HoloCure (part B), each closed by a
+close request after about 30 seconds or more.
+
+**Predictions** (`tools/shim/experiments/013_stats_and_input_init_scoped.py`,
+each log given as `A:<log>` or `B:<log>`):
+
+- A: position 0 of `STEAMUSERSTATS_INTERFACE_VERSION012` is called once,
+  within the first 3 seconds, returning true; position 10 once, at least
+  20 seconds later (at close), returning true. Candidates: 0
+  `RequestCurrentStats`, 10 `StoreStats`.
+- B: position 0 of `SteamInput006` is the first `SteamInput006` call, is
+  called once and returns true. Candidate: `Init`.
+
+The experiment matches only with three logs per part, all matching.

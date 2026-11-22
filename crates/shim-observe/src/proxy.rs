@@ -2255,7 +2255,7 @@ mod tests {
                 .all(|&(name, _, _)| !name.starts_with("SteamFriends"))
         );
         let registers = saved(NAME.as_ptr() as u64, 0, 0);
-        assert_eq!(after_for("SteamFriends017", 0, &registers), None);
+        assert_eq!(after_for("SteamFriends017", 0, &registers, 0), None);
         assert_eq!(answer_for("SteamFriends017", 0), None);
         assert!(
             ANSWERS

@@ -2624,20 +2624,32 @@ per-interface getters, 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
 
 ### Experiment 24 (planned 2026-11-22, before the runs)
 
+**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053; added by the
+main session, not by this plan's branch): `("SteamClient018", 3,
+Read::OutputBytes("rdx"))` and `("SteamClient019", 3,
+Read::OutputBytes("rdx"))`, so the proxy logs `after rdx->[…]` (the
+first 16 bytes at the address `rdx` held) when position 3 returns. Per
+the page `CreateLocalUser` writes an `HSteamPipe` there: a pipe handle,
+not a ticket, token, password or account identifier. Without the entry H
+mismatches.
+
 **Predictions** (`tools/shim/experiments/024_two_pipes.py`, low 32 bits;
 `V` = result of 3, `Q` = the pipe slot of the first getter call (5, 6,
-9, 12, 26, 38) after 3 returned):
+9, 12, 26, 38) after 3 returned; "before 3 returned" means on a log line
+before the line of 3's return):
 
 - A: the first `SteamClient` call is 0 (result `P`), the next 2 with
   `rdx` = `P` (result `U`).
 - B: 3 is called exactly once, with `r8` = 3, `rdx` at least 0x10000 (an
   address, not a handle) and 0 < `V` < 0x10000; 7 exactly once, before
-  3, with `r8` at most 0xffff.
-- C: `Q` is neither `P` nor 0, is the result of no call, and appears in
-  `rdx` or `r8` of no call before 3 returned (so it can only have come
-  through the address passed to 3).
+  3, with `r8` at most 0xffff. A register missing from the log is a
+  mismatch.
+- C: `Q` is neither `P` nor 0; no call or entry point of any interface
+  that returned before 3 returned had `Q` as its result, and no
+  `SteamClient` call made before 3 returned has `Q` in `rdx` or `r8`.
 - D: every getter call passes a pipe in {`P`, `Q`}; with `P` the user
-  slot (`rdx`, none at 9) is `U` or 0, with `Q` it is `V` or 0.
+  slot (`rdx`, none at 9) is `U` or 0, with `Q` it is `V` or 0; at least
+  one call of 9 passes `Q`.
 - E: every getter call passes a text of its position's kind (5
   `SteamUser…`, 6 `SteamGameServer…` without `Stats`, 9 `SteamUtils…`,
   26 `SteamController…`, 38 `SteamInput…`, 12 any), and its result has
@@ -2650,17 +2662,22 @@ per-interface getters, 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
   and 0 before.
 - G: 34 is called exactly once, before 3, with `rdx` at least
   0x7ff000000000, result 0.
+- H: after 3 returned, the first four bytes at the address `rdx` held
+  (`observelog.after_u32(call, "rdx")`) equal `Q`, the pipe later passed
+  at 6, 9, 12 and 1.
 
 The script rejects a log given twice, maps each log to its game through
 `starts.log` (`observelog.app_of`), needs one log of each game and
 rejects a log whose start (`observelog.start_of`) is earlier than the
-plan commit (`PLAN_COMMITTED`: 2026-11-22 14:24:36 local time, commit
-`79db875` on `loop/plan-11a`). It prints only
-positions, small handle values, counts and match/MISMATCH.
+plan commit (`PLAN_COMMITTED`, the local committer time of the commit on
+`loop/plan-11a` that holds this text and the final script, set in a
+follow-up commit). It prints only positions, small handle values,
+counts and match/MISMATCH.
 
 **Games to run:** Gravitas (1067310) and Dark Deception (332950), each
 to its first screen and closed by a close request (F needs a normal
-close). No experiment 25 is needed.
+close), after the READS entry above is in the proxy. No experiment 25 is
+needed.
 
 **What a full match confirms** (under ADR 0051, for `SteamClient018` and
 `019` only):
@@ -2670,14 +2687,21 @@ close). No experiment 25 is needed.
   (`GetISteamUser`, `GetISteamGameServer`, `GetISteamController` by
   their texts), 4 `ReleaseUser`, 1 `BReleaseSteamPipe`, 23
   `BShutdownIfAllPipesClosed`, as experiment 7 did for 020 to 023;
-- 3 `CreateLocalUser`: no other function of the page takes an address
-  and an account type, and C and D show the handle it hands out going
-  only into pipe slots;
-- **pipe and user told apart** for these versions: `Q` (2) differs from
-  `V` (1); with the page's argument order (user before pipe in the
-  getters, pipe before user in `ReleaseUser`) `Q` sits in every pipe slot
-  (D, F), the objects depend on it (E), and 23 turns true only after both
-  `P` and `Q` are released (F), so `Q` is a pipe. Experiment 7's open
+- 3 `CreateLocalUser`: it writes the handle `Q` at the address it is
+  given (H), the handle the game then uses as a pipe (C, D, F), and takes
+  3 = `k_EAccountTypeGameServer` (B). Of the page's functions only
+  `CreateLocalUser` takes an address it writes a pipe to; the
+  no-argument functions are ruled out by H, in particular
+  `GetIPCCallCount`, which takes no argument and writes nothing, so it
+  cannot put `Q` at the address in `rdx`. (H reads the bytes only after
+  the call; that they already held `Q` before is not ruled out by a
+  reading, only by C: nothing before 3 returned produced `Q`.)
+- **pipe and user told apart** for these versions, from the positions
+  that take a pipe as their only handle (ADR 0042: no inference from
+  argument order alone): 9 (`GetISteamUtils`, pipe and text) is called
+  with `Q` (D) and 1 (`BReleaseSteamPipe`, a pipe only) with `Q` and
+  with `P` (F), while `Q` differs from `V`; so `Q` and `P` are pipes. 23
+  turning true only after both are released (F) fits. Experiment 7's open
   point stays open for 020 to 023, where both handles were 1.
 
 **What stays a candidate:**
@@ -2690,11 +2714,12 @@ close). No experiment 25 is needed.
   points to code; G only narrows.
 - 38: hands out `SteamInput001` objects; the page names no function for
   it.
-- The value written through `rdx` of 3 is not read (the proxy reads no
-  memory there); that it is `Q` is inferred from C.
+- `U` and `V` were both 1 in every run, so which of the two users a call
+  passes is not told apart.
 
 **Already seen:** run with the plan time lifted on the ten runs of
 2026-11-22 listed above (the two reference runs have no `starts.log`
-line, so the script cannot take them), every point matches in each.
+line, so the script cannot take them), A to G match in each; H
+mismatches ("not logged"), since no READS entry existed for position 3.
 The predictions were written from these logs, so they are not the test;
 only fresh runs after the plan commit are.

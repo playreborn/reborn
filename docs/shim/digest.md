@@ -16,6 +16,12 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 13a results (PR #40): experiment 26 (VPet)
+  matched: `STEAMUGC_INTERFACE_VERSION020` 2/4/5/9/12, `SteamUtils010` 13
+  and `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 0/19 confirmed; 18, 11, 77
+  and `SteamUser023` 12 narrowed. Experiment 27 matched:
+  `STEAMSCREENSHOTS_INTERFACE_VERSION003` 3 narrowed to `HookScreenshots`.
+  Now 138 of 220 positions confirmed (M4 games alone: 130 of 205).
 - 2026-11-22: loop iteration 13a (parallel agent, plan only, no runs):
   survey positions of experiment 25. Experiment 26 (VPet-Simulator, about
   27 minutes, closed from the tray by the maintainer) for

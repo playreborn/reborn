@@ -1,6 +1,6 @@
 # 0055: Real account data for the shim
 
-- **Status:** Proposed — waiting for the maintainer
+- **Status:** Accepted (by the maintainer, 2026-11-22)
 - **Date:** 2026-11-22
 - **Amends:** ADR 0046 (shadow answers for account data come from
   `rebornd`, not from values given to `reborn-observe arm`; writes are
@@ -473,6 +473,26 @@ free games and no DLC.
    on the same account, with the risks above.
 10. The games; `StoreStats` has only two recorded games.
 11. The language of achievement names.
+
+## Decided by the maintainer (2026-11-22)
+
+Asked in four questions, the maintainer answered:
+
+- **The ADR as a whole, with every proposal** (strict ownership: the game
+  and its DLC; an empty `StoreStats` stops the game until an experiment
+  records one; one 0x44e per `StoreStats` as soon as Valve answers, no
+  merging; cloud saves in shim mode stay local, with a clear notice that
+  the official client does not see them; a true cloud conflict asks the
+  user before the game starts; achievement names in English until Reborn
+  has a setting), including the explicit amendments of ADR 0046 and 0047:
+  accepted.
+- **Shadow mode with two sign-ins** (`rebornd` and the official client on
+  the test account at once): allowed; any logoff or kick stops the stage.
+- **A live stats write from the test account** to record the store
+  exchange: allowed in principle; the agent plans that experiment and
+  asks the maintainer once more right before the single run.
+- **`StoreStats` with only two recorded games:** record a third game
+  first; the three-game rule stays.
 
 ## Consequences
 

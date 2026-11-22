@@ -1,11 +1,45 @@
-# M4 game list (draft)
+# M4 game list
 
 M4 is done when "a list of at least 20 widespread single-player games,
 fixed in advance, reaches level 3 on a system without the official
 client installed" (`docs/plan.md`, M4; levels in § 8.5: level 3 = starts
 without the official client, single-player playable, plus achievements
-and cloud). This file is that list while it is being fixed. It is a
-**draft**: the maintainer fixes the final list.
+and cloud). The list was fixed by the maintainer on 2026-11-22 (below).
+
+## The fixed list (decided by the maintainer, 2026-11-22)
+
+These 20 games are M4's list. All are 64-bit Windows games owned by the
+test account, recorded with the observation proxy (`coverage.md`), with
+single-player listed on their store pages and no anti-cheat named.
+
+1. Cave Crawlers (2143030)
+2. Bongo Cat (3419430)
+3. Coin Maker Simulator Demo (5191630)
+4. Linsips (4301370)
+5. Baldi's Basics Classic Remastered (1712830)
+6. Paper Lily - Chapter 1 (2220360)
+7. Please, Touch The Artwork 2 (2600140)
+8. An Arcade Full of Cats (2368470)
+9. Gravitas (1067310)
+10. Outcore: Desktop Adventure (1275670)
+11. Plant Therapy (2505120)
+12. Chronigma (4051150)
+13. The Thief, the Witch, the Toad, and the Mushroom. (2233770)
+14. One's Own Exile (3086720)
+15. Fallout Shelter (588430)
+16. HoloCure - Save the Fans! (2420510)
+17. Dark Deception (332950)
+18. UNBEATABLE [white label] (1290490)
+19. A Park Full of Cats (2610090)
+20. Cartapli : Fold Quest (4314560)
+
+Not on it: How Fish Is Made (uses no Steam calls up to its menu, so it
+does not test the shim), and the 32-bit games, which belong to M5. All
+are free games; widely played paid games could join later through
+Steam Families, which the maintainer has not set up.
+
+The candidate table below stays as the record of how the list was
+found.
 
 ## Criteria
 

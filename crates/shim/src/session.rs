@@ -142,7 +142,10 @@ pub fn take_events() -> Vec<Event> {
 pub fn resendable(request: &Request) -> bool {
     match request {
         // Reads: asking again gives the same answer and changes nothing.
-        Request::AppOwnership { .. } | Request::RequestStats => true,
+        Request::AppOwnership { .. }
+        | Request::RequestStats
+        | Request::CloudFileSize { .. }
+        | Request::CloudRead { .. } => true,
         // Never sent through `request`: the first message of a connection,
         // or messages of `reborn-observe`.
         Request::Hello { .. }
@@ -1160,6 +1163,13 @@ mod tests {
             Request::Hello { version, pid: 1 },
             Request::AppOwnership { app_id: APP },
             Request::RequestStats,
+            Request::CloudFileSize {
+                name: "save.dat".to_owned(),
+            },
+            Request::CloudRead {
+                name: "save.dat".to_owned(),
+                max: 16,
+            },
             Request::RegisterShadow { app_id: APP },
             Request::CancelShadow,
             Request::ShadowHello {
@@ -1174,5 +1184,9 @@ mod tests {
         }
         assert!(resendable(&Request::AppOwnership { app_id: APP }));
         assert!(resendable(&Request::RequestStats));
+        assert!(resendable(&Request::CloudRead {
+            name: "save.dat".to_owned(),
+            max: 16,
+        }));
     }
 }

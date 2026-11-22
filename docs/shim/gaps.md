@@ -16,7 +16,6 @@ Of these, called by the M4 games: 205; confirmed: 132; open: 73.
 | not known | 3 | `SteamClient021` | 22 |  |
 | not known | 3 | `SteamUtils010` | 34 |  |
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 1 |  |
-| not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 22 |  |
 | not known | 2 | `SteamClient023` | 21 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 2 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 5 |  |
@@ -30,16 +29,8 @@ Of these, called by the M4 games: 205; confirmed: 132; open: 73.
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 22 |  |
 | not known | 1 | `STEAMUGC_INTERFACE_VERSION016` | 67 |  |
 | not known | 1 | `STEAMUGC_INTERFACE_VERSION020` | 74 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 14 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 15 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 2 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 14 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 15 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 23 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 29 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 8 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 23 |  |
-| not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 30 |  |
 | not known | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 39 |  |
 | not known | 1 | `SteamGameServer012` | 7 |  |
 | not known | 1 | `SteamMatchMakingServers002` | 10 |  |
@@ -68,6 +59,7 @@ Of these, called by the M4 games: 205; confirmed: 132; open: 73.
 | candidate | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 | a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
 | candidate | 2 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 | narrowed: HookScreenshots (experiment 27) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
+| candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 22 | FindLeaderboard (experiment 32) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 37 | narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet) |
 | candidate | 2 | `SteamUser020` | 12 | narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
@@ -76,6 +68,14 @@ Of these, called by the M4 games: 205; confirmed: 132; open: 73.
 | candidate | 1 | `STEAMUGC_INTERFACE_VERSION020` | 77 | narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26) |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 4 | SetStat |
 | candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 6 | GetAchievement, GetStat or GetGlobalStat |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 14 | GetNumAchievements (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION011` | 15 | GetAchievementName (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 14 | GetNumAchievements (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 15 | GetAchievementName (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 23 | FindLeaderboard (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 29 | DownloadLeaderboardEntriesForUsers (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 23 | GetLeaderboardName (experiment 32) |
+| candidate | 1 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 30 | UploadLeaderboardScore (experiment 32) |
 | candidate | 1 | `SteamClient018` | 7 | narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24) |
 | candidate | 1 | `SteamClient018` | 34 | SetWarningMessageHook |
 | candidate | 1 | `SteamClient019` | 7 | narrowed: SetLocalIPBinding or SetWarningMessageHook(null) (experiment 24) |

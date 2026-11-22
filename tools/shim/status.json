@@ -326,6 +326,14 @@
     "0": [
       "confirmed",
       "RequestCurrentStats"
+    ],
+    "14": [
+      "candidate",
+      "GetNumAchievements (experiment 32)"
+    ],
+    "15": [
+      "candidate",
+      "GetAchievementName (experiment 32)"
     ]
   },
   "SteamController007": {
@@ -406,6 +414,22 @@
     "6": [
       "candidate",
       "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
+    ],
+    "14": [
+      "candidate",
+      "GetNumAchievements (experiment 32)"
+    ],
+    "15": [
+      "candidate",
+      "GetAchievementName (experiment 32)"
+    ],
+    "23": [
+      "candidate",
+      "FindLeaderboard (experiment 32)"
+    ],
+    "29": [
+      "candidate",
+      "DownloadLeaderboardEntriesForUsers (experiment 32)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
@@ -424,6 +448,18 @@
     "37": [
       "candidate",
       "narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet)"
+    ],
+    "22": [
+      "candidate",
+      "FindLeaderboard (experiment 32)"
+    ],
+    "23": [
+      "candidate",
+      "GetLeaderboardName (experiment 32)"
+    ],
+    "30": [
+      "candidate",
+      "UploadLeaderboardScore (experiment 32)"
     ]
   },
   "SteamInput001": {

@@ -60,3 +60,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0052](0052-no-daily-start-cap.md) | No daily start cap, 1 minute between starts, 50 free games a day | Accepted |
 | [0053](0053-agent-adds-reads.md) | The agent adds proxy reads itself | Accepted |
 | [0054](0054-agent-lists-callbacks.md) | The agent lists callback numbers itself | Accepted |
+| [0055](0055-real-account-data-for-the-shim.md) | Real account data for the shim | Accepted |

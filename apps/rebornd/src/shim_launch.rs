@@ -5,6 +5,7 @@
 //! until the shim answers enough calls for games to run. The shim DLL is
 //! `steamclient64.dll` in the `shim` folder of Reborn's data folder.
 
+#[cfg(windows)]
 use tracing::{info, warn};
 
 /// Whether launches run in shim mode.

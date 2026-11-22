@@ -1010,9 +1010,13 @@ Under ADR 0051, positions 4, 1 and 23 of `SteamClient021` and 4, 1 and
 
 ## More candidates from the gap list (loop iteration 3)
 
-Pages read 2026-11-22 (or earlier, linked above): `ISteamUserStats`,
-`ISteamUser`, `ISteamFriends` (see below), `ISteamInput`. Each entry is a
-candidate unless an experiment below confirms it.
+Pages: `ISteamUserStats` (read 2026-11-21, `RequestUserStats` checked
+again 2026-11-22), `ISteamUser` (2026-11-21),
+<https://partner.steamgames.com/doc/api/ISteamFriends> (2026-11-22),
+`ISteamInput` (2026-11-22). Correction made before the runs: the first
+version of this list named pages that had not been re-read for these
+entries; each candidate below was then checked on its page. Each entry
+is a candidate unless an experiment below confirms it.
 
 - **`STEAMUSERSTATS_INTERFACE_VERSION012` positions 0 and 10:** position 0
   once early, position 10 once when the game closed (An Arcade Full of
@@ -1045,9 +1049,10 @@ candidate unless an experiment below confirms it.
   the one a game would ask first. Candidate: `BLoggedOn` (also
   `BIsBehindNAT` and the phone and two-factor checks fit the shape).
 - **`SteamFriends017` position 0:** once early, no argument used, result
-  an address in the heap. Candidate from the shape alone: a function
-  without arguments that returns text, such as the account's persona
-  name; that text is account data, so it is not read (ADR 0043).
+  an address in the heap. The `ISteamFriends` page documents one function
+  without arguments that returns text: the user's display name.
+  Candidate: `GetPersonaName`. That text is account data, so it is not
+  read (ADR 0043).
 
 ### Experiment 12 (planned 2026-11-22, before the runs)
 

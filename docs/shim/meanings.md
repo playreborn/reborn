@@ -940,3 +940,38 @@ experiment 10: match
 78 ms ThreadId(1) SteamUtils010#14 call 1 rcx=0x19f0f8f02e0 rdx=0x0 r8=0x19f0bee1500 r9=0x1a
 79 ms ThreadId(1) SteamUtils010#14 return 1 rax=0xffffffff
 ```
+
+## `STEAMUSERSTATS_INTERFACE_VERSION011/012` position 0: candidates `RequestCurrentStats`, `StoreStats`
+
+- **Recorded:** once early in eleven games (65 to 2339 ms after start),
+  with leftovers in `rdx`, `r8`, `r9` that differ between games; the
+  result was 1 every time.
+- **Fit:** the `ISteamUserStats` page (read 2026-11-21, names version
+  011) documents two functions without arguments that report success as
+  true or false: one asks for the current user's stats and achievements,
+  one sends changed stats to the server. A call at start, before any
+  stat is set, fits the first better, but nothing recorded so far tells
+  them apart; telling them apart probably needs the callbacks of ADR 0050.
+  No experiment planned yet.
+
+## `SteamClient021` and `SteamClient023`: the calls at close
+
+- **Recorded** (the reference runs of `coverage.md`): every `SteamClient021`
+  game called positions 4, 1 and 23 when it closed, every
+  `SteamClient023` game positions 4, 1 and 22, in that order, with the
+  same handles as the `SteamClient020` games (experiment 7). Position 32
+  (021) and 30 (023) took a function address at start, like 34 in 020.
+- **Fit:** the same functions as for `SteamClient020`: `ReleaseUser`,
+  `BReleaseSteamPipe`, `BShutdownIfAllPipesClosed`
+  (<https://partner.steamgames.com/doc/api/ISteamClient>); 32 and 30 are
+  candidates for `SetWarningMessageHook`, not tested.
+
+### Experiment 11 (planned 2026-11-22, before the runs)
+
+Agent runs of Chronigma and Fallout Shelter (021) and Linsips and
+Cartapli (023), each closed by a close request.
+
+**Prediction:** at close, position 4 with `rdx` = `P` and `r8` = `U`, then
+position 1 with `rdx` = `P` returning true, then position 23 (021) or 22
+(023) returning true (`P`, `U` as in experiment 7). Checked by
+`tools/shim/experiments/011_close_calls.py`.

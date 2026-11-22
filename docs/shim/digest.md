@@ -9,6 +9,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-22: loop iteration 9b (planned by a parallel agent, run by the
+  main session): experiment 19 **matched** (Dark Deception, Gravitas,
+  Bongo Cat, Coin Maker, Cave Crawlers): how callbacks are delivered is
+  confirmed (header layout, one free per poll, `Steam_GetAPICallResult`
+  only inside a 703 callback). 703's content stays open. PR #21.
 - 2026-11-22: loop iteration 9: first callback meaning. Experiment 20
   **mismatched** (the Steam ID sits at bytes 12 to 20, not 16 to 24);
   experiment 21 with that layout **matched** (Cave Crawlers, Gravitas,

@@ -1687,3 +1687,75 @@ call came from one thread; that held for Cave Crawlers, not for Dark
 Deception and Gravitas. Dark Deception also calls
 `Steam_ReleaseThreadLocalMemory` (at least 50 times, on both threads;
 the proxy logs only the first 50), which stage 2 did not see.
+
+**Result of experiment 19** (agent runs after the plan time 12:41:02;
+logs recorded by `run.sh`: `observe-51204` Dark Deception, `observe-12256`
+Gravitas, `observe-51224` Bongo Cat, `observe-25680` Coin Maker
+Simulator Demo, `observe-52912` Cave Crawlers): **match** for A to E, F
+not checked, checked by the script.
+
+```text
+observe-51204.log (app 332950) A: 21 headers, bytes 0..4 [1], P=1 U=1, 10 from a call whose rcx differs -> match
+observe-51204.log (app 332950) A2: 15 frees and GetAPICallResult calls with a logged poll -> match
+observe-51204.log (app 332950) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-51204.log (app 332950) C: 8 numbers, 0 with more than one size -> match
+observe-51204.log (app 332950) D: 21 frees for 21 headers, result lowest bytes [0, 1] -> match
+observe-51204.log (app 332950) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-51204.log (app 332950) F: 0 of 0 703 callbacks with payload bytes -> not checked
+observe-12256.log (app 1067310) A: 21 headers, bytes 0..4 [1], P=1 U=1, 10 from a call whose rcx differs -> match
+observe-12256.log (app 1067310) A2: 15 frees and GetAPICallResult calls with a logged poll -> match
+observe-12256.log (app 1067310) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-12256.log (app 1067310) C: 6 numbers, 0 with more than one size -> match
+observe-12256.log (app 1067310) D: 21 frees for 21 headers, result lowest bytes [0, 1] -> match
+observe-12256.log (app 1067310) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-12256.log (app 1067310) F: 0 of 0 703 callbacks with payload bytes -> not checked
+observe-51224.log (app 3419430) A: 26 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-51224.log (app 3419430) A2: 9 frees and GetAPICallResult calls with a logged poll -> match
+observe-51224.log (app 3419430) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-51224.log (app 3419430) C: 10 numbers, 0 with more than one size -> match
+observe-51224.log (app 3419430) D: 26 frees for 26 headers, result lowest bytes [0, 1] -> match
+observe-51224.log (app 3419430) E: 6 GetAPICallResult calls, 6 callbacks 703 -> match
+observe-51224.log (app 3419430) F: 0 of 6 703 callbacks with payload bytes -> not checked
+observe-25680.log (app 5191630) A: 20 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-25680.log (app 5191630) A2: 17 frees and GetAPICallResult calls with a logged poll -> match
+observe-25680.log (app 5191630) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-25680.log (app 5191630) C: 5 numbers, 0 with more than one size -> match
+observe-25680.log (app 5191630) D: 20 frees for 20 headers, result lowest bytes [0, 1] -> match
+observe-25680.log (app 5191630) E: 12 GetAPICallResult calls, 12 callbacks 703 -> match
+observe-25680.log (app 5191630) F: 0 of 12 703 callbacks with payload bytes -> not checked
+observe-52912.log (app 2143030) A: 14 headers, bytes 0..4 [1], P=1 U=1, 0 from a call whose rcx differs -> match
+observe-52912.log (app 2143030) A2: 1 frees and GetAPICallResult calls with a logged poll -> match
+observe-52912.log (app 2143030) B: size note equals bytes 16..20, bytes 20..24 zero, 0 unreadable headers -> match
+observe-52912.log (app 2143030) C: 9 numbers, 0 with more than one size -> match
+observe-52912.log (app 2143030) D: 14 frees for 14 headers, result lowest bytes [0, 1] -> match
+observe-52912.log (app 2143030) E: 0 GetAPICallResult calls, 0 callbacks 703 -> match
+observe-52912.log (app 2143030) F: 0 of 0 703 callbacks with payload bytes -> not checked
+C across all logs: 15 numbers -> match
+    number 304 (0x130): size [16]
+    number 336 (0x150): size [12]
+    number 703 (0x2bf): size [16]
+    number 1101 (0x44d): size [24]
+    number 1102 (0x44e): size [16]
+    number 1222 (0x4c6): size [260]
+    number 1281 (0x501): size [272]
+    number 4700 (0x125c): size [8]
+    number 4701 (0x125d): size [4]
+    number 4702 (0x125e): size [1]
+    number 1040011 (0xfde8b): size [260]
+    number 1040015 (0xfde8f): size [20]
+    number 1040044 (0xfdeac): size [784]
+    number 1080000 (0x107ac0): size [628]
+    number 1080001 (0x107ac1): size [4]
+F not checked (703 payload bytes not logged)
+experiment 19: match
+```
+
+Under ADR 0051 the readings listed above under "What a full match
+confirms" are confirmed: header bytes 4 to 8 the callback number, 8 to 16
+the address of its data, 16 to 20 its size; one callback per poll that
+returns 1, freed by exactly one `Steam_FreeLastCallback` on the same `rcx`
+and thread before the next poll; `Steam_GetAPICallResult` only while a
+703 callback is held, once per 703. The readings under "What stays a
+candidate" stay candidates. Not in the shim yet: the shim's
+`Steam_BGetCallback` still aborts; delivering callbacks needs their
+contents, which come from `rebornd`.

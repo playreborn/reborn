@@ -151,13 +151,20 @@ fn client_table(mut table: [usize; SLOTS], user_positions: &[usize]) -> [usize; 
     table
 }
 
+/// The calls at close (experiments 7 and 11): position 4 `ReleaseUser`,
+/// 1 `BReleaseSteamPipe`, and `BShutdownIfAllPipesClosed` at `shutdown`
+/// (23 in 020 and 021, 22 in 023).
+fn add_close_calls(table: &mut [usize; SLOTS], shutdown: usize) {
+    table[1] = release_steam_pipe as *const () as usize;
+    table[4] = release_user as *const () as usize;
+    table[shutdown] = shutdown_if_all_pipes_closed as *const () as usize;
+}
+
 fn client_020() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
         let mut table = client_table(stubs!("SteamClient020"), USER_INTERFACE_POSITIONS_020);
-        table[1] = release_steam_pipe as *const () as usize;
-        table[4] = release_user as *const () as usize;
-        table[23] = shutdown_if_all_pipes_closed as *const () as usize;
+        add_close_calls(&mut table, 23);
         Built::new(table)
     })
 }
@@ -165,20 +172,18 @@ fn client_020() -> &'static Built {
 fn client_021() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
-        Built::new(client_table(
-            stubs!("SteamClient021"),
-            USER_INTERFACE_POSITIONS_021,
-        ))
+        let mut table = client_table(stubs!("SteamClient021"), USER_INTERFACE_POSITIONS_021);
+        add_close_calls(&mut table, 23);
+        Built::new(table)
     })
 }
 
 fn client_023() -> &'static Built {
     static OBJECT: OnceLock<Built> = OnceLock::new();
     OBJECT.get_or_init(|| {
-        Built::new(client_table(
-            stubs!("SteamClient023"),
-            USER_INTERFACE_POSITIONS_023,
-        ))
+        let mut table = client_table(stubs!("SteamClient023"), USER_INTERFACE_POSITIONS_023);
+        add_close_calls(&mut table, 22);
+        Built::new(table)
     })
 }
 
@@ -319,11 +324,29 @@ mod tests {
             slot_of("SteamClient020", 23),
             shutdown_if_all_pipes_closed as *const () as usize
         );
-        assert_ne!(
+        let shutdown = shutdown_if_all_pipes_closed as *const () as usize;
+        assert_eq!(
             slot_of("SteamClient021", 23),
-            shutdown_if_all_pipes_closed as *const () as usize,
-            "the close calls are recorded for 020 only"
+            shutdown,
+            "021 shuts down at 23"
         );
+        assert_eq!(
+            slot_of("SteamClient023", 22),
+            shutdown,
+            "023 shuts down at 22"
+        );
+        for version in ["SteamClient020", "SteamClient021", "SteamClient023"] {
+            assert_eq!(
+                slot_of(version, 4),
+                release_user as *const () as usize,
+                "{version}"
+            );
+            assert_eq!(
+                slot_of(version, 1),
+                release_steam_pipe as *const () as usize,
+                "{version}"
+            );
+        }
     }
 
     #[cfg(windows)]

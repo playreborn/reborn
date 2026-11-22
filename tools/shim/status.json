@@ -58,6 +58,22 @@
     "*interface": [
       "confirmed",
       "GetISteam… (per interface)"
+    ],
+    "4": [
+      "confirmed",
+      "ReleaseUser"
+    ],
+    "1": [
+      "confirmed",
+      "BReleaseSteamPipe"
+    ],
+    "23": [
+      "confirmed",
+      "BShutdownIfAllPipesClosed"
+    ],
+    "32": [
+      "candidate",
+      "SetWarningMessageHook"
     ]
   },
   "SteamClient023": {
@@ -84,6 +100,18 @@
     "*interface": [
       "confirmed",
       "GetISteam… (per interface)"
+    ],
+    "4": [
+      "confirmed",
+      "ReleaseUser"
+    ],
+    "1": [
+      "confirmed",
+      "BReleaseSteamPipe"
+    ],
+    "22": [
+      "confirmed",
+      "BShutdownIfAllPipesClosed"
     ]
   },
   "SteamUtils009": {
@@ -162,6 +190,10 @@
     "6": [
       "candidate",
       "GetAchievement, GetStat or GetGlobalStat"
+    ],
+    "0": [
+      "candidate",
+      "RequestCurrentStats or StoreStats"
     ]
   },
   "SteamController007": {
@@ -204,6 +236,12 @@
     "2": [
       "candidate",
       "GetSteamID"
+    ]
+  },
+  "STEAMUSERSTATS_INTERFACE_VERSION012": {
+    "0": [
+      "candidate",
+      "RequestCurrentStats or StoreStats"
     ]
   }
 }

@@ -975,3 +975,18 @@ Cartapli (023), each closed by a close request.
 position 1 with `rdx` = `P` returning true, then position 23 (021) or 22
 (023) returning true (`P`, `U` as in experiment 7). Checked by
 `tools/shim/experiments/011_close_calls.py`.
+
+**Result of experiment 11** (agent runs after the plan was committed at
+04:33:39): **match** in all four games; checked by the script.
+
+```text
+observe-35536.log SteamClient021: P=1 U=1 close calls [4, 1, 23] -> match
+observe-45648.log SteamClient021: P=1 U=1 close calls [4, 1, 23] -> match
+observe-21344.log SteamClient023: P=1 U=1 close calls [4, 1, 22] -> match
+observe-11536.log SteamClient023: P=1 U=1 close calls [4, 1, 22] -> match
+experiment 11: match
+```
+
+Under ADR 0051, positions 4, 1 and 23 of `SteamClient021` and 4, 1 and
+22 of `SteamClient023` are confirmed as `ReleaseUser`,
+`BReleaseSteamPipe` and `BShutdownIfAllPipesClosed`.

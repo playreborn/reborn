@@ -229,6 +229,68 @@ fn utils_010() -> &'static Built {
     })
 }
 
+// ---- STEAMAPPS_INTERFACE_VERSION008 (meanings.md, experiment 8) ----
+
+/// What the shim answers for `BIsSubscribed`, given `rebornd`'s response
+/// to `AppOwnership` for the session's app: the lowest byte of the result,
+/// 1 or 0 (experiment 8 recorded 1 for owned games), or `None` when there
+/// is no real answer. `Unavailable` (any reason), any other response and a
+/// failed request are never turned into an answer (ADR 0055, "Honest
+/// failure"): no recorded behaviour says what the official client does
+/// then, so the caller stops the game.
+pub(crate) fn subscribed_answer(
+    response: &Result<reborn_shim_protocol::Response, session::RequestError>,
+) -> Option<u8> {
+    match response {
+        Ok(reborn_shim_protocol::Response::Ownership { owned }) => Some(u8::from(*owned)),
+        _ => None,
+    }
+}
+
+/// `BIsSubscribed`, position 0, confirmed (experiment 8, maintainer OK
+/// 2026-11-22). Answer mode in the shim is allowed by the maintainer for
+/// this call, for the game itself only, after shadow mode matched in three
+/// games (`meanings.md`, "Shadow mode with real account data:
+/// `BIsSubscribed`"). The answer is `rebornd`'s `AppOwnership` for the
+/// session's own app, from the account's licence list (ADR 0055). `rdx`
+/// and `r8` held a 1 and a value that is not an address in the recording;
+/// the function takes no arguments, so they are not read. Only the lowest
+/// byte of the result is set, as recorded. Whether the app is owned is
+/// account data: it is not logged.
+extern "C" fn is_subscribed(_this: *const Object) -> u8 {
+    let Some(app_id) = session::get().map(|session| session.app_id) else {
+        not_implemented("STEAMAPPS_INTERFACE_VERSION008 position 0 without a session");
+    };
+    let response = session::request(reborn_shim_protocol::Request::AppOwnership { app_id });
+    match subscribed_answer(&response) {
+        Some(answer) => answer,
+        None => {
+            let why = match &response {
+                Ok(reborn_shim_protocol::Response::Unavailable { reason }) => {
+                    format!("rebornd has no answer ({reason:?})")
+                }
+                Ok(_) => "rebornd answered something else".to_owned(),
+                Err(error) => error.to_string(),
+            };
+            not_implemented(&format!(
+                "STEAMAPPS_INTERFACE_VERSION008 position 0 (BIsSubscribed): {why}"
+            ))
+        }
+    }
+}
+
+/// Only position 0 is answered. Positions 7 (`BIsDlcInstalled` or
+/// `BIsSubscribedApp`), 6 and 4 are not confirmed as one meaning or not
+/// shadowed yet (ADR 0055 stage 2), and stay stubs that stop the game.
+fn apps_008() -> &'static Built {
+    static OBJECT: OnceLock<Built> = OnceLock::new();
+    OBJECT.get_or_init(|| {
+        let mut table = stubs!("STEAMAPPS_INTERFACE_VERSION008");
+        table[0] = is_subscribed as *const () as usize;
+        Built::new(table)
+    })
+}
+
 /// The version texts the shim has an object for.
 pub fn known_interfaces() -> &'static [&'static str] {
     &[
@@ -237,6 +299,7 @@ pub fn known_interfaces() -> &'static [&'static str] {
         "SteamClient023",
         "SteamUtils009",
         "SteamUtils010",
+        "STEAMAPPS_INTERFACE_VERSION008",
     ]
 }
 
@@ -252,6 +315,7 @@ fn built_for(version: &str) -> Option<&'static Built> {
         "SteamClient023" => client_023(),
         "SteamUtils009" => utils_009(),
         "SteamUtils010" => utils_010(),
+        "STEAMAPPS_INTERFACE_VERSION008" => apps_008(),
         _ => return None,
     };
     Some(built)
@@ -280,6 +344,10 @@ mod tests {
         assert!(interface_for("SteamClient017").is_none());
         assert!(interface_for("SteamUtils008").is_none());
         assert!(interface_for("SteamUser023").is_none());
+        assert!(
+            interface_for("STEAMAPPS_INTERFACE_VERSION009").is_none(),
+            "009 (asked by the SteamClient023 game) has no confirmed meaning"
+        );
         assert_eq!(
             object("SteamClient020"),
             object("SteamClient020"),
@@ -391,5 +459,80 @@ mod tests {
                 unsafe { std::mem::transmute(slot_of(version, 9)) };
             assert_eq!(app_id(utils.cast()), 2_143_030, "{version}");
         }
+    }
+
+    #[test]
+    fn subscribed_maps_ownership_to_1_or_0_and_nothing_else() {
+        use reborn_shim_protocol::{Response, UnavailableReason};
+        assert_eq!(
+            subscribed_answer(&Ok(Response::Ownership { owned: true })),
+            Some(1)
+        );
+        assert_eq!(
+            subscribed_answer(&Ok(Response::Ownership { owned: false })),
+            Some(0)
+        );
+        for reason in [
+            UnavailableReason::NotSignedIn,
+            UnavailableReason::Offline,
+            UnavailableReason::NotAllowed,
+            UnavailableReason::TooLarge,
+        ] {
+            assert_eq!(
+                subscribed_answer(&Ok(Response::Unavailable { reason })),
+                None,
+                "{reason:?}"
+            );
+        }
+        assert_eq!(subscribed_answer(&Ok(Response::Accepted)), None);
+        assert_eq!(
+            subscribed_answer(&Err(session::RequestError::Unexpected)),
+            None
+        );
+        assert_eq!(
+            subscribed_answer(&Err(session::RequestError::NoSession)),
+            None
+        );
+    }
+
+    #[test]
+    fn apps_008_answers_only_position_0() {
+        let subscribed = is_subscribed as *const () as usize;
+        assert_eq!(slot_of("STEAMAPPS_INTERFACE_VERSION008", 0), subscribed);
+        for position in 1..SLOTS {
+            let slot = slot_of("STEAMAPPS_INTERFACE_VERSION008", position);
+            assert_ne!(slot, subscribed, "position {position}");
+            assert_ne!(slot, 0, "position {position}");
+        }
+    }
+
+    #[test]
+    fn is_subscribed_asks_rebornd_for_the_session_app() {
+        use crate::session::fake::{Fake, Reply};
+        use reborn_shim_protocol::{Request, Response};
+        // The same app as `get_app_id_answers_from_the_session`: the
+        // session is set once per test process.
+        session::set_for_test(Session {
+            version: PROTOCOL_VERSION,
+            app_id: 2_143_030,
+        });
+        let fake = Fake::new(|message| match message.request {
+            Request::AppOwnership { app_id: 2_143_030 } => {
+                Reply::Response(Response::Ownership { owned: true })
+            }
+            _ => Reply::Broken,
+        });
+        let sent = fake.sent.clone();
+        session::set_transport_for_test(Box::new(fake));
+        // SAFETY: position 0 holds `is_subscribed`, with this signature.
+        let subscribed: extern "C" fn(*const Object) -> u8 =
+            unsafe { std::mem::transmute(slot_of("STEAMAPPS_INTERFACE_VERSION008", 0)) };
+        let apps = object("STEAMAPPS_INTERFACE_VERSION008");
+        assert_eq!(subscribed(apps.cast()), 1);
+        let sent = sent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            *sent,
+            ["{\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":2143030}}\n"]
+        );
     }
 }

@@ -26,6 +26,18 @@
 //!   free with nothing held returns 0, as recorded in Linsips). The queue (`callbacks`) has no source of callbacks yet: no callback
 //!   content is confirmed for the shim, so nothing is delivered to a game
 //!   today.
+//! - `STEAMAPPS_INTERFACE_VERSION008` position 0, `BIsSubscribed`
+//!   (`meanings.md`, experiment 8, confirmed; shadow mode matched in three
+//!   games, and the maintainer allowed answer mode for this call, for the
+//!   game itself only, 2026-11-22): answered with `rebornd`'s
+//!   `AppOwnership` for the session's app (ADR 0055), lowest byte 1 or 0.
+//!   `Unavailable` or a lost daemon (after one reconnect, `session`) is
+//!   never turned into an answer: the process stops. Every other position
+//!   of the object, position 7 (DLC) included, stops. The object is handed
+//!   out by `CreateInterface` and by every `SteamClient` getter position,
+//!   which hand out by text (recorded for this text: position 12 of 020,
+//!   15 of 021; the `SteamClient023` game asked for `…009`, which has no
+//!   object and stops).
 //! - `Steam_GetAPICallResult` and `Steam_ReleaseThreadLocalMemory`: not
 //!   answered (no confirmed meaning).
 #![allow(unsafe_code)]

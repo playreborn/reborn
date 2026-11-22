@@ -1292,3 +1292,46 @@ Page: <https://partner.steamgames.com/doc/api/ISteamUserStats> (re-read
   a constant `r8` across 19 different names fits an output slot better,
   but nothing recorded rules them out. All stay candidates; telling them
   apart needs the bytes written at `r8` (ADR 0043, 0053).
+
+## `SteamUtils009` positions 9 and 14 (loop iteration 8)
+
+Page re-read 2026-11-22: <https://partner.steamgames.com/doc/api/ISteamUtils>.
+
+- **Recorded** (reference runs, `coverage.md`): position 9 in all five
+  `SteamUtils009` games (Cave Crawlers, Outcore, UNBEATABLE [white
+  label], Gravitas, Dark Deception), position 14 in four of them, both
+  without arguments; the same positions as `GetAppID` and
+  `GetCurrentBatteryPower` in `SteamUtils010` (experiments 3 and 10).
+- **Every function on the page without arguments** (LOOP step 3):
+  `BOverlayNeedsPresent`, `GetAppID`, `GetConnectedUniverse`,
+  `GetCurrentBatteryPower`, `GetEnteredGamepadTextLength`,
+  `GetIPCCallCount`, `GetIPCountry`, `GetSecondsSinceAppActive`,
+  `GetSecondsSinceComputerActive`, `GetServerRealTime`,
+  `GetSteamHardwareDefaultConfig`, `GetSteamUILanguage`,
+  `InitFilterText`, `IsOverlayEnabled`, `IsRunningOnSteamHardware`,
+  `IsRunningUnderProton`, `IsSteamChinaLauncher`,
+  `IsSteamInBigPictureMode`, `IsSteamRunningInVR`,
+  `IsSteamRunningOnSteamDeck`, `IsVRHeadsetStreamingEnabled`,
+  `StartVRDashboard`.
+  - Only `GetAppID` is described as returning the app ID; a result equal
+    to the app ID in four different games rules the others out (the
+    true/false ones return 0 or 1, the counters and times are not equal
+    to four different app IDs, the texts are addresses).
+  - Only `GetCurrentBatteryPower` documents the value 255 ("Returns 255
+    when the user is on AC power"). The two hardware enums have no values
+    on the page; that 255 stands for one of them on a desktop is not
+    ruled out by the page, only by the same reading as experiment 10.
+
+### Experiment 15 (planned 2026-11-22, before the runs)
+
+Agent runs of Cave Crawlers, Gravitas, Dark Deception and UNBEATABLE
+[white label] (Outcore needs its launch dialog and is left out), each
+closed by a close request. `run.sh` arms with `--app`; answer mode covers
+only `SteamUtils010`, so `SteamUtils009` calls reach the official client.
+
+**Predictions** (`tools/shim/experiments/015_utils009.py`):
+
+- A (all four): position 9 is called, and every result's low 32 bits are
+  the game's app ID.
+- B (Cave Crawlers, Dark Deception, UNBEATABLE): position 14 is called,
+  and every result's lowest byte is 255.

@@ -48,8 +48,9 @@ pub struct Achievement {
 /// The value is the raw 32-bit number. What it means depends on the stat's
 /// type in the schema; Reborn does not interpret it (only for achievement
 /// stats is it observed that bit n marks achievement n, see
-/// `docs/protocol/achievements.md`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `docs/protocol/achievements.md`). `Debug` leaves the value out: it is
+/// account data.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StatValue {
     /// The stat ID, the key of the stat in the schema's `stats` object.
     pub stat_id: u32,
@@ -58,8 +59,9 @@ pub struct StatValue {
 }
 
 /// The unlock times of the achievements of one achievement stat
-/// (`achievement_blocks` of the response).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// (`achievement_blocks` of the response). `Debug` shows only how many
+/// times there are.
+#[derive(Clone, PartialEq, Eq)]
 pub struct AchievementBlock {
     /// The stat whose `bits` hold the achievements (`achievement_id`).
     pub stat_id: u32,
@@ -68,8 +70,9 @@ pub struct AchievementBlock {
 }
 
 /// Steam's answer to `ClientGetUserStats` for one app, typed (ADR 0055,
-/// stage 0). Account data: never log it, only counts and the result.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// stage 0). Account data: never log it, only counts and the result;
+/// `Debug` shows nothing else.
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserStats {
     /// The app the answer is for.
     pub app_id: u32,
@@ -84,6 +87,35 @@ pub struct UserStats {
     pub stats: Vec<StatValue>,
     /// The account's unlock times.
     pub achievement_blocks: Vec<AchievementBlock>,
+}
+
+impl std::fmt::Debug for StatValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StatValue")
+            .field("stat_id", &self.stat_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for AchievementBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AchievementBlock")
+            .field("stat_id", &self.stat_id)
+            .field("unlock_times", &self.unlock_times.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for UserStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserStats")
+            .field("app_id", &self.app_id)
+            .field("result", &self.result)
+            .field("schema", &self.schema.len())
+            .field("stats", &self.stats.len())
+            .field("achievement_blocks", &self.achievement_blocks.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl UserStats {
@@ -614,6 +646,25 @@ mod tests {
         );
         // The recording is for Bongo Cat only.
         assert!(user_stats_from(&response, 480).is_err());
+    }
+
+    #[test]
+    fn debug_shows_no_values_or_times() {
+        let response = CMsgClientGetUserStatsResponse::parse_from_bytes(RECORDED).unwrap();
+        let stats = user_stats_from(&response, 3_419_430).unwrap();
+        assert_eq!(
+            format!("{stats:?}"),
+            "UserStats { app_id: 3419430, result: 1, schema: 24158, stats: 10, \
+             achievement_blocks: 1, .. }"
+        );
+        assert_eq!(
+            format!("{:?}", stats.stats[1]),
+            "StatValue { stat_id: 3, .. }"
+        );
+        assert_eq!(
+            format!("{:?}", stats.achievement_blocks[0]),
+            "AchievementBlock { stat_id: 2, unlock_times: 32 }"
+        );
     }
 
     #[test]

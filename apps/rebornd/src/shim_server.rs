@@ -35,7 +35,7 @@ use reborn_shim_protocol::{
     DaemonMessage, RefusalReason, Request, Response, ShimMessage, UnavailableReason, answer_hello,
     decode, encode,
 };
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 
@@ -46,6 +46,10 @@ use crate::shim_stats::{RunStats, StatsBackend, StatsState, event_when_received,
 /// No message of protocol 0.2 comes near it; ADR 0055 raises it per
 /// session from the app's cloud quota once cloud writes exist.
 const MAX_LINE: usize = 64 * 1024;
+
+/// Most accepted stats requests one connection may wait on at once; a shim
+/// with more is closed. The recorded games ask once per run.
+const MAX_WAITING: usize = 16;
 
 /// A game process `rebornd` launched, as the shim channel sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,6 +104,17 @@ pub async fn accept_loop(
 /// Responses and events go through one writer, so an event is always
 /// written after the response that accepted its request.
 async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
+    let runs = Arc::clone(&daemon);
+    serve_stream(stream, move |pid| runs.shim_run(pid), daemon).await;
+}
+
+/// [`serve`] on any byte stream, with the runs and the stats source given
+/// (the daemon, or fakes in tests).
+async fn serve_stream<S, B>(stream: S, run: impl Fn(u32) -> Option<ShimRun>, backend: Arc<B>)
+where
+    S: AsyncRead + AsyncWrite + Send + 'static,
+    B: StatsBackend,
+{
     let (read, mut write) = tokio::io::split(stream);
     let (outgoing, mut to_write) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -130,17 +145,22 @@ async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
                 break;
             }
         }
-        let Some(reply) = answer(&line, &mut connection, |pid| daemon.shim_run(pid), &daemon).await
-        else {
+        let Some(reply) = answer(&line, &mut connection, &run, &backend).await else {
             debug!("closing shim connection after a bad line");
             break;
         };
+        if reply.stats.is_some() {
+            waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
+            if waiting.len() >= MAX_WAITING {
+                debug!("closing shim connection with too many open stats requests");
+                break;
+            }
+        }
         if outgoing.send(reply.line).is_err() {
             break;
         }
         if let Some(stats) = reply.stats {
             let outgoing = outgoing.clone();
-            waiting.retain(|task: &tokio::task::JoinHandle<()>| !task.is_finished());
             waiting.push(tokio::spawn(async move {
                 if let Some(line) = event_line(stats).await {
                     let _ = outgoing.send(line);
@@ -148,8 +168,8 @@ async fn serve(daemon: Arc<Daemon>, stream: LocalSocketStream) {
             }));
         }
     }
-    // The game is gone: nobody waits for its events any more. A fetch that
-    // runs keeps going and fills the run's cache.
+    // The shim is gone: nobody waits for its events any more. A fetch that
+    // runs keeps going only while the game's run exists (`shim_stats`).
     for task in waiting {
         task.abort();
     }
@@ -645,28 +665,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stats_without_valve_are_unavailable() {
-        for (link, reason) in [
-            (Link::SignedOut, UnavailableReason::NotSignedIn),
-            (Link::Offline, UnavailableReason::Offline),
-        ] {
-            let runs = Runs::new();
-            let valve = Fake::new(link, vec![Ok(recorded())]);
-            let mut connection = Connection::default();
-            reply_with(
-                &hello(200, PROTOCOL_VERSION),
-                &mut connection,
-                &runs,
-                &valve,
-            )
-            .await;
-            let (message, stats) = reply_with(&request_stats(), &mut connection, &runs, &valve)
-                .await
-                .unwrap_or_else(|| panic!("no reply"));
-            assert_eq!(Some(message), unavailable(5, reason));
-            assert!(stats.is_none());
-            assert_eq!(valve.fetches(), 0);
-        }
+    async fn stats_need_a_signed_in_daemon_but_wait_through_offline() {
+        // Signed out: unavailable, nothing fetched.
+        let runs = Runs::new();
+        let valve = Fake::new(Link::SignedOut, vec![Ok(recorded())]);
+        let mut connection = Connection::default();
+        reply_with(
+            &hello(200, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let (message, stats) = reply_with(&request_stats(), &mut connection, &runs, &valve)
+            .await
+            .unwrap_or_else(|| panic!("no reply"));
+        assert_eq!(
+            Some(message),
+            unavailable(5, UnavailableReason::NotSignedIn)
+        );
+        assert!(stats.is_none());
+        assert_eq!(valve.fetches(), 0);
+
+        // Offline (reconnecting): accepted, fetched once a session is back
+        // (ADR 0055: the request waits while rebornd reconnects).
+        let runs = Runs::new();
+        let valve = Fake::new(
+            Link::Offline,
+            vec![Err(FetchError::NoSession), Ok(recorded())],
+        );
+        let mut connection = Connection::default();
+        reply_with(
+            &hello(200, PROTOCOL_VERSION),
+            &mut connection,
+            &runs,
+            &valve,
+        )
+        .await;
+        let Some((message, Some(stats))) =
+            reply_with(&request_stats(), &mut connection, &runs, &valve).await
+        else {
+            panic!("not accepted");
+        };
+        assert_eq!(
+            message,
+            DaemonMessage::Response {
+                id: 5,
+                response: Response::Accepted
+            }
+        );
+        assert!(event_line(stats).await.is_some());
+        assert_eq!(valve.fetches(), 1);
     }
 
     #[tokio::test]
@@ -687,6 +736,141 @@ mod tests {
             panic!("not accepted");
         };
         assert_eq!(event_line(stats).await, None);
+    }
+
+    /// One end of an in-memory connection served by [`serve_stream`] for
+    /// the test runs, and the task serving the other end.
+    fn connect(
+        valve: &Arc<Fake>,
+    ) -> (
+        BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let runs = Runs::new();
+        let served = tokio::spawn(serve_stream(
+            server,
+            move |pid| runs.launched(pid),
+            Arc::clone(valve),
+        ));
+        let (read, write) = tokio::io::split(client);
+        (BufReader::new(read), write, served)
+    }
+
+    async fn next(lines: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>) -> String {
+        let mut line = String::new();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            lines.read_line(&mut line),
+        );
+        assert!(matches!(read.await, Ok(Ok(_))), "no line");
+        line
+    }
+
+    #[tokio::test]
+    async fn served_connection_sends_the_event_after_accepted() {
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        valve.close();
+        let (mut lines, mut write, served) = connect(&valve);
+        write
+            .write_all(hello(200, PROTOCOL_VERSION).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(next(&mut lines).await.contains("\"session\""));
+        write
+            .write_all(request_stats().as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            response(5, Response::Accepted)
+        );
+        // Ownership on the same connection is answered while the fetch
+        // waits for Valve.
+        write
+            .write_all(ownership(BONGO_CAT).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            decode::<DaemonMessage>(&next(&mut lines).await).ok(),
+            response(4, Response::Ownership { owned: false })
+        );
+        valve.open(1);
+        let event = next(&mut lines).await;
+        assert!(
+            matches!(
+                decode::<DaemonMessage>(&event),
+                Ok(DaemonMessage::Event {
+                    event: Event::StatsReceived { result: 1, .. }
+                })
+            ),
+            "{event}"
+        );
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disconnect_ends_the_waiting_for_events() {
+        // The fetch never finishes; the connection still closes cleanly,
+        // which needs every waiting task gone (they hold the writer).
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        valve.close();
+        let (mut lines, mut write, served) = connect(&valve);
+        write
+            .write_all(hello(200, PROTOCOL_VERSION).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        next(&mut lines).await;
+        write
+            .write_all(request_stats().as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        next(&mut lines).await;
+        drop((lines, write));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn too_many_open_stats_requests_close_the_connection() {
+        let valve = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        valve.close();
+        let (mut lines, mut write, served) = connect(&valve);
+        write
+            .write_all(hello(200, PROTOCOL_VERSION).as_bytes())
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        next(&mut lines).await;
+        for _ in 0..=MAX_WAITING {
+            write
+                .write_all(request_stats().as_bytes())
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+        for _ in 0..MAX_WAITING {
+            assert!(next(&mut lines).await.contains("accepted"));
+        }
+        let mut rest = String::new();
+        let end = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            lines.read_line(&mut rest),
+        );
+        assert!(matches!(end.await, Ok(Ok(0))), "{rest}");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), served)
+                .await
+                .is_ok()
+        );
+        assert_eq!(valve.fetches(), 0);
     }
 
     #[tokio::test]

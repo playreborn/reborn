@@ -91,21 +91,30 @@ Reborn never writes stats or achievements (red line 4).
   name and English display name (`FALLBACK_LANGUAGE`). No stat values or
   unlock state go to the shim while the readers are candidates.
 - **Rules:** a connection without a session, or a run not started in
-  shim mode, gets `NotAllowed`; no Valve session gets `NotSignedIn`, a
-  lost one that `rebornd` is reconnecting gets `Offline`. At most one
-  `ClientGetUserStats` per run; later requests are answered from the
-  run's in-memory cache (dropped when the game exits). An accepted
-  request that loses the connection waits for the reconnect of ADR 0025
-  (it never signs in itself); network failures back off from 1 s,
-  doubling, at most 5 minutes, and give up after 5 tries. A request that
-  gives up, or an answer Reborn cannot read, sends **no** event (no
-  invented result); the run's stats are then failed, and later requests
-  get `Unavailable` (`Offline`, or `NotSignedIn` after a sign-out)
-  without asking Valve again. Which reason fits an unreadable answer is
-  not decided by ADR 0055; `Offline` is used for now.
-- **Logs:** only the result and counts, never names or values.
+  shim mode, gets `NotAllowed`; no Valve session and no reconnect
+  running gets `NotSignedIn`. At most one `ClientGetUserStats` per run;
+  later requests are answered from the run's in-memory cache (dropped
+  when the game exits). A request that has not reached Valve waits while
+  `rebornd` reconnects (ADR 0025), also when the connection is already
+  lost at the request: it is accepted and fetched once a session exists,
+  woken as soon as one is there (at most the backoff below between
+  checks). It never signs in itself, and never waits for the session
+  lock that a running sign-in holds, so the connection's other requests
+  (ownership) are not held up. Network failures back off from 1 s,
+  doubling, at most 5 minutes, and give up after 5 tries. The fetch holds
+  the run only weakly: once the game has exited, no further request goes
+  to Valve. A request that gives up, or an answer Reborn cannot read,
+  sends **no** event (no invented result); the run's stats are then
+  failed, and later requests get `Unavailable` (`Offline`, or
+  `NotSignedIn` after a sign-out) without asking Valve again. Which
+  reason fits an unreadable answer is not decided by ADR 0055; `Offline`
+  is used for now. A connection may wait on at most 16 accepted stats
+  requests at once; a shim with more is closed.
+- **Logs:** only the result and counts, never names or values; `Debug`
+  of `UserStats` shows only counts.
 - **Source:** ADR 0055 ("Protocol messages", "Rate limits", "Offline, not
   signed in, daemon gone"); the Valve side is the request above.
 - **Verified:** unit tests in `apps/rebornd` with a fake Valve session
-  answering with `user_stats.bin`; no live run. The shim does not send
-  `RequestStats` yet.
+  answering with `user_stats.bin`, including a served in-memory
+  connection (event after `Accepted`, clean close); no live run. The shim
+  does not send `RequestStats` yet.

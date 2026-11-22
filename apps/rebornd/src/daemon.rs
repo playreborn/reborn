@@ -170,6 +170,8 @@ pub struct Daemon {
     /// Whether a lost connection is being signed in again (ADR 0025), so
     /// a shim's stats request can tell "offline" from "signed out".
     reconnecting: AtomicBool,
+    /// Wakes shim stats requests that wait for a session (ADR 0055).
+    session_ready: Notify,
     /// Reports a lost connection to the keeper task.
     lost: mpsc::UnboundedSender<Lost>,
     /// Taken once by [`keep_connected`].
@@ -186,6 +188,7 @@ impl Daemon {
             lost,
             lost_receiver: Mutex::new(Some(lost_receiver)),
             reconnecting: AtomicBool::new(false),
+            session_ready: Notify::new(),
             events: broadcast::channel(256).0,
             session: tokio::sync::Mutex::new(None),
             sign_in: Mutex::new(None),
@@ -277,6 +280,8 @@ impl Daemon {
         let session = Arc::new(session);
         info!(account = session.account(), "signed in to Steam");
         *cached = Some(Arc::clone(&session));
+        drop(cached);
+        self.session_ready.notify_waiters();
         self.watch_friends(Arc::clone(&session));
         Ok(session)
     }
@@ -891,6 +896,7 @@ impl Daemon {
                 info!(%account, "signed in to Steam");
                 let session = Arc::new(session);
                 *self.session.lock().await = Some(Arc::clone(&session));
+                self.session_ready.notify_waiters();
                 self.watch_friends(session);
                 self.emit(Event::SignedIn {
                     account: account.clone(),
@@ -1566,18 +1572,28 @@ fn persona_state(status: OwnStatus) -> PersonaState {
 /// (ADR 0055). It never signs in: only the reconnect logic of ADR 0025
 /// does that.
 impl StatsBackend for Daemon {
+    /// Never waits for the session lock: a sign-in holds it for up to
+    /// [`SIGN_IN_TIMEOUT`], and the shim connection's other requests
+    /// (ownership) must not stall behind it. A held lock means a sign-in
+    /// or a short read: offline for now, the request waits for a session.
     async fn link(&self) -> Link {
-        if self.session.lock().await.is_some() {
-            Link::Connected
-        } else if self.reconnecting.load(Ordering::SeqCst) {
-            Link::Offline
-        } else {
-            Link::SignedOut
+        if self.reconnecting.load(Ordering::SeqCst) {
+            return Link::Offline;
+        }
+        match self.session.try_lock() {
+            Ok(session) if session.is_some() => Link::Connected,
+            Ok(_) => Link::SignedOut,
+            Err(_) => Link::Offline,
         }
     }
 
     async fn fetch(&self, app_id: u32) -> Result<reborn_cm::UserStats, FetchError> {
-        let Some(session) = self.session.lock().await.clone() else {
+        // Not behind a running sign-in either (see `link`).
+        let session = match self.session.try_lock() {
+            Ok(session) => session.clone(),
+            Err(_) => None,
+        };
+        let Some(session) = session else {
             return Err(FetchError::NoSession);
         };
         match session.user_stats(app_id).await {
@@ -1589,6 +1605,10 @@ impl StatsBackend for Daemon {
 
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;
+    }
+
+    async fn wait_for_session(&self, longest: Duration) {
+        let _ = tokio::time::timeout(longest, self.session_ready.notified()).await;
     }
 }
 
@@ -2148,6 +2168,39 @@ mod tests {
         assert_eq!(daemon.link().await, Link::Offline);
         assert_eq!(daemon.fetch(3_419_430).await, Err(FetchError::NoSession));
         assert!(daemon.session.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn shim_stats_never_wait_behind_a_sign_in() {
+        // A sign-in holds the session lock for up to 90 s; the shim's
+        // requests answer at once anyway (Offline: they wait for the
+        // session in the background).
+        let daemon = Arc::new(Daemon::new());
+        let held = daemon.session.lock().await;
+        let quick = Duration::from_millis(500);
+        for reconnecting in [false, true] {
+            daemon.reconnecting.store(reconnecting, Ordering::SeqCst);
+            assert_eq!(
+                tokio::time::timeout(quick, daemon.link()).await,
+                Ok(Link::Offline)
+            );
+            assert_eq!(
+                tokio::time::timeout(quick, daemon.fetch(3_419_430)).await,
+                Ok(Err(FetchError::NoSession))
+            );
+        }
+        drop(held);
+
+        // A new session wakes a waiting request before its longest wait.
+        let waiter = {
+            let daemon = Arc::clone(&daemon);
+            tokio::spawn(async move {
+                daemon.wait_for_session(Duration::from_secs(300)).await;
+            })
+        };
+        tokio::task::yield_now().await;
+        daemon.session_ready.notify_waiters();
+        assert!(tokio::time::timeout(quick, waiter).await.is_ok());
     }
 
     #[test]

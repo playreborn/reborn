@@ -12,26 +12,31 @@
 //!   first request of a run fetches; every later one is answered from the
 //!   run's cache, or joins the fetch that is running. The cache is kept in
 //!   memory for the run only and dropped when the game exits.
-//! - **Not signed in or offline at the request:** `NotSignedIn` (no Valve
-//!   session and no reconnect running) or `Offline` (the connection is
-//!   lost and `rebornd` is reconnecting, ADR 0025); nothing is fetched.
-//! - **Lost while the request waits** ("Offline, not signed in"): an
-//!   accepted request that has not reached Valve waits while `rebornd`
-//!   reconnects; it never signs in itself (the reconnect logic of ADR 0025
-//!   stays the only place that does). Network failures back off from 1 s,
+//! - **Not signed in:** no Valve session and no reconnect running gives
+//!   `NotSignedIn`; nothing is fetched.
+//! - **Offline** ("Offline, not signed in, daemon gone"): a request that
+//!   has not reached Valve yet waits while `rebornd` reconnects (ADR
+//!   0025), also when the connection is already lost at the request: it is
+//!   accepted and fetched once a session exists. It never signs in itself
+//!   (the reconnect logic stays the only place that does), and wakes as
+//!   soon as a new session is there. Network failures back off from 1 s,
 //!   doubling, at most 5 min, and give up after 5 tries ("Rate limits").
+//! - **Only while the game runs:** the fetch holds the run only weakly and
+//!   stops before any further request to Valve once the run has ended.
 //! - **Honest failure:** a request that gives up, or a Valve answer
 //!   Reborn cannot read, sends **no** event: the shim never gets a
 //!   0x44d with an invented result, and delivering a failure `EResult`
 //!   instead waits for an observation (ADR 0055). The run's stats are then
 //!   failed for good: later requests get `Unavailable` instead of asking
-//!   Valve again.
+//!   Valve again (`NotSignedIn` after a sign-out, otherwise `Offline`;
+//!   ADR 0055 names no reason for an unreadable answer, so it is `Offline`
+//!   too, see `docs/protocol/achievements.md`).
 //! - A result other than OK from Valve is Valve's real answer: it is sent
 //!   as `StatsReceived` with that result and no names.
 //! - Stats and achievement names are account data: only counts and the
 //!   result are logged.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use reborn_cm::{FALLBACK_LANGUAGE, UserStats};
@@ -57,7 +62,8 @@ pub fn retry_delay(failed: u32) -> Duration {
 pub enum Link {
     /// Signed in, with a connection.
     Connected,
-    /// The connection is lost and `rebornd` is reconnecting.
+    /// No usable session at the moment, but `rebornd` is getting one: the
+    /// connection is lost and it reconnects, or a sign-in is running.
     Offline,
     /// No session and no reconnect running (signed out, or Steam ended the
     /// session).
@@ -79,13 +85,16 @@ pub enum FetchError {
 /// Where the stats come from: the daemon's Valve session, or a fake in
 /// tests.
 pub trait StatsBackend: Send + Sync + 'static {
-    /// Whether there is a Valve session now.
+    /// Whether there is a Valve session now. Answers at once; never waits
+    /// for a sign-in.
     fn link(&self) -> impl Future<Output = Link> + Send;
     /// One `ClientGetUserStats` for `app_id` on the current session,
     /// without signing in.
     fn fetch(&self, app_id: u32) -> impl Future<Output = Result<UserStats, FetchError>> + Send;
-    /// Waits between two tries.
+    /// Waits between two tries after a network failure.
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send;
+    /// Waits for a new Valve session, at most `longest`.
+    fn wait_for_session(&self, longest: Duration) -> impl Future<Output = ()> + Send;
 }
 
 /// Where a run's stats stand.
@@ -102,9 +111,22 @@ pub enum StatsState {
 }
 
 /// The stats of one shim run, in memory only (ADR 0055, "What is cached").
-#[derive(Debug)]
+/// The daemon's launch record holds it; once the game exits it is gone.
 pub struct RunStats {
     state: watch::Sender<StatsState>,
+}
+
+/// Only the state's kind: the event holds account data.
+impl std::fmt::Debug for RunStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match &*self.state.borrow() {
+            StatsState::Idle => "idle",
+            StatsState::Fetching => "fetching",
+            StatsState::Received(_) => "received",
+            StatsState::Failed(_) => "failed",
+        };
+        f.debug_struct("RunStats").field("state", &kind).finish()
+    }
 }
 
 impl Default for RunStats {
@@ -125,7 +147,7 @@ impl PartialEq for RunStats {
 impl Eq for RunStats {}
 
 impl RunStats {
-    /// The current state, for tests and logs.
+    /// The current state, for tests.
     #[cfg(test)]
     pub fn state(&self) -> StatsState {
         self.state.borrow().clone()
@@ -149,10 +171,9 @@ pub async fn request_stats<B: StatsBackend>(
         StatsState::Failed(reason) => return unavailable(reason),
         StatsState::Idle => {}
     }
-    match backend.link().await {
-        Link::SignedOut => return unavailable(UnavailableReason::NotSignedIn),
-        Link::Offline => return unavailable(UnavailableReason::Offline),
-        Link::Connected => {}
+    // Offline: accepted, the fetch waits for the reconnect (ADR 0055).
+    if backend.link().await == Link::SignedOut {
+        return unavailable(UnavailableReason::NotSignedIn);
     }
     let receiver = stats.state.subscribe();
     // Only the request that moves the run from idle starts the fetch.
@@ -168,7 +189,7 @@ pub async fn request_stats<B: StatsBackend>(
         tokio::spawn(fetch_for_run(
             Arc::clone(backend),
             app_id,
-            Arc::clone(stats),
+            Arc::downgrade(stats),
         ));
     } else if let StatsState::Failed(reason) = *stats.state.borrow() {
         return unavailable(reason);
@@ -177,7 +198,7 @@ pub async fn request_stats<B: StatsBackend>(
 }
 
 /// The event once the run's stats are received; `None` when the run's
-/// request failed (no event is sent then, see the module comment).
+/// request failed or the run ended (no event is sent then).
 pub async fn event_when_received(mut receiver: watch::Receiver<StatsState>) -> Option<Event> {
     let state = receiver
         .wait_for(|state| matches!(state, StatsState::Received(_) | StatsState::Failed(_)))
@@ -189,9 +210,39 @@ pub async fn event_when_received(mut receiver: watch::Receiver<StatsState>) -> O
     }
 }
 
-/// Fetches the run's stats with the retry rules and stores the outcome.
-async fn fetch_for_run<B: StatsBackend>(backend: Arc<B>, app_id: u32, stats: Arc<RunStats>) {
-    let outcome = match fetch_with_retries(backend.as_ref(), app_id).await {
+/// Marks a run's stats failed if its fetch ends without an outcome (a
+/// panic, or the task being dropped), so they never stay `Fetching`.
+struct FetchGuard {
+    stats: Weak<RunStats>,
+    done: bool,
+}
+
+impl Drop for FetchGuard {
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        if let Some(stats) = self.stats.upgrade() {
+            stats.state.send_if_modified(|state| {
+                if *state == StatsState::Fetching {
+                    *state = StatsState::Failed(UnavailableReason::Offline);
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+    }
+}
+
+/// Fetches the run's stats with the retry rules and stores the outcome,
+/// while the run exists.
+async fn fetch_for_run<B: StatsBackend>(backend: Arc<B>, app_id: u32, stats: Weak<RunStats>) {
+    let mut guard = FetchGuard {
+        stats: stats.clone(),
+        done: false,
+    };
+    let outcome = match fetch_with_retries(backend.as_ref(), app_id, &stats).await {
         Ok(answer) => match stats_event(&answer) {
             Some(event) => {
                 let Event::StatsReceived {
@@ -215,7 +266,12 @@ async fn fetch_for_run<B: StatsBackend>(backend: Arc<B>, app_id: u32, stats: Arc
                 StatsState::Failed(UnavailableReason::Offline)
             }
         },
-        Err(reason) => {
+        Err(Stop::Ended) => {
+            info!(app_id, "shim stats: the run ended, request dropped");
+            guard.done = true;
+            return;
+        }
+        Err(Stop::Failed(reason)) => {
             warn!(
                 app_id,
                 ?reason,
@@ -224,36 +280,55 @@ async fn fetch_for_run<B: StatsBackend>(backend: Arc<B>, app_id: u32, stats: Arc
             StatsState::Failed(reason)
         }
     };
-    stats.state.send_replace(outcome);
+    if let Some(stats) = stats.upgrade() {
+        stats.state.send_replace(outcome);
+    }
+    guard.done = true;
 }
 
-/// Up to [`MAX_TRIES`] requests to Valve. While there is no session the
-/// request waits for the reconnect (without counting a try) and gives up
-/// once `rebornd` is signed out.
+/// Why the retries stopped without an answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    /// The run ended; nobody needs the answer.
+    Ended,
+    /// Given up, with the reason later requests get.
+    Failed(UnavailableReason),
+}
+
+/// Up to [`MAX_TRIES`] requests to Valve, each only while the run still
+/// exists. While there is no session the request waits for one (without
+/// counting a try) and gives up once `rebornd` is signed out.
 async fn fetch_with_retries<B: StatsBackend>(
     backend: &B,
     app_id: u32,
-) -> Result<UserStats, UnavailableReason> {
+    run: &Weak<RunStats>,
+) -> Result<UserStats, Stop> {
     let mut tries = 0;
     let mut waits = 0;
     loop {
+        if run.strong_count() == 0 {
+            return Err(Stop::Ended);
+        }
         match backend.fetch(app_id).await {
             Ok(answer) => return Ok(answer),
-            Err(FetchError::Unreadable) => return Err(UnavailableReason::Offline),
+            Err(FetchError::Unreadable) => {
+                return Err(Stop::Failed(UnavailableReason::Offline));
+            }
             Err(FetchError::Network) => {
                 tries += 1;
                 if tries >= MAX_TRIES {
-                    return Err(UnavailableReason::Offline);
+                    return Err(Stop::Failed(UnavailableReason::Offline));
                 }
+                backend.sleep(retry_delay(tries - 1)).await;
             }
             Err(FetchError::NoSession) => {
                 if backend.link().await == Link::SignedOut {
-                    return Err(UnavailableReason::NotSignedIn);
+                    return Err(Stop::Failed(UnavailableReason::NotSignedIn));
                 }
+                backend.wait_for_session(retry_delay(waits)).await;
+                waits += 1;
             }
         }
-        backend.sleep(retry_delay(waits)).await;
-        waits += 1;
     }
 }
 
@@ -305,8 +380,12 @@ pub mod tests {
         pub fetches: AtomicU32,
         pub sleeps: Mutex<Vec<Duration>>,
         pub asked: Mutex<Vec<u32>>,
-        /// Fetches wait for this before they answer.
+        /// How long each wait for a new session could have been at most.
+        pub session_waits: Mutex<Vec<Duration>>,
+        /// Each fetch takes one permit for good before it answers.
         pub gate: tokio::sync::Semaphore,
+        /// Each backoff wait takes one permit for good before it ends.
+        pub sleep_gate: tokio::sync::Semaphore,
     }
 
     impl Fake {
@@ -317,12 +396,28 @@ pub mod tests {
                 fetches: AtomicU32::new(0),
                 sleeps: Mutex::new(Vec::new()),
                 asked: Mutex::new(Vec::new()),
+                session_waits: Mutex::new(Vec::new()),
                 gate: tokio::sync::Semaphore::new(tokio::sync::Semaphore::MAX_PERMITS),
+                sleep_gate: tokio::sync::Semaphore::new(tokio::sync::Semaphore::MAX_PERMITS),
             })
         }
 
         pub fn fetches(&self) -> u32 {
             self.fetches.load(Ordering::SeqCst)
+        }
+
+        /// Lets no fetch through until [`Fake::open`].
+        pub fn close(&self) {
+            self.gate.forget_permits(self.gate.available_permits());
+        }
+
+        /// Lets `fetches` more fetches through.
+        pub fn open(&self, fetches: usize) {
+            self.gate.add_permits(fetches);
+        }
+
+        pub fn set_link(&self, link: Link) {
+            *self.link.lock().unwrap_or_else(|p| p.into_inner()) = link;
         }
     }
 
@@ -332,7 +427,9 @@ pub mod tests {
         }
 
         async fn fetch(&self, app_id: u32) -> Result<UserStats, FetchError> {
-            let _permit = self.gate.acquire().await;
+            if let Ok(permit) = self.gate.acquire().await {
+                permit.forget();
+            }
             self.asked
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -355,6 +452,23 @@ pub mod tests {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .push(duration);
+            if let Ok(permit) = self.sleep_gate.acquire().await {
+                permit.forget();
+            }
+        }
+
+        async fn wait_for_session(&self, longest: Duration) {
+            self.session_waits
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(longest);
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// Lets spawned tasks run on the test's runtime.
+    async fn run_tasks() {
+        for _ in 0..50 {
             tokio::task::yield_now().await;
         }
     }
@@ -424,7 +538,7 @@ pub mod tests {
         ));
 
         // Asked again, even after the connection is gone: from the cache.
-        *fake.link.lock().unwrap_or_else(|p| p.into_inner()) = Link::SignedOut;
+        fake.set_link(Link::SignedOut);
         for _ in 0..3 {
             let (response, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
             assert_eq!(response, Response::Accepted);
@@ -441,14 +555,13 @@ pub mod tests {
     #[tokio::test]
     async fn requests_while_fetching_join_the_running_fetch() {
         let fake = Fake::new(Link::Connected, vec![Ok(recorded())]);
-        let permits = fake.gate.available_permits();
-        fake.gate.forget_permits(permits);
+        fake.close();
         let stats = Arc::new(RunStats::default());
         let (first, first_receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
         let (second, second_receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
         assert_eq!((first, second), (Response::Accepted, Response::Accepted));
         assert_eq!(stats.state(), StatsState::Fetching);
-        fake.gate.add_permits(1);
+        fake.open(1);
         for receiver in [first_receiver, second_receiver] {
             let event = event_when_received(receiver.unwrap_or_else(|| panic!("no receiver")));
             assert!(matches!(event.await, Some(Event::StatsReceived { .. })));
@@ -457,19 +570,131 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn not_signed_in_or_offline_fetches_nothing() {
-        for (link, reason) in [
-            (Link::SignedOut, UnavailableReason::NotSignedIn),
-            (Link::Offline, UnavailableReason::Offline),
-        ] {
-            let fake = Fake::new(link, vec![Ok(recorded())]);
-            let stats = Arc::new(RunStats::default());
-            let (response, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
-            assert_eq!(response, Response::Unavailable { reason });
-            assert!(receiver.is_none());
-            assert_eq!(stats.state(), StatsState::Idle);
-            assert_eq!(fake.fetches(), 0);
-        }
+    async fn not_signed_in_fetches_nothing() {
+        let fake = Fake::new(Link::SignedOut, vec![Ok(recorded())]);
+        let stats = Arc::new(RunStats::default());
+        let (response, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
+        assert_eq!(
+            response,
+            Response::Unavailable {
+                reason: UnavailableReason::NotSignedIn
+            }
+        );
+        assert!(receiver.is_none());
+        assert_eq!(stats.state(), StatsState::Idle);
+        assert_eq!(fake.fetches(), 0);
+    }
+
+    #[tokio::test]
+    async fn offline_at_the_request_waits_for_the_reconnect() {
+        // ADR 0055: a request that has not reached Valve waits while
+        // rebornd reconnects. No session twice, then the new one answers.
+        let fake = Fake::new(
+            Link::Offline,
+            vec![
+                Err(FetchError::NoSession),
+                Err(FetchError::NoSession),
+                Ok(recorded()),
+            ],
+        );
+        let stats = Arc::new(RunStats::default());
+        let (response, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
+        assert_eq!(response, Response::Accepted);
+        let receiver = receiver.unwrap_or_else(|| panic!("no receiver"));
+        assert!(event_when_received(receiver).await.is_some());
+        assert_eq!(fake.fetches(), 1);
+        // It waited for a session (woken early by a new one), with the
+        // backoff as the longest wait; no network backoff was needed.
+        let waits: Vec<u64> = fake
+            .session_waits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .map(Duration::as_secs)
+            .collect();
+        assert_eq!(waits, [1, 2]);
+        assert!(
+            fake.sleeps
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_request_reaches_valve_once_the_run_ended() {
+        // The first try fails on the network; the game exits while the
+        // fetch backs off: the retry is never sent.
+        let fake = Fake::new(
+            Link::Connected,
+            vec![Err(FetchError::Network), Ok(recorded())],
+        );
+        fake.sleep_gate
+            .forget_permits(fake.sleep_gate.available_permits());
+        let stats = Arc::new(RunStats::default());
+        let (_, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
+        let receiver = receiver.unwrap_or_else(|| panic!("no receiver"));
+        run_tasks().await;
+        // The first try failed; the fetch is in its backoff.
+        assert_eq!(fake.fetches(), 1);
+        drop(stats);
+        fake.sleep_gate.add_permits(1);
+        run_tasks().await;
+        assert_eq!(fake.fetches(), 1);
+        // The waiting side ends without an event.
+        assert_eq!(event_when_received(receiver).await, None);
+
+        // A run that ended before its fetch started asks nothing.
+        let fake = Fake::new(Link::Connected, vec![Ok(recorded())]);
+        let stats = Arc::new(RunStats::default());
+        request_stats(&fake, BONGO_CAT, &stats).await;
+        drop(stats);
+        run_tasks().await;
+        assert_eq!(fake.fetches(), 0);
+    }
+
+    #[test]
+    fn a_fetch_that_ends_without_an_outcome_fails_the_run() {
+        // As after a panic or a dropped task: never left fetching.
+        let stats = Arc::new(RunStats::default());
+        stats.state.send_replace(StatsState::Fetching);
+        drop(FetchGuard {
+            stats: Arc::downgrade(&stats),
+            done: false,
+        });
+        assert_eq!(
+            stats.state(),
+            StatsState::Failed(UnavailableReason::Offline)
+        );
+        // A finished fetch keeps its outcome.
+        let event = Event::StatsReceived {
+            result: 1,
+            achievement_names: Vec::new(),
+        };
+        stats
+            .state
+            .send_replace(StatsState::Received(event.clone()));
+        drop(FetchGuard {
+            stats: Arc::downgrade(&stats),
+            done: false,
+        });
+        assert_eq!(stats.state(), StatsState::Received(event));
+    }
+
+    #[test]
+    fn run_stats_debug_shows_no_account_data() {
+        let stats = RunStats::default();
+        stats
+            .state
+            .send_replace(StatsState::Received(Event::StatsReceived {
+                result: 1,
+                achievement_names: vec![AchievementName {
+                    name: "PET_1".to_owned(),
+                    display_name: "Bongo Beat 1".to_owned(),
+                }],
+            }));
+        let text = format!("{stats:?}");
+        assert_eq!(text, "RunStats { state: \"received\" }");
     }
 
     #[tokio::test]
@@ -516,7 +741,7 @@ pub mod tests {
         let stats = Arc::new(RunStats::default());
         let (response, receiver) = request_stats(&fake, BONGO_CAT, &stats).await;
         assert_eq!(response, Response::Accepted);
-        *fake.link.lock().unwrap_or_else(|p| p.into_inner()) = Link::Offline;
+        fake.set_link(Link::Offline);
         let receiver = receiver.unwrap_or_else(|| panic!("no receiver"));
         assert!(event_when_received(receiver).await.is_some());
         // Two requests reached Valve; the waits without a session did not.
@@ -528,7 +753,7 @@ pub mod tests {
         let fake = Fake::new(Link::Connected, vec![Err(FetchError::NoSession)]);
         let stats = Arc::new(RunStats::default());
         request_stats(&fake, BONGO_CAT, &stats).await;
-        *fake.link.lock().unwrap_or_else(|p| p.into_inner()) = Link::SignedOut;
+        fake.set_link(Link::SignedOut);
         assert_eq!(
             settle(&stats).await,
             StatsState::Failed(UnavailableReason::NotSignedIn)

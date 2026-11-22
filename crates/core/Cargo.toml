@@ -15,10 +15,14 @@ reborn-content.workspace = true
 reborn-formats.workspace = true
 reborn-platform.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha1.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

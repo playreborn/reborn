@@ -1041,6 +1041,11 @@ enum DaemonCommand {
         /// Launch entry index (defaults to the entry for this computer).
         #[arg(long)]
         option: Option<u32>,
+        /// After a cloud conflict in shim mode (ADR 0055): play with the
+        /// `local` files in Reborn's cloud folder or the `cloud` version;
+        /// the other is kept as a backup.
+        #[arg(long, value_parser = ["local", "cloud"])]
+        cloud: Option<String>,
     },
     /// Print events from the daemon until Ctrl+C.
     Watch,
@@ -1091,10 +1096,15 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             app_id,
             library,
             option,
+            cloud,
         } => Request::Launch {
             app_id: *app_id,
             library: library.clone(),
             option: *option,
+            cloud_choice: cloud.as_deref().map(|choice| match choice {
+                "cloud" => reborn_ipc::protocol::CloudChoice::Cloud,
+                _ => reborn_ipc::protocol::CloudChoice::Local,
+            }),
         },
         DaemonCommand::Shutdown => Request::Shutdown,
     };
@@ -1209,6 +1219,27 @@ async fn daemon(command: DaemonCommand) -> Result<()> {
             bail!("connection to rebornd closed");
         }
         Response::Launched { app_id } => println!("Started app {app_id}."),
+        Response::CloudConflict { app_id, files } => {
+            println!(
+                "App {app_id} was not started: these saves changed both in Reborn's cloud \
+                 folder and in Steam Cloud. Nothing was changed."
+            );
+            for file in &files {
+                println!(
+                    "  {}  local {} bytes (changed {}), cloud {} bytes (changed {})",
+                    file.name,
+                    file.local_size,
+                    file.local_modified
+                        .map_or_else(|| "?".to_owned(), |time| time.to_string()),
+                    file.cloud_size,
+                    file.cloud_modified
+                );
+            }
+            println!(
+                "Start it again with `--cloud local` to play with Reborn's files or `--cloud cloud` \
+                 to play with the Steam Cloud version; the other is kept as a backup."
+            );
+        }
         Response::Ok => println!("ok"),
         other => println!("{other:?}"),
     }

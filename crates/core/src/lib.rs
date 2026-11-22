@@ -22,6 +22,7 @@ pub mod install;
 pub mod launch;
 pub mod library;
 pub mod run_cloud;
+pub mod run_cloud_fill;
 pub mod uninstall;
 
 pub use error::CoreError;

@@ -32,11 +32,9 @@
 //! is handed out like any other (making one needs write access to the
 //! folder and, on Windows, to the target).
 //!
-//! What is **not** here yet (ADR 0055, "What is cached, and where" and
-//! "Cloud"): the base file (SHA-1, size and time of the version last
-//! downloaded), filling the folder at launch, and writes. Until the launch
-//! side exists, the folder holds only what was put there by hand, so a
-//! game finds its files missing.
+//! Filling the folder at launch from Valve's cloud, with the base file
+//! (SHA-1, size and time of the version last downloaded), is
+//! [`crate::run_cloud_fill`]. Writes by the game are not here yet.
 
 use std::fs::{File, Metadata};
 use std::io::{self, Read};
@@ -44,6 +42,7 @@ use std::path::{Path, PathBuf};
 
 use reborn_content::path::install_path;
 use reborn_formats::{CloudConfig, cloud_config, vdf};
+use sha1::{Digest, Sha1};
 
 use crate::CoreError;
 use crate::cloud::split_root;
@@ -174,6 +173,62 @@ impl RunCloud {
         Ok(Some(data))
     }
 
+    /// The Reborn data folder the run's folder lies below.
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// The run's folder relative to the data folder:
+    /// `cloud/<account ID>/<app ID>`.
+    pub(crate) fn relative(&self) -> &Path {
+        &self.relative
+    }
+
+    /// SHA-1 (40 lowercase hex digits), size and change time of the local
+    /// file `name`, `None` if there is none. Hashes the whole file,
+    /// whatever its size (it is only read here, never handed out); opened
+    /// like [`RunCloud::read`], without following links.
+    pub(crate) fn local_file(&self, name: &str) -> Result<Option<LocalFile>, RunCloudError> {
+        let Some(found) = self.find(name)? else {
+            return Ok(None);
+        };
+        if !found.is_file() {
+            return Err(RunCloudError::NotAFile);
+        }
+        let path = self.path_of(name)?;
+        let Some(mut file) = open_no_follow(&path, &found)? else {
+            return Ok(None);
+        };
+        let metadata = file.metadata()?;
+        let mut hasher = Sha1::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let mut size = 0u64;
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            size += read as u64;
+        }
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|time| time.as_secs());
+        Ok(Some(LocalFile {
+            sha1: hex(&hasher.finalize()),
+            size,
+            modified,
+        }))
+    }
+
+    /// Whether nothing at all (no file, folder or link) is at `name`; a
+    /// link on the way is an error.
+    pub(crate) fn is_free(&self, name: &str) -> Result<bool, RunCloudError> {
+        Ok(self.find(name)?.is_none())
+    }
+
     fn check(&self, metadata: &Metadata) -> Result<(), RunCloudError> {
         if !metadata.is_file() {
             return Err(RunCloudError::NotAFile);
@@ -215,6 +270,27 @@ impl RunCloud {
         }
         Ok(None)
     }
+}
+
+/// A file in the run's folder as found on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalFile {
+    /// SHA-1, 40 lowercase hex digits.
+    pub sha1: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Change time, seconds since the Unix epoch, if the system has one.
+    pub modified: Option<u64>,
+}
+
+/// Lowercase hex digits of `bytes`.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Opens the file at `path` for reading without following a link in its

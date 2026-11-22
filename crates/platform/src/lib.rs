@@ -6,6 +6,7 @@
 //! - [`secrets`]: refresh tokens and Steam Guard data in the OS credential
 //!   store (Windows Credential Manager, Secret Service on Linux).
 //! - [`settings`]: small non-secret settings such as the default account.
+//! - [`shim_mode`]: pointing one game launch at the shim and back (ADR 0048).
 //! - [`user`]: the identity of the current OS user.
 //!
 //! Planned: locating Steam installations and library folders, process
@@ -21,4 +22,5 @@ pub mod cloud_roots;
 pub mod proton;
 pub mod secrets;
 pub mod settings;
+pub mod shim_mode;
 pub mod user;

@@ -1007,3 +1007,59 @@ Evidence (Linsips, the close calls; floating-point registers and the
 Under ADR 0051, positions 4, 1 and 23 of `SteamClient021` and 4, 1 and
 22 of `SteamClient023` are confirmed as `ReleaseUser`,
 `BReleaseSteamPipe` and `BShutdownIfAllPipesClosed`.
+
+## More candidates from the gap list (loop iteration 3)
+
+Pages read 2026-11-22 (or earlier, linked above): `ISteamUserStats`,
+`ISteamUser`, `ISteamFriends` (see below), `ISteamInput`. Each entry is a
+candidate unless an experiment below confirms it.
+
+- **`STEAMUSERSTATS_INTERFACE_VERSION012` positions 0 and 10:** position 0
+  once early, position 10 once when the game closed (An Arcade Full of
+  Cats, One's Own Exile, A Park Full of Cats), both returning 1 with
+  leftovers in the registers. The page documents two functions without
+  arguments that return true or false: asking for the current stats, and
+  sending changed stats to the server. Candidates: 0 `RequestCurrentStats`,
+  10 `StoreStats`.
+- **`STEAMUSERSTATS_INTERFACE_VERSION013` position 15:** once early in
+  three games; `rdx` held the test account's own Steam ID (the value is
+  left out here, ADR 0050), the result looked like a random 64-bit
+  number. The page documents a function that takes a Steam ID and returns
+  a call handle for an asynchronous request of that user's stats.
+  Candidate: `RequestUserStats`. Not tested: confirming the handle needs
+  `Steam_GetAPICallResult` and the callbacks.
+- **`SteamInput006` position 0:** once at start, before any other
+  `SteamInput006` call, `rdx` 0 or 1, result 1. The page names an
+  initialization function that takes one true/false argument ("call
+  RunFrame yourself") and returns true or false. Candidate: `Init`.
+- **`SteamInput006` position 6:** every frame in three games; `rdx` an
+  address, result 0. The page documents a function that fills a buffer
+  with the handles of connected controllers and returns how many; no
+  controller was connected. Candidate: `GetConnectedControllers`.
+- **`SteamInput001` position 2:** every frame in four games, `rdx` an
+  address, the result register a leftover. Candidate: `RunFrame` (as for
+  `SteamInput006` position 3).
+- **`SteamUser023` position 1:** once early, no argument used, result 1.
+  The `ISteamUser` page documents several functions without arguments
+  that return true or false; whether the client is connected to Steam is
+  the one a game would ask first. Candidate: `BLoggedOn` (also
+  `BIsBehindNAT` and the phone and two-factor checks fit the shape).
+- **`SteamFriends017` position 0:** once early, no argument used, result
+  an address in the heap. Candidate from the shape alone: a function
+  without arguments that returns text, such as the account's persona
+  name; that text is account data, so it is not read (ADR 0043).
+
+### Experiment 12 (planned 2026-11-22, before the runs)
+
+Agent runs of An Arcade Full of Cats, One's Own Exile and A Park Full of
+Cats (UserStats012) and of Baldi's Basics, Chronigma and HoloCure
+(`SteamInput006`), each closed by a close request after about 30
+seconds.
+
+**Predictions** (`tools/shim/experiments/012_stats_and_input_init.py`):
+
+- A: position 0 of `STEAMUSERSTATS_INTERFACE_VERSION012` is called once,
+  within the first 3 seconds, returning true; position 10 once, at least
+  20 seconds later (at close), returning true.
+- B: position 0 of `SteamInput006` is the first `SteamInput006` call, is
+  called once and returns true.

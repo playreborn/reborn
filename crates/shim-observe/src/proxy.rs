@@ -92,7 +92,7 @@
 //! count and the hash are kept.
 //!
 //! Persona name (ADR 0056, decision 2): for `SteamFriends017` position 0
-//! (`GetPersonaName` or `ClearRichPresence`) the proxy reads the text the
+//! (`GetPersonaName`, experiment 33, under A1) the proxy reads the text the
 //! result points to in memory, on the game's thread, hashes it with
 //! SHA-256 and drops it; only the digest goes to `rebornd`, which says
 //! whether it is the account's persona name. The text and the digest are
@@ -282,11 +282,10 @@ enum Shadow {
     /// Asked on a worker thread, so the game's call is not delayed; only
     /// match or mismatch is logged.
     Subscribed,
-    /// `SteamFriends017` position 0, `GetPersonaName` or
-    /// `ClearRichPresence` (`docs/shim/meanings.md`): whether the text the
-    /// result points to is the account's persona name, as `rebornd` says
-    /// from the SHA-256 the proxy sends (ADR 0056). A match tells the two
-    /// apart. The text is account data: never logged, and the call line
+    /// `SteamFriends017` position 0, `GetPersonaName` (experiment 33,
+    /// under A1, `docs/shim/meanings.md`): whether the text the result
+    /// points to is the account's persona name, as `rebornd` says from the
+    /// SHA-256 the proxy sends (ADR 0056). The text is account data: never logged, and the call line
     /// shows no register texts.
     PersonaName,
     /// `GetFileSize(name)`: the size `rebornd` reads for the name in its
@@ -348,10 +347,9 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
     // Position 7 is not listed: it is narrowed to two meanings, not
     // confirmed as one.
     ("STEAMAPPS_INTERFACE_VERSION008", 0, Shadow::Subscribed),
-    // `docs/shim/meanings.md`, "Positions 0 and 44": narrowed to
-    // `GetPersonaName` or `ClearRichPresence`; ADR 0056 (decision 2) lets
-    // a shadow comparison tell them apart. Not a confirmed meaning yet: the
-    // comparison is the experiment.
+    // `docs/shim/meanings.md`, "Positions 0 and 44": confirmed
+    // `GetPersonaName` (experiment 33, under A1), by this shadow
+    // comparison (ADR 0056, decision 2).
     ("SteamFriends017", 0, Shadow::PersonaName),
     // `docs/shim/meanings.md`: confirmed `GetFileSize` (position 15) and
     // `FileRead` (position 1), experiment 1; Reborn's answer from

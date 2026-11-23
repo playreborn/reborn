@@ -97,7 +97,7 @@ Added 2026-11-22; no live run yet.
   official client's local file differs from the cloud version at arm
   time (for example a save not yet uploaded); it is then noted here, not
   explained away.
-- **First run:** planned as experiment 33 (end of this file).
+- **First run:** experiment 33, match (end of this file).
 
 ### Position 13: candidates `FileExists`, `FilePersisted`, `FileForget`
 
@@ -2191,8 +2191,9 @@ here. Planning only: no game was run for this section.
     needs the result text, which for `GetPersonaName` is account data
     (ADR 0043). No experiment. ADR 0056 now allows comparing position 0's
     text with the persona name without reading it out; see "Shadow
-    comparison for `SteamFriends017` position 0" at the end (planned, not
-    run).
+    comparison for `SteamFriends017` position 0" at the end. **Position 0
+    is now confirmed as `GetPersonaName` (experiment 33, under A1)**;
+    position 44 stays narrowed.
 
 ### `SteamController007`/`008` position 2 and `SteamInput001` position 2 / `SteamInput006` position 3: `RunFrame`
 
@@ -3772,8 +3773,9 @@ As fixed beforehand, a match confirms, for these interface versions:
 
 ## Shadow comparison for `SteamFriends017` position 0 (ADR 0056, planned, not run)
 
-Position 0 is narrowed to `GetPersonaName` or `ClearRichPresence`
-("Positions 0 and 44" above). ADR 0056 (decision 2) lets a shadow
+Position 0 was narrowed to `GetPersonaName` or `ClearRichPresence`
+("Positions 0 and 44" above); experiment 33 matched and confirmed it as
+`GetPersonaName` (experiment 33, under A1). ADR 0056 (decision 2) lets a shadow
 comparison tell them apart; this section records the tool, **no run has
 been made**, and no result is claimed.
 
@@ -3814,7 +3816,7 @@ been made**, and no result is claimed.
   person on the test account.
   Recorded since: `crates/cm/tests/data/account_info.bin` (2026-11-22,
   test account, `crates/cm/tests/data/README.md`).
-- **First run:** planned as experiment 33 (end of this file).
+- **First run:** experiment 33, match (end of this file).
 
 ## Top rows of the gap list (loop iteration 15a)
 
@@ -4677,11 +4679,16 @@ signed in with the stored login next to the official client, no prompt;
 logs recorded by `run.sh`: `observe-58500` Cave Crawlers, `observe-59752`
 Dark Deception, `observe-16904` A Park Full of Cats, where the maintainer
 clicked once to reach the title screen; every arm said "shadow session
-registered", the Cave Crawlers fill wrote 2 files with none failed, no
+registered", the Cave Crawlers fill line had `failed=0`, no
 logoff, kick or reconnect line in `rebornd`'s log, `daemon status` signed
 in after every run, no dialog in the official client on the local
 screenshots (deleted afterwards); all three games closed normally):
-**match** in both parts, checked by the script.
+**match** in both parts, checked by the script. The plan commit 312e112
+(01:37:21, pushed at 01:38:43, before the runs) became 6bafcdb when the
+branch was rebased onto `main` after #51; `PLAN_COMMITTED` keeps its
+time. In A Park Full of Cats the single `017` 0 call came about 70 ms
+after the proxy loaded, long before the maintainer's click, so the click
+does not touch the compared call.
 
 ```text
 observe-58500.log (Cave Crawlers) A: calls with a result line {'014 #15': 1, '014 #1': 1} -> match

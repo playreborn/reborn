@@ -18,8 +18,8 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 - 2026-11-23: experiment 33 **matched** (PR #52): first live runs of the
   cloud reads shadow (Cave Crawlers: `GetFileSize` and `FileRead` agree)
-  and the persona name shadow (Dark Deception, A Park Full of Cats: 3 of 3
-  match); `SteamFriends017` 0 confirmed as `GetPersonaName` (under A1).
+  and the persona name shadow (Dark Deception, A Park Full of Cats: in 2 games, 3
+  calls match); `SteamFriends017` 0 confirmed as `GetPersonaName` (under A1).
   `rebornd` signed in with the stored login, no prompt; one online-status
   change from `own-status`, accepted by the maintainer (also happened in
   experiment 30). Answering `GetPersonaName` in the shim needs the

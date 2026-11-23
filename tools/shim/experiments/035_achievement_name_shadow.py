@@ -98,7 +98,7 @@ GAMES = {
     444930: ("Zaccaria Pinball", CANDIDATE, None),
     2093940: ("vivid/stasis", CANDIDATE, None),
 }
-PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
+PLAN_COMMITTED = datetime(2026, 11, 23, 3, 50, 43)  # commit 2ac9e4f on loop/plan-17b (final plan after review, local committer time)
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 

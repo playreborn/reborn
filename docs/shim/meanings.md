@@ -5482,10 +5482,18 @@ reconnect, WARN or ERROR line in `rebornd`'s log, `daemon status` signed
 in after every run, screenshots looked at and deleted). Candidates:
 Nonogram - Master's Legacy was dropped as 32-bit (only `steam_api.dll`);
 vivid/stasis was dropped because its install failed with a connection
-time-out dialog in the official client, which the agent closed (an error
-notice, no agreement); Zaccaria Pinball installed, but the official
-client reported that it could not be started (error code 51), so its log
-has no calls; it is "not a third game", and the run is not repeated.
+time-out dialog in the official client. **Deviation:** the agent closed
+that dialog, against the plan's "left alone" and ADR 0044's limit on
+clicks in the official client; it was an error notice only, nothing was
+accepted. Zaccaria Pinball installed, but the official client reported
+that it could not be started (error code 51). The game process did start
+under the proxy (two `CreateInterface` calls and their returns are
+logged, then no interface method calls), so whether the proxy caused
+error 51 is unknown. Under the plan this run **does not count**; it is
+not repeated because the cause is not known, so "after the cause is
+gone" cannot be met. The script lists it as "not a third game". The
+error 51 notice is an official-client dialog; the agent closed it too
+(same deviation, an error notice only).
 **MISMATCH**, checked by the script.
 
 ```text

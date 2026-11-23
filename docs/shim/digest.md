@@ -22,7 +22,8 @@ first, so the maintainer can read a day's work quickly and stop anything.
   (26 of 29, 15 of 16): an index finding, cause open (order, contents,
   schema age or encoding), needs a new plan. No third game: Nonogram is
   32-bit, vivid/stasis failed to install, Zaccaria Pinball did not start
-  (error 51).
+  (error 51), run not counted. The agent closed two error notices in the
+  official client against the plan (recorded as a deviation).
 - 2026-11-23: experiment 34 (PR #55): Bongo Cat group matched,
   `STEAMINVENTORY_INTERFACE_V003` 26 confirmed as `RequestPrices` (under
   A1, A2, A5); Cave Crawlers group **mismatched** (the first of two 4700

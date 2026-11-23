@@ -2,6 +2,9 @@
 
 - **Status:** Accepted (by the maintainer, 2026-11-22)
 - **Date:** 2026-11-22
+- **Amended by:** ADR 0059 (when the achievement list is fetched; achievement
+  shadow comparisons) and ADR 0061 (the survey lines of the achievement
+  shadow)
 - **Amends:** ADR 0046 (shadow answers for account data come from
   `rebornd`, not from values given to `reborn-observe arm`; writes are
   never shadowed) and ADR 0047 (a read-only shadow session for a process

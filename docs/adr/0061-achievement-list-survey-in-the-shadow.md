@@ -4,7 +4,7 @@
   delegation of 2026-11-23, ADR 0060)
 - **Date:** 2026-11-23
 - **Amends:** ADR 0059 decision 2 (what the achievement-name shadow may
-  log), ADR 0055 ("What is cached, and where": achievement names are
+  log) and ADR 0055 ("What is cached, and where": achievement names are
   account data in logs, which say only counts)
 - **Touches:** red line 3 only in that the data compared comes from the
   real account's session; nothing new is read from or written to the
@@ -35,52 +35,75 @@ Decided by the agent under the maintainer's delegation of 2026-11-23
 (ADR 0060).
 
 In a shadow session the proxy keeps, for each index the game asked for
-(below a bound of 1024), the SHA-256 of the official text and the
-SHA-256 of its **normalised form**: read as UTF-8, white space trimmed
-at both ends, lowercased with Unicode's lowercase mapping. Reborn's
-names get the same two digests. Once the game has asked for every index
-below the official count, and Reborn's list is there, the proxy logs
-three lines, once per process, after the call that completed the list:
+(below 50, the proxy's logging limit), the SHA-256 of the official text
+and the SHA-256 of its **normalised form**: read as UTF-8, white space
+trimmed at both ends, lowercased with Unicode's lowercase mapping.
+Reborn's names get the same two digests. Once the game has asked for
+every index below the official count, and Reborn's list is there, the
+proxy logs three lines, once per process, after the call that completed
+the list:
 
 - **(a) Set comparison:** the official count, how many distinct official
   digests there are and how many indices had no text, the length of
   Reborn's list and its distinct digests, and then three counts over the
   distinct digests: shared (an official digest that is also in Reborn's
   list), official-only and Reborn-only.
-- **(b) Index mapping:** for each official index *i*, the first index *j*
-  in Reborn's list with the same digest, or `none`, or `notext` when the
-  official result pointed to no text.
-- **(c) Normalised set comparison:** the same three counts as (a), over
+- **(b) Normalised set comparison:** the same three counts as (a), over
   the normalised digests. It finds names that differ only in letter case
   or surrounding white space. It does not undo other encoding
-  differences, such as a name in another code page.
+  differences, such as a name in another code page. Two names that
+  differ only in this way count as one.
+- **(c) Index mapping:** for each official index *i*, the first index *j*
+  in Reborn's list with the same digest, or `none`, or `notext` when the
+  official result pointed to no text.
+
+When no survey can be made, one line says why instead
+(`shadow survey: not surveyed, <why>`): an official answer was skipped,
+there is no Reborn list when the official list is complete, or the
+official count is above 50 (only the first 50 calls of a position are
+shadowed, so such a list can never be complete).
 
 The formats are fixed in `crates/shim-observe/src/daemon.rs`
 (`AchievementSurvey`). No name and no digest is ever logged, sent to
 `rebornd`, or written to `docs/shim/`. As before, the game always gets
 the official client's answer.
 
-A list longer than the proxy compares gets no survey: the proxy shadows
-only logged calls (the first 50 of a position), so such a list never
-completes. A count above 1024 gets one line that says so.
+### Where each part may go
 
-## Why this exposes no account data
+- **(a) and (b), the counts, and the "not surveyed" reasons** may go
+  into `docs/shim/`, like the per-call match and mismatch counts.
+- **(c), the index pairs *i*:*j*,** stay in the local log and in the
+  output of the experiment script on the recorder's computer. They are
+  **not** written into `docs/shim/`, a commit, a pull request or a
+  prompt, until an experiment has shown that the official order does not
+  depend on the account (next section). A summary of the mapping that
+  holds only counts and yes/no answers may go into `docs/shim/`: the
+  number of fixed points, whether it is the reversal (yes or no),
+  whether it is a rotation (yes or no), and the number of cycles.
 
-- **What the lines hold:** counts, and pairs of indices into two lists
-  of the app's achievement API names. No name, no digest, no stat value,
-  no unlock state, no Steam ID.
-- **The names are public schema data.** The schema is the same for every
-  account that owns the game. Reborn gets it in `ClientGetUserStats`
-  (`docs/protocol/achievements.md`), and the official client gets it from
-  the same servers. ADR 0055 still treats the names as account data for
-  logging, and this ADR keeps that rule: the names stay out of the log.
-- **The indices are public positions.** An official index is the
-  argument the game passed to `GetAchievementName`. A Reborn index is a
-  position in the schema's own order (`reborn_cm::achievements`: every
-  `bits` entry of every stat, in schema order). Both depend on the game's
-  schema only, not on the account.
-- **The counts** are the length of the schema's list and the sizes of
-  its overlaps, the same for every account.
+## What the parts may reveal
+
+- **The counts** are lengths and overlap sizes of two lists of the app's
+  achievement API names.
+- **The official indices** *i* are the arguments the game passed to
+  `GetAchievementName`: 0 to *N*-1, nothing more.
+- **Reborn's indices** *j* are positions in Reborn's order
+  (`reborn_cm::achievements`: every `bits` entry of every stat, in the
+  order of the schema Valve sent to the test account).
+- **The mapping** *i* → *j* says where the official client puts each of
+  Reborn's names. The official order is exactly the open question. If it
+  depended on the account, for example unlocked achievements first, or
+  sorted by unlock time, then the mapping would encode the test
+  account's unlock state. That is account data. Nothing recorded rules
+  this out yet, which is why the pairs stay local.
+- **Is the schema the same for every account?** This is assumed, not
+  sourced: the schema in `ClientGetUserStats`
+  (`docs/protocol/achievements.md`) describes the game's achievements,
+  not the account's progress, but no recording compares two accounts. So
+  the counts are treated as schema data only in this sense: they come
+  from the app's list, and a count does not say which achievement is
+  unlocked.
+- **The names** stay out of every log, as ADR 0055 asks.
 - **What the digests could reveal** if logged: a SHA-256 of a short API
   name can be reversed by guessing. That is why digests stay in memory
   only, as in ADR 0059 decision 2 and ADR 0056.
@@ -91,16 +114,21 @@ completes. A count above 1024 gets one line that says so.
   order", the order is a **finding**. Reborn adopts an order hypothesis
   only with a source or an observation, never from memory (AGENTS.md
   section 4). A rule such as "sorted by name" or "by schema ID" is tested
-  in a planned experiment before the shim uses it.
+  in a planned experiment before the shim uses it. Such an experiment can
+  also show whether the order depends on the account, for example a rule
+  that predicts the official order from the schema alone, from a source,
+  and matches the local pairs. Never by unlocking or changing
+  anything to see the order move (red line 4). Once one has,
+  a new ADR may let the pairs into `docs/shim/`.
 - Nothing in the shim, the proxy or `rebornd` is changed to make the
   comparison of ADR 0059 decision 2 match without a new plan.
 
 ## Consequences
 
 - Experiment 36 can tell "order differs", "encoding or case differs" and
-  "contents differ" apart (`docs/shim/meanings.md`).
-- The proxy keeps at most 1024 pairs of digests (about 64 KiB) per
-  process, and a second digest per Reborn name (at most 10,000, about
-  320 KiB).
+  "contents differ" apart (`docs/shim/meanings.md`). Its recorded result
+  quotes the counts, the reading and the mapping summary, not the pairs.
+- The proxy keeps at most 50 pairs of digests per process, and a second
+  digest per Reborn name (at most 10,000, about 320 KiB).
 - No new message between the proxy and `rebornd`, no new Valve request
   (red line 8): the survey uses the list the comparison already fetched.

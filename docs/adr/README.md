@@ -60,7 +60,7 @@ it is accepted; a new ADR supersedes it instead.
 | [0052](0052-no-daily-start-cap.md) | No daily start cap, 1 minute between starts, 50 free games a day | Accepted |
 | [0053](0053-agent-adds-reads.md) | The agent adds proxy reads itself | Accepted |
 | [0054](0054-agent-lists-callbacks.md) | The agent lists callback numbers itself | Accepted |
-| [0055](0055-real-account-data-for-the-shim.md) | Real account data for the shim | Accepted |
+| [0055](0055-real-account-data-for-the-shim.md) | Real account data for the shim | Accepted, amended by 0059, 0061 |
 | [0056](0056-call-results-persona-name-extra-recordings.md) | Call results, the persona name, and recordings of other games | Accepted |
 | [0057](0057-shim-mode-notice.md) | The notice before the first shim-mode launch | Accepted |
 | [0058](0058-executable-check-and-narrow-stack-read.md) | An executable check and a narrow stack read for the proxy | Accepted |

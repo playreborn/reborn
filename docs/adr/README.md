@@ -65,3 +65,4 @@ it is accepted; a new ADR supersedes it instead.
 | [0058](0058-executable-check-and-narrow-stack-read.md) | An executable check and a narrow stack read for the proxy | Accepted |
 | [0057](0057-shim-mode-notice.md) | The notice before the first shim-mode launch | Accepted |
 | [0060](0060-maintainer-delegation-and-hung-games.md) | The maintainer's standing delegation, and games that do not close | Accepted |
+| [0059](0059-achievement-names-and-leaderboards-in-the-shim.md) | Achievement names and leaderboards in the shim | Proposed |

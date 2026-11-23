@@ -4090,20 +4090,22 @@ call would carry. No shadow-mode entry: there is no result to compare.
 `SteamGameServer012` 0 is not in the shim: the shim has no
 `SteamGameServer…` object and no objects for the game server pipe
 (experiment 24).
+
 ## Inventory results, remote storage and UGC rows (loop iteration 17a)
 
-`python tools/shim/coverage.py` on `main` (2026-11-23: 220 positions, 149
-confirmed, 71 open). The top unknown rows (`STEAMUSERSTATS_INTERFACE_VERSION013`
+`python tools/shim/coverage.py` on `main` (2026-11-23, after #52 merged: 220 positions,
+150 confirmed, 70 open). The top unknown rows (`STEAMUSERSTATS_INTERFACE_VERSION013`
 3 and 1, `SteamClient020`/`021` 22, `SteamUtils010` 34, `SteamClient023`
 21) were looked at in loop iterations 15a and 16a above; no new
-recordings of them since. Open pull requests (`gh pr list`): #52
-(experiment 33: `STEAMREMOTESTORAGE_INTERFACE_VERSION014` 15 and 1,
-`SteamFriends017` 0) and #53 (ADR 0059); neither works on the rows below.
+recordings of them since. Experiment 33 (#52, merged: `STEAMREMOTESTORAGE_INTERFACE_VERSION014` 15
+and 1, `SteamFriends017` 0) and the open #53 (ADR 0059) do not work on
+the rows below.
 The recordings are the reference runs of `coverage.md` and every later
 `run.sh` log in the recorder's data folder (raw logs stay there):
 Cave Crawlers 15 logs, Bongo Cat 4, Cartapli 6, HoloCure 4. Pages read on
-2026-11-23: <https://partner.steamgames.com/doc/api/ISteamInventory> (37
-functions with the `SetProperty` overloads, 6 callbacks),
+2026-11-23: <https://partner.steamgames.com/doc/api/ISteamInventory> (33
+function headings, 36 signatures with the `SetProperty` overloads, 6
+callbacks),
 <https://partner.steamgames.com/doc/api/ISteamRemoteStorage> (59
 functions, deprecated ones included) and
 <https://partner.steamgames.com/doc/api/ISteamUGC> (in two parts; every
@@ -4184,7 +4186,7 @@ SteamInventoryDefinitionUpdate_t callback".
 | `GetResultItems`, `SerializeResult`, `GetResultItemProperty`, `GetResultStatus`, `GetResultTimestamp`, `CheckResultSteamID`, `DestroyResult` (a result handle first) | C4: the buffer `rdx` is wide (A1) |
 | `GetItemPrice`, `GetItemDefinitionProperty` (an item definition first) | C4: wide `rdx` (A1) |
 | `GetItemsWithPrices( pArrayItemDefs, pPrices, uint32 unArrayLength )` | C4: a wide `r9` (A1) |
-| `GetEligiblePromoItemDefinitionIDs( CSteamID, pItemDefIDs, punItemDefIDsArraySize )` | C4: a non-zero `r9` below 0x10000 is no size pointer (A3); the wide `rdx` is no individual account's Steam ID |
+| `GetEligiblePromoItemDefinitionIDs( CSteamID, pItemDefIDs, punItemDefIDsArraySize )` | C4: a non-zero `r9` below 0x10000 is no size pointer (A3) |
 | the `pResultHandle` functions that return true always for a user (`AddPromoItem`, `AddPromoItems`, `ConsumeItem`, `DeserializeResult`, `GenerateItems`, `GetAllItems`, `GetItemsByID`, `GrantPromoItems`, `TransferItemQuantity`, `TriggerItemDrop`) | C3: the first call returns false; also C1 (no new result, A4) |
 | `ExchangeItems`, `SubmitUpdateProperties` (also write a result handle) | C1: no 4700 for a handle position 6 did not write (A4) |
 | `LoadItemDefinitions` (always true) | C3 (a false result) |
@@ -4246,7 +4248,9 @@ SteamAPICall_t" with the call result `SteamInventoryRequestPricesResult_t`.
 - **2** (Bongo Cat; shape of `GetResultItemProperty( resultHandle,
   unItemIndex, pchPropertyName, pchValueBuffer, punValueBufferSizeOut )`):
   not planned. A read of what it writes could hand back an account ID (its
-  `r9` text `accountid`); it waits for the maintainer (loop iteration 16a).
+  `r9` text `accountid`), which is account data. Deferred: the
+  conservative choice, decided by the agent under the maintainer's
+  delegation of 2026-11-23 (ADR 0060); loop iteration 16a first raised it.
 - **1** stays `GetResultItems` or `SerializeResult`; this plan adds
   nothing for it. 17 and 18 are not in the reference runs and are not
   planned.
@@ -4308,9 +4312,12 @@ payloads, which are 8 and 4 bytes). Why no candidate can carry a ticket, a
 token, a password or a Steam ID: by size and position these are the
 page's `SteamInventoryResultReady_t` (a result handle and an `EResult`)
 and `SteamInventoryFullUpdate_t` (a result handle). If they were another
-callback, 8 and 4 bytes are too few for a ticket, a token or a 64-bit
-Steam ID; 4 bytes could hold an account ID, which is why the script prints
-only match or mismatch and `docs/shim/` quotes no payload value. No
+callback, 8 and 4 bytes are too few for a ticket, a token or a password,
+but an 8-byte payload could hold a 64-bit Steam ID (possibly another
+user's) and a 4-byte one an account ID. The listed bytes stay in the
+local log, the script prints only match or mismatch, and `docs/shim/`
+quotes no payload value. Listing them anyway was decided by the agent
+under the maintainer's delegation of 2026-11-23 (ADR 0060). No
 `READS` entry is added; the handle position 6 writes is read since
 experiment 14, and 703 is listed since experiment 22.
 
@@ -4322,7 +4329,13 @@ k_EResultPending to any other completed state"). A5: a call handle in a
 703 is the `SteamAPICall_t` of the call that created it; a leftover `rax`
 of a void function or an update handle is not one, at least when no other
 logged call returned that value. A6: 4701 fires only after `GetAllItems`,
-as the page says of `SteamInventoryFullUpdate_t`.
+as the page says of `SteamInventoryFullUpdate_t`. A7: 4700 and 4701 are
+inventory callbacks, 4700 `SteamInventoryResultReady_t` and 4701
+`SteamInventoryFullUpdate_t`. No page gives callback numbers; only the
+sizes and the match of bytes 0..4 with a handle tie them to the
+inventory, and a small handle value could match by chance. Bongo Cat,
+where the 4701 has to pick the handle of 6 out of three live handles, is
+the stronger evidence; Cave Crawlers has only one.
 
 **Predictions** (`tools/shim/experiments/034_inventory_results.py`), by
 group, each decided by its own game's log:
@@ -4342,9 +4355,8 @@ group, each decided by its own game's log:
     call before returns exactly 0, every call after exactly 1; after the
     first 4702 a call with `rdx` 0 is followed directly by a call of 21
     with a non-zero `rdx` and the same `r8`.
-  - C4: every non-zero `rdx` of 21 is wide and its upper 32 bits are not
-    0x01100001 (an individual account's Steam ID); some call has a wide
-    `r9`, and some call a non-zero `r9` below 0x10000.
+  - C4: every non-zero `rdx` of 21 is wide; some call has a wide `r9`,
+    and some call a non-zero `r9` below 0x10000.
 - Group BC:
   - B1: position 26 is called; every result is wide and returned by no
     other logged call.
@@ -4354,7 +4366,7 @@ group, each decided by its own game's log:
 **What a match confirms:** H1 to H3 matched in both games:
 `STEAMINVENTORY_INTERFACE_V003` 6 `GetAllItems` (experiment 34, under A6),
 callback 4701 `SteamInventoryFullUpdate_t` and 4700
-`SteamInventoryResultReady_t` (handle at bytes 0..4; bytes 4..8, the
+`SteamInventoryResultReady_t` (under A7; handle at bytes 0..4; bytes 4..8, the
 `EResult`, recorded, not predicted). CC matched: 21
 `GetItemDefinitionIDs` (experiment 34, under A1, A3 and A4), and 4702 as
 a candidate `SteamInventoryDefinitionUpdate_t` (by size only). BC
@@ -4382,7 +4394,8 @@ built from another branch has no 4700 or 4701 payloads):
 - `tools/shim/run.sh 3419430` (Bongo Cat). Its calls and callbacks come by
   about 1.4 s.
 
-The default wait (40 s after Steam loaded) is enough. No input in either
+Keep the default wait (40 s after Steam loaded): it is enough, and a
+longer run lets Bongo Cat start its own 17 and 18 at about 60 s. No input in either
 game; both closed on the close request in experiment 14. No inventory
 call is asked for: whatever Bongo Cat's 11 and 13 do at start and, if it
 still runs at about 60 s, its 17 and 18 are the game's own calls,

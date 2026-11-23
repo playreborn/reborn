@@ -175,7 +175,11 @@ const PAYLOAD_LISTED: &[u32] = &[
     // `docs/shim/meanings.md`, experiment 34: candidates
     // `SteamInventoryResultReady_t` (a result handle and an `EResult`) and
     // `SteamInventoryFullUpdate_t` (a result handle), from the
-    // `ISteamInventory` page; no ticket, token, password or Steam ID.
+    // `ISteamInventory` page; no ticket, token or password. If either
+    // number is another callback, its 8 bytes could hold a Steam ID
+    // (possibly another user's): the bytes stay in the local log and
+    // the script prints only match or mismatch (decided by the agent
+    // under the maintainer's delegation, ADR 0060).
     4700, 4701,
 ];
 

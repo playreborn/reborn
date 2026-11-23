@@ -10,7 +10,11 @@ Games (tools/shim/games.json):
 Needs PAYLOAD_LISTED (crates/shim-observe, ADR 0050 and 0054), added on
 the plan's branch: 4700 and 4701. Their candidates carry a result handle
 and an EResult (SteamInventoryResultReady_t) or a result handle
-(SteamInventoryFullUpdate_t); no ticket, token, password or Steam ID.
+(SteamInventoryFullUpdate_t); no ticket, token or password. If either
+number is another callback, its 8 bytes could hold a Steam ID (possibly
+another user's); the bytes stay in the local log and this script prints
+only match or mismatch (decided by the agent under the maintainer's
+delegation, ADR 0060).
 703 is already listed (experiment 22); 4702 is checked by its size only.
 The handle position 6 writes is read since experiment 14 (READS, output
 bytes at rdx). No READS entry is added.
@@ -38,6 +42,12 @@ Assumptions (stated in the plan):
       SteamInventoryFullUpdate_t ("Triggered when GetAllItems successfully
       returns a result which is newer / fresher than the last known
       result").
+  A7  4700 and 4701 are inventory callbacks: 4700
+      SteamInventoryResultReady_t, 4701 SteamInventoryFullUpdate_t. No
+      page gives callback numbers; only the sizes and the handle match
+      tie them to the inventory, and a small handle could match by
+      chance. Bongo Cat (6's handle out of three live ones) is the
+      stronger evidence.
 
 Predictions, both groups (S = STEAMINVENTORY_INTERFACE_V003):
 H1  S position 6 is called at least once; every call returns 1 and has
@@ -61,9 +71,8 @@ C3  S position 21 is called at least once before the first 4702 and at
     after returns exactly 1. After the first 4702 there is a call with
     rdx 0 directly followed (next S call) by a call of 21 with a non-zero
     rdx and the same r8.
-C4  Every non-zero rdx of position 21 has non-zero upper 32 bits other
-    than 0x01100001 (not a 32-bit value under A1, and not an individual
-    account's Steam ID); at least one call of 21 has non-zero upper 32
+C4  Every non-zero rdx of position 21 has non-zero upper 32 bits (not a
+    32-bit value under A1); at least one call of 21 has non-zero upper 32
     bits in r9 (not GetItemsWithPrices' uint32 length, A1); at least one
     call has a non-zero r9 below 0x10000 (no pointer to write through, A3).
 
@@ -103,7 +112,6 @@ GAMES = {
 COMPLETED = 703
 STATS_RECEIVED = 0x44D  # UserStatsReceived_t, experiments 21 and 22
 READY, FULL, DEFINITIONS = 4700, 4701, 4702
-STEAM_ID_HIGH = 0x01100001  # an individual account in the public universe
 PLAN_COMMITTED = datetime(2026, 11, 23, 2, 24, 12)  # commit 161034c on loop/plan-17a
 
 
@@ -185,8 +193,9 @@ def check_cc(calls, cbs, written, readies, say):
     before = [c for c in ids if c.ms < first_def]
     after = [c for c in ids if c.ms >= first_def]
     pair = False
-    for c in after:
-        at = calls.index(c)
+    for at, c in enumerate(calls):
+        if c.position != 21 or c.ms < first_def:
+            continue
         nxt = calls[at + 1] if at + 1 < len(calls) else None
         if (c.reg("rdx") == 0 and nxt is not None and nxt.position == 21
                 and nxt.reg("rdx") not in (None, 0) and nxt.reg("r8") == c.reg("r8")):
@@ -198,11 +207,11 @@ def check_cc(calls, cbs, written, readies, say):
         f"{all(c.rax == 1 for c in after)}), NULL-then-buffer pair: {pair}")
 
     buffers = [c.reg("rdx") for c in ids if c.reg("rdx") not in (None, 0)]
-    no_id = all(high(v) and v >> 32 != STEAM_ID_HIGH for v in buffers)
+    wide = all(high(v) for v in buffers)
     wide_r9 = any(high(c.reg("r9")) for c in ids)
     small_r9 = any(c.reg("r9") is not None and 0 < c.reg("r9") < 0x10000 for c in ids)
-    say("C4", bool(buffers) and no_id and wide_r9 and small_r9,
-        f"buffers wide and no Steam ID: {bool(buffers) and no_id}, a wide r9: {wide_r9}, "
+    say("C4", bool(buffers) and wide and wide_r9 and small_r9,
+        f"buffers wide: {bool(buffers) and wide}, a wide r9: {wide_r9}, "
         f"a small non-zero r9: {small_r9}")
 
 

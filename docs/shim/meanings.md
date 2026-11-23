@@ -5886,3 +5886,75 @@ cycles; neither a reversal nor a rotation). This explains experiment
 adopts needs a source or an observation plus its own planned experiment
 (ADR 0061), and whether the official order depends on the account stays
 open.
+
+### Is the official order documented? (source search, 2026-11-23)
+
+Experiment 36 found the same names in another order. Before any order
+rule can be planned, a source is needed (ADR 0061, AGENTS.md section 4).
+A search of the allowed references found **none** that says in which
+order the official `GetAchievementName(i)` indexes the achievements, or
+how a client builds that list from the schema. Nothing was run, and no
+game, Valve server or official client file was touched.
+
+- **Valve, `partner.steamgames.com/doc/api/ISteamUserStats`,**
+  `GetAchievementName` and `GetNumAchievements`: the index is "between
+  0 and GetNumAchievements", and the count is of the achievements
+  "defined in the App Admin panel". No order is given. The only orders
+  Valve's pages name are by completion rate
+  (`GetNextMostAchievedAchievementInfo`; `doc/features/achievements`,
+  "most completed to least completed"), which is global data, not the
+  index order.
+- **SteamKit2** (`SteamRE/SteamKit`, default branch): achievements and
+  user stats appear only in the generated messages
+  (`SteamKit2/Base/Generated/SteamMsgClientServerUserStats.cs`); no code
+  reads the schema.
+- **node-steam-user** (`DoctorMcKay/node-steam-user`): only the protobuf
+  definitions (`protobufs/steammessages_clientserver_userstats.proto`);
+  no file under `components/` and nothing in `README.md` handles stats
+  or achievements.
+- **ValvePython/steam:** only the protobufs
+  (`protobufs/steammessages_clientserver_userstats.proto` and the
+  generated `_pb2.py`); no schema code.
+- **Goldberg emulator fork, public docs only** (`Detanup01/gbe_fork`
+  `post_build/README.release.md` and `CHANGELOG.md`; the code and the
+  `sdk/` folder were not opened, red line 6): `achievements.json` is
+  described, its order is not. An emulator's order would not show the
+  official client's order anyway.
+- **Steam Achievement Manager** (zlib, already the schema source above),
+  `SAM.Game/Manager.cs` lines 241, 326 and 334: it walks `stats`, then
+  each `bits` object, in document order, as Reborn does, and never sorts.
+  It never calls `GetAchievementName`, so it says nothing about the
+  official index.
+
+Community forum posts that state an order were not taken: they are not
+an allowed source.
+
+**No local check was made.** There is no sourced rule to check. The
+schemas of Outcore (1275670) and One's Own Exile (3086720) are not on
+this computer in Reborn's data (the only recorded schema,
+`crates/cm/tests/data/user_stats.bin`, is app 3419430), so even an
+unsourced structural rule could not be tested against the local pairs
+without a new Valve request, which this search did not make.
+
+**What could settle it** (each needs its own plan; none changes the
+account):
+
+1. **Account dependence first (ADR 0061's open question).** Run the
+   survey for the same game on two test accounts with different unlock
+   states (ADR 0044), and compare only whether the two maps are equal,
+   for example by the SHA-256 of each map line, computed on the
+   recorder's computer. Equal maps for different unlock states would
+   speak against an account-dependent order; different maps would show
+   that the order is account data, and the pairs then stay local for
+   good.
+2. **Schema structure next to the map.** An ADR 0061 amendment could
+   let the proxy log, next to the map, schema data only: for each of
+   Reborn's indices the stat ID and bit number (not the name), or just
+   yes or no for whether document order equals ascending stat ID then
+   bit. Candidate rules derived from the schema could then be checked
+   locally without a new Valve request. Such a check is a finding, not
+   a rule, until a planned experiment predicts a game's order before it
+   is run.
+3. **A third game** with more than one achievement stat, or with
+   `bits` keys out of numeric order in the document, would separate
+   rules that agree on the two surveyed games.

@@ -5057,3 +5057,71 @@ As fixed beforehand: the cloud part shows Reborn's answers for `014` 15
 and 1 agree with the official client in Cave Crawlers (one game; answer
 mode stays out of reach). The persona part confirms `SteamFriends017` 0
 as "`GetPersonaName` (experiment 33, under A1)".
+## Shadow comparison for achievement count and names (ADR 0059 decision 2, not run)
+
+`STEAMUSERSTATS_INTERFACE_VERSION011` and `…012` positions 14
+(`GetNumAchievements`) and 15 (`GetAchievementName`) are confirmed
+(experiment 32). ADR 0059 (decision 2) compares them in shadow mode with
+Reborn's list; this section records the tool. **No run has been made**,
+and no result is claimed.
+
+- **What the proxy does** (`crates/shim-observe/src/proxy.rs`,
+  `Shadow::AchievementCount` and `Shadow::AchievementName`; comparison
+  and queue in `crates/shim-observe/src/daemon.rs`): after the official
+  client's call returns, on the game's thread, it keeps for position 14
+  the low 32 bits of `rax` (the page's `uint32`), and for position 15 the
+  index the game passed (the low 32 bits of `rdx` as the call started,
+  the page's `uint32 iAchievement`) and the SHA-256 of the NUL-terminated
+  bytes `rax` points to (at most 1024, in one readable memory region,
+  read in place; the copy is zeroed and dropped). The game always gets
+  the official client's result.
+- **Why it waits:** the official client answers these calls within about
+  25 ms of the game's `RequestCurrentStats`, while Reborn's list comes
+  with `StatsReceived` about 300 ms later (ADR 0059, "A timing
+  observation"). So the official answers wait in a bounded queue in the
+  proxy (`AchievementQueue`, at most 256 answers, digests and the start
+  of the log line only; more are logged as skipped). The first answer
+  wakes the worker thread once; it sends `RequestStats` on the shadow
+  session (or uses the `StatsReceived` it already read for callback
+  0x44d), waits for the event (at most 30 s, as for 0x44d), then compares
+  everything that waits, including answers that arrived during the wait.
+  `rebornd` answers every `RequestStats` of a run from one
+  `ClientGetUserStats` (`apps/rebornd/src/shim_stats.rs`), so the
+  comparison adds no Valve request.
+- **Reborn's side:** the internal names in `StatsReceived`
+  (`achievement_names[].name`), in Reborn's order: every `bits` entry of
+  every stat, stats and bits each in schema order
+  (`reborn_cm::achievements::UserStats::achievements`,
+  `docs/protocol/achievements.md`). The proxy hashes them as it reads the
+  event and keeps only the digests (at most 10,000; a longer list is not
+  compared), the text zeroed best effort. `RequestStats` and
+  `StatsReceived` are protocol 0.2, so there is no new message and no
+  version gate.
+- **Compared:** position 14: the official count with the length of
+  Reborn's list. Position 15: the official digest at index *i* with the
+  digest of Reborn's *i*-th name; for an index beyond Reborn's list with
+  the digest of the empty text, which the public page names as
+  `GetAchievementName`'s answer for an invalid index (loop iteration 16a
+  above).
+- **Index mapping, not sourced:** that the game's index *i* is Reborn's
+  *i*-th achievement in schema order has **no source** (the page says
+  only "an index between 0 and `GetNumAchievements`"), nor that the
+  official count includes the same entries as Reborn's list. The
+  comparison is what tests both: a mismatch is a valid finding about
+  Reborn's order or count, not a fault of the tool, and is recorded as
+  such.
+- **What is logged:** `shadow match`, `shadow mismatch`, `shadow mismatch
+  (no text at the result)`, `shadow: no Reborn answer (<reason>)`,
+  `shadow: no app ID given` or `shadow: skipped, <reason>`. Never a name
+  or a digest: the call lines of positions 14 and 15 leave out register
+  texts, the return line of 15 shows only the address, and position 15
+  is no longer a `READS` result text (experiment 32 read it; that
+  experiment is done). The count stays visible in the return line of 14
+  (public schema data; ADR 0055's logs give counts).
+- **Limits:** as every shadow, only for logged calls (the first 50 calls
+  of a position, then every 10,000th), so a game with more than 50
+  achievements has its later indices not compared.
+- **Before answer mode:** a third game that calls these positions is
+  recorded (ADR 0059, decision 3), and the shadow comparison matches in
+  three games (LOOP step 7). An experiment plan with predictions is
+  committed before the first run.

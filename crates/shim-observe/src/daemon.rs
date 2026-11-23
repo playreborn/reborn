@@ -26,13 +26,22 @@
 //!   ([`ShadowLink::file_size`], [`ShadowLink::file_read`]); `rebornd`
 //!   answers from the session's separate shadow folder, filled from
 //!   Valve's cloud when `arm` registered the app (ADR 0055, stage 1).
+//! - For `GetNumAchievements` and `GetAchievementName`
+//!   (`STEAMUSERSTATS_INTERFACE_VERSION011`/`012` positions 14 and 15, ADR
+//!   0059 decision 2) the proxy keeps the official count and the SHA-256 of
+//!   each official name ([`AchievementQueue`]) until Reborn's list arrives
+//!   with the event `StatsReceived` of a `RequestStats` on the same shadow
+//!   session ([`ShadowLink::achievements`]; protocol 0.2, so no further
+//!   version gate). Reborn's names are hashed as the event is read and
+//!   kept only as digests ([`RebornAchievements`]).
 //!
 //! Whether an app is owned, the stats, the persona name, file names, file
 //! sizes and file contents are account data (ADR 0055, 0056): the log gets
 //! only `shadow match` or `shadow mismatch` ([`compare_subscribed`],
 //! [`compare_stats_received`], [`compare_persona_name`],
-//! [`compare_file_size`], [`compare_file_read`]) or why there is no
-//! answer, never the values, no file name and no size.
+//! [`compare_file_size`], [`compare_file_read`], [`compare_achievement`])
+//! or why there is no answer, never the values, no file name, no size and
+//! no achievement name.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::mpsc;
@@ -297,18 +306,40 @@ impl<R: Lines, W: Write> Client<R, W> {
     /// Waits at most `wait` for the event `StatsReceived` of an accepted
     /// `RequestStats`: `Ok(Some(result))` with Valve's `EResult`, `Ok(None)`
     /// when the wait ran out (`rebornd` sends no event for a request that
-    /// failed, ADR 0055 "Honest failure"). The achievement names are not
-    /// kept: callback 0x44d carries none. No request is open, so a
-    /// response here is unexpected.
+    /// failed, ADR 0055 "Honest failure"). Only the result: callback
+    /// 0x44d carries no names ([`Self::stats_answer`] keeps their digests).
+    /// No request is open, so a response here is unexpected.
     pub fn stats_event(&mut self, wait: Duration) -> Result<Option<i32>, DaemonError> {
+        Ok(self.stats_answer(wait)?.map(|answer| answer.result))
+    }
+
+    /// Like [`Self::stats_event`], with Reborn's achievement list as
+    /// digests ([`RebornAchievements::from_event`]): the names are hashed
+    /// here and their text is zeroed (best effort) before this returns.
+    pub fn stats_answer(
+        &mut self,
+        wait: Duration,
+    ) -> Result<Option<RebornAchievements>, DaemonError> {
         let Some(line) = self.reader.next_line(Some(wait))? else {
             return Ok(None);
         };
+        let mut line = line.into_bytes();
+        let message = std::str::from_utf8(&line)
+            .map_err(|_| DaemonError::Unexpected)
+            .and_then(|text| decode::<DaemonMessage>(text).map_err(|_| DaemonError::Unexpected));
+        wipe(&mut line);
         // `StatsReceived` is the only event of protocols 0.2 and 0.3.
-        match decode::<DaemonMessage>(&line).map_err(|_| DaemonError::Unexpected)? {
+        match message? {
             DaemonMessage::Event {
-                event: Event::StatsReceived { result, .. },
-            } => Ok(Some(result)),
+                event:
+                    Event::StatsReceived {
+                        result,
+                        achievement_names,
+                    },
+            } => Ok(Some(RebornAchievements::from_event(
+                result,
+                achievement_names,
+            ))),
             DaemonMessage::Response { .. } => Err(DaemonError::Unexpected),
         }
     }
@@ -374,6 +405,11 @@ fn open_stream() -> io::Result<interprocess::local_socket::Stream> {
 /// nothing is tried again (one game run, one attempt).
 pub struct ShadowLink<R, W> {
     state: State<R, W>,
+    /// Reborn's achievement list from the first `StatsReceived` read on
+    /// this session, as digests. `rebornd` sends the same cached answer for
+    /// every `RequestStats` of a run (`apps/rebornd/src/shim_stats.rs`), so
+    /// it is asked for once.
+    achievements: Option<RebornAchievements>,
 }
 
 enum State<R, W> {
@@ -387,6 +423,7 @@ impl<R: Lines, W: Write> Default for ShadowLink<R, W> {
     fn default() -> Self {
         Self {
             state: State::NotYet,
+            achievements: None,
         }
     }
 }
@@ -424,14 +461,50 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         connect: impl FnOnce() -> io::Result<Client<R, W>>,
         wait: Duration,
     ) -> Result<i32, String> {
+        let answer = self.request_stats(pid, app_id, connect, wait)?;
+        let result = answer.result;
+        self.achievements.get_or_insert(answer);
+        Ok(result)
+    }
+
+    /// Reborn's achievement list for the `GetNumAchievements` and
+    /// `GetAchievementName` comparison (ADR 0059, decision 2): from the
+    /// first `StatsReceived` this session read (also one read for 0x44d),
+    /// otherwise from a `RequestStats` sent now, waiting at most `wait` for
+    /// its event. A wait that runs out or a refusal is not kept: the next
+    /// question asks again, as [`Self::stats_result`] does.
+    pub fn achievements(
+        &mut self,
+        pid: u32,
+        app_id: u32,
+        connect: impl FnOnce() -> io::Result<Client<R, W>>,
+        wait: Duration,
+    ) -> Result<&RebornAchievements, String> {
+        if self.achievements.is_none() {
+            let answer = self.request_stats(pid, app_id, connect, wait)?;
+            self.achievements = Some(answer);
+        }
+        self.achievements
+            .as_ref()
+            .ok_or_else(|| "no achievement list".to_owned())
+    }
+
+    /// One `RequestStats` and its event, at most `wait` for the event.
+    fn request_stats(
+        &mut self,
+        pid: u32,
+        app_id: u32,
+        connect: impl FnOnce() -> io::Result<Client<R, W>>,
+        wait: Duration,
+    ) -> Result<RebornAchievements, String> {
         let (client, _) = self.client(pid, app_id, connect)?;
         let answer = match client.request_stats() {
-            Ok(Ok(())) => client.stats_event(wait),
+            Ok(Ok(())) => client.stats_answer(wait),
             Ok(Err(reason)) => return Err(reason_name(reason)),
             Err(error) => Err(error),
         };
         match answer {
-            Ok(Some(result)) => Ok(result),
+            Ok(Some(answer)) => Ok(answer),
             Ok(None) => Err(format!("no stats event within {} s", wait.as_secs())),
             Err(error) => Err(self.fail(error)),
         }
@@ -665,6 +738,199 @@ pub fn compare_persona_name(
             Ok(false) => "shadow mismatch".to_owned(),
             Err(why) => format!("shadow: no Reborn answer ({why})"),
         },
+    }
+}
+
+/// Zeroes `bytes` (best effort: copies made earlier, such as the reading
+/// thread's buffer, are not reached).
+fn wipe(bytes: &mut [u8]) {
+    bytes.fill(0);
+    // Keeps the zeroing from being optimised away as a dead store.
+    std::hint::black_box(&*bytes);
+}
+
+/// The SHA-256 of an achievement's API name (ADR 0059, decision 2). ADR
+/// 0055 treats the names as account data in logs, so `Debug` never shows
+/// the digest and there is no `Display`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AchievementDigest([u8; 32]);
+
+impl AchievementDigest {
+    /// The digest of the bytes of a name (UTF-8, without a NUL).
+    pub fn of(bytes: &[u8]) -> Self {
+        use sha2::{Digest, Sha256};
+        Self(Sha256::digest(bytes).into())
+    }
+}
+
+impl std::fmt::Debug for AchievementDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AchievementDigest(<redacted>)")
+    }
+}
+
+/// Most entries of Reborn's achievement list kept for the comparison: a
+/// bound chosen here, not a documented limit. A longer list is not
+/// compared.
+pub const MAX_REBORN_ACHIEVEMENTS: usize = 10_000;
+
+/// Reborn's side of the achievement comparison, from one `StatsReceived`:
+/// Valve's `EResult` and the internal (API) names in Reborn's order
+/// (`reborn_cm::achievements::UserStats::achievements`: every `bits`
+/// entry of every stat, in schema order; `docs/protocol/achievements.md`)
+/// as SHA-256 digests, or why there is no list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RebornAchievements {
+    /// The `EResult` Valve sent; 1 is OK.
+    pub result: i32,
+    names: Result<Vec<AchievementDigest>, &'static str>,
+}
+
+impl RebornAchievements {
+    /// From the event's fields: the API names are hashed, then their text
+    /// and the display names are zeroed (best effort) and dropped.
+    pub fn from_event(result: i32, names: Vec<reborn_shim_protocol::AchievementName>) -> Self {
+        let digests = if result != 1 {
+            Err("Valve's stats result was not OK")
+        } else if names.len() > MAX_REBORN_ACHIEVEMENTS {
+            Err("more achievements than the proxy compares")
+        } else {
+            Ok(names
+                .iter()
+                .map(|name| AchievementDigest::of(name.name.as_bytes()))
+                .collect())
+        };
+        for name in names {
+            wipe(&mut name.name.into_bytes());
+            wipe(&mut name.display_name.into_bytes());
+        }
+        Self {
+            result,
+            names: digests,
+        }
+    }
+}
+
+/// What the official client gave the game at one achievement call (ADR
+/// 0059, decision 2). Never a name: only its digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OfficialAchievement {
+    /// `GetNumAchievements`: its result (a `uint32` on the public
+    /// `ISteamUserStats` page; the low 32 bits of `rax`).
+    Count(u32),
+    /// `GetAchievementName(index)`: the index the game passed (low 32 bits
+    /// of `rdx`, the page's `uint32 iAchievement`) and the digest of the
+    /// text the result pointed to, or why there was none.
+    Name {
+        /// The index the game asked for.
+        index: u32,
+        /// The digest of the official text.
+        text: Result<AchievementDigest, &'static str>,
+    },
+}
+
+/// The shadow note for `GetNumAchievements` and `GetAchievementName`
+/// (`STEAMUSERSTATS_INTERFACE_VERSION011`/`012` positions 14 and 15, ADR
+/// 0059 decision 2): the official count against the length of Reborn's
+/// list, the official text at index `i` against Reborn's `i`-th API name.
+/// For an index beyond Reborn's list Reborn's answer is the empty text, as
+/// the public `ISteamUserStats` page says `GetAchievementName` returns for
+/// an invalid index (`docs/shim/meanings.md`, loop iteration 16a). That
+/// index `i` is Reborn's `i`-th achievement is **not sourced**: this
+/// comparison tests it, so a mismatch is a finding, not a fault of the
+/// tool. Only match, mismatch or the reason is logged, never a name or a
+/// digest.
+pub fn compare_achievement(
+    official: &OfficialAchievement,
+    reborn: Result<&RebornAchievements, String>,
+) -> String {
+    let names = match reborn.map(|reborn| &reborn.names) {
+        Ok(Ok(names)) => names,
+        Ok(Err(why)) => return format!("shadow: no Reborn answer ({why})"),
+        Err(why) => return format!("shadow: no Reborn answer ({why})"),
+    };
+    let same = match official {
+        OfficialAchievement::Count(count) => usize::try_from(*count) == Ok(names.len()),
+        OfficialAchievement::Name { text: Err(why), .. } => {
+            return format!("shadow mismatch ({why})");
+        }
+        OfficialAchievement::Name {
+            index,
+            text: Ok(digest),
+        } => {
+            let reborn = usize::try_from(*index)
+                .ok()
+                .and_then(|index| names.get(index).copied())
+                .unwrap_or_else(|| AchievementDigest::of(b""));
+            *digest == reborn
+        }
+    };
+    if same {
+        "shadow match".to_owned()
+    } else {
+        "shadow mismatch".to_owned()
+    }
+}
+
+/// Official achievement answers kept at most until Reborn's list arrives;
+/// later ones are logged as skipped. With the start of a log line (about
+/// 80 bytes) and a digest each, about 30 KiB at most.
+pub const MAX_WAITING_ACHIEVEMENTS: usize = 256;
+
+/// Official achievement answers waiting for Reborn's list (ADR 0059,
+/// decision 2). The official client answers within about 25 ms of the
+/// game's `RequestCurrentStats`, Reborn's list comes with `StatsReceived`
+/// about 300 ms later (ADR 0059, "A timing observation"), so the answers
+/// are kept here, as digests, and compared when the list is there. The
+/// game's thread pushes; the worker takes them all at once. Only one wake
+/// for the worker is open at a time, so a game that asks for many names
+/// does not fill the worker's queue.
+#[derive(Debug, Default)]
+pub struct AchievementQueue {
+    waiting: Vec<(String, OfficialAchievement)>,
+    woken: bool,
+}
+
+/// What [`AchievementQueue::push`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Pushed {
+    /// Kept; the worker has to be woken for it.
+    Wake,
+    /// Kept; a wake is already open.
+    Kept,
+    /// Not kept: [`MAX_WAITING_ACHIEVEMENTS`] wait already. The start of
+    /// the log line comes back for the "skipped" note.
+    Full(String),
+}
+
+impl AchievementQueue {
+    /// An empty queue.
+    pub const fn new() -> Self {
+        Self {
+            waiting: Vec::new(),
+            woken: false,
+        }
+    }
+
+    /// Keeps one official answer with the start of its log line.
+    pub fn push(&mut self, prefix: String, official: OfficialAchievement) -> Pushed {
+        if self.waiting.len() >= MAX_WAITING_ACHIEVEMENTS {
+            return Pushed::Full(prefix);
+        }
+        self.waiting.push((prefix, official));
+        if self.woken {
+            Pushed::Kept
+        } else {
+            self.woken = true;
+            Pushed::Wake
+        }
+    }
+
+    /// Everything waiting, in the order the game's calls returned; the next
+    /// push wakes the worker again.
+    pub fn take(&mut self) -> Vec<(String, OfficialAchievement)> {
+        self.woken = false;
+        std::mem::take(&mut self.waiting)
     }
 }
 
@@ -1358,5 +1624,241 @@ mod tests {
             !sent(client).contains("compare_persona_name"),
             "nothing a 0.2 daemon cannot read"
         );
+    }
+
+    /// Made-up achievement API names, in Reborn's order.
+    const STATS_THREE: &str = r#"{"event":{"type":"stats_received","result":1,"achievement_names":[{"name":"ACH_ONE","display_name":"One"},{"name":"ACH_TWO","display_name":"Two"},{"name":"ACH_THREE","display_name":"Three"}]}}"#;
+
+    fn name(index: u32, text: &str) -> OfficialAchievement {
+        OfficialAchievement::Name {
+            index,
+            text: Ok(AchievementDigest::of(text.as_bytes())),
+        }
+    }
+
+    fn three() -> RebornAchievements {
+        let mut client = scripted(&[STATS_THREE]);
+        match client.stats_answer(WAIT) {
+            Ok(Some(answer)) => answer,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_stats_event_keeps_only_digests_of_the_names() {
+        let reborn = three();
+        assert_eq!(reborn.result, 1);
+        let shown = format!("{reborn:?}");
+        for text in ["ACH_", "One", "Two", "Three"] {
+            assert!(!shown.contains(text), "{shown}");
+        }
+        // Each name is compared at its own index only.
+        for (index, text) in [(0, "ACH_ONE"), (1, "ACH_TWO"), (2, "ACH_THREE")] {
+            assert_eq!(
+                compare_achievement(&name(index, text), Ok(&reborn)),
+                "shadow match"
+            );
+        }
+        assert_eq!(
+            compare_achievement(&name(0, "ACH_TWO"), Ok(&reborn)),
+            "shadow mismatch",
+            "another index"
+        );
+        assert_eq!(
+            compare_achievement(&name(1, "One"), Ok(&reborn)),
+            "shadow mismatch",
+            "the display name is not the API name"
+        );
+        assert_eq!(
+            compare_achievement(&name(0, "ach_one"), Ok(&reborn)),
+            "shadow mismatch",
+            "letter case counts"
+        );
+    }
+
+    #[test]
+    fn the_count_is_compared_with_the_length_of_the_list() {
+        let reborn = three();
+        let count = |n| compare_achievement(&OfficialAchievement::Count(n), Ok(&reborn));
+        assert_eq!(count(3), "shadow match");
+        assert_eq!(count(2), "shadow mismatch");
+        assert_eq!(count(29), "shadow mismatch");
+        let empty = RebornAchievements::from_event(1, Vec::new());
+        assert_eq!(
+            compare_achievement(&OfficialAchievement::Count(0), Ok(&empty)),
+            "shadow match"
+        );
+    }
+
+    #[test]
+    fn an_index_beyond_the_list_expects_the_empty_text() {
+        // The public page: an empty string for an invalid index.
+        let reborn = three();
+        assert_eq!(
+            compare_achievement(&name(3, ""), Ok(&reborn)),
+            "shadow match"
+        );
+        assert_eq!(
+            compare_achievement(&name(u32::MAX, ""), Ok(&reborn)),
+            "shadow match"
+        );
+        assert_eq!(
+            compare_achievement(&name(3, "ACH_FOUR"), Ok(&reborn)),
+            "shadow mismatch"
+        );
+        assert_eq!(
+            compare_achievement(&name(0, ""), Ok(&reborn)),
+            "shadow mismatch",
+            "an empty text where Reborn has a name"
+        );
+        let no_text = OfficialAchievement::Name {
+            index: 0,
+            text: Err("no text at the result"),
+        };
+        assert_eq!(
+            compare_achievement(&no_text, Ok(&reborn)),
+            "shadow mismatch (no text at the result)"
+        );
+    }
+
+    #[test]
+    fn without_a_list_nothing_is_compared() {
+        assert_eq!(
+            compare_achievement(&name(0, "ACH_ONE"), Err("offline".to_owned())),
+            "shadow: no Reborn answer (offline)"
+        );
+        let failed = RebornAchievements::from_event(2, Vec::new());
+        assert_eq!(
+            compare_achievement(&OfficialAchievement::Count(0), Ok(&failed)),
+            "shadow: no Reborn answer (Valve's stats result was not OK)"
+        );
+        let names = (0..=MAX_REBORN_ACHIEVEMENTS)
+            .map(|index| reborn_shim_protocol::AchievementName {
+                name: format!("ACH_{index}"),
+                display_name: String::new(),
+            })
+            .collect();
+        let long = RebornAchievements::from_event(1, names);
+        assert_eq!(
+            compare_achievement(&name(0, "ACH_0"), Ok(&long)),
+            "shadow: no Reborn answer (more achievements than the proxy compares)"
+        );
+    }
+
+    #[test]
+    fn the_list_is_asked_for_once_per_session() {
+        let mut link = ShadowLink::default();
+        let reborn = link
+            .achievements(
+                4242,
+                DARK_DECEPTION,
+                || {
+                    Ok(scripted(&[
+                        SESSION,
+                        r#"{"id":2,"response":{"type":"accepted"}}"#,
+                        STATS_THREE,
+                    ]))
+                },
+                WAIT,
+            )
+            .cloned();
+        assert_eq!(reborn, Ok(three()));
+        let never = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(
+            link.achievements(4242, DARK_DECEPTION, never, WAIT)
+                .cloned(),
+            Ok(three())
+        );
+        let State::Ready(client, _) = &link.state else {
+            panic!("no session");
+        };
+        assert_eq!(
+            sent(client),
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
+             {\"id\":2,\"request\":{\"type\":\"request_stats\"}}\n",
+            "one RequestStats, no name sent"
+        );
+    }
+
+    #[test]
+    fn the_list_from_a_stats_callback_comparison_is_used_again() {
+        let mut link = ShadowLink::default();
+        let connect = || {
+            Ok(scripted(&[
+                SESSION,
+                r#"{"id":2,"response":{"type":"accepted"}}"#,
+                STATS_THREE,
+            ]))
+        };
+        assert_eq!(link.stats_result(1, DARK_DECEPTION, connect, WAIT), Ok(1));
+        let never = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(
+            link.achievements(1, DARK_DECEPTION, never, WAIT).cloned(),
+            Ok(three())
+        );
+    }
+
+    #[test]
+    fn a_refused_list_is_asked_for_again() {
+        let mut link = ShadowLink::default();
+        let connect = || {
+            Ok(scripted(&[
+                SESSION,
+                r#"{"id":2,"response":{"type":"unavailable","reason":"not_signed_in"}}"#,
+                r#"{"id":3,"response":{"type":"accepted"}}"#,
+                STATS_THREE,
+            ]))
+        };
+        assert_eq!(
+            link.achievements(1, DARK_DECEPTION, connect, WAIT).cloned(),
+            Err("not_signed_in".to_owned())
+        );
+        let never = || -> io::Result<_> { panic!("connected again") };
+        assert_eq!(
+            link.achievements(1, DARK_DECEPTION, never, WAIT).cloned(),
+            Ok(three())
+        );
+    }
+
+    #[test]
+    fn the_achievement_queue_wakes_once_and_is_bounded() {
+        let mut queue = AchievementQueue::new();
+        assert_eq!(
+            queue.push("a".to_owned(), OfficialAchievement::Count(3)),
+            Pushed::Wake
+        );
+        assert_eq!(queue.push("b".to_owned(), name(0, "ACH_ONE")), Pushed::Kept);
+        let taken = queue.take();
+        assert_eq!(
+            taken,
+            vec![
+                ("a".to_owned(), OfficialAchievement::Count(3)),
+                ("b".to_owned(), name(0, "ACH_ONE")),
+            ]
+        );
+        assert!(queue.take().is_empty());
+        // After a take, the next push wakes the worker again.
+        assert_eq!(
+            queue.push("c".to_owned(), OfficialAchievement::Count(3)),
+            Pushed::Wake
+        );
+        for index in 1..MAX_WAITING_ACHIEVEMENTS {
+            assert_eq!(
+                queue.push(format!("{index}"), OfficialAchievement::Count(3)),
+                Pushed::Kept
+            );
+        }
+        assert_eq!(
+            queue.push("full".to_owned(), OfficialAchievement::Count(3)),
+            Pushed::Full("full".to_owned())
+        );
+        assert_eq!(queue.take().len(), MAX_WAITING_ACHIEVEMENTS);
+    }
+
+    #[test]
+    fn achievement_digests_are_never_shown() {
+        let digest = AchievementDigest::of(b"ACH_ONE");
+        assert_eq!(format!("{digest:?}"), "AchievementDigest(<redacted>)");
+        assert_ne!(digest, AchievementDigest::of(b"ACH_TWO"));
     }
 }

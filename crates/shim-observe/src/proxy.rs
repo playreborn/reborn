@@ -100,6 +100,19 @@
 //! this call), not in the return line (only the address) and not as a
 //! `READS` result text; the log says only match, mismatch or why.
 //!
+//! Achievement names (ADR 0059, decision 2): for
+//! `STEAMUSERSTATS_INTERFACE_VERSION011`/`012` positions 14
+//! (`GetNumAchievements`) and 15 (`GetAchievementName`) the proxy keeps
+//! the official count, and for each name the index the game passed and the
+//! SHA-256 of the text the result points to (read and hashed on the game's
+//! thread, the text dropped at once), in a bounded queue
+//! (`crate::daemon::AchievementQueue`). The official client answers these
+//! calls about 300 ms before `rebornd`'s `StatsReceived` can arrive, so the
+//! worker compares them once Reborn's list is there. The call lines of
+//! these positions leave out register texts, position 15 is no longer a
+//! `READS` result text (experiment 32 is done), and the log says only
+//! match, mismatch or why.
+//!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
 //! --app`, the stub jumps to Reborn's own function instead of the official
@@ -265,14 +278,13 @@ const READS: &[(&str, usize, Read)] = &[
     // seventh arguments, counting the object; only the app ID's low 32
     // bits and "text: yes/no" are logged (ADR 0058).
     ("SteamGameServer012", 0, Read::StackAppIdAndText),
-    // `docs/shim/meanings.md`, experiment 32 (ADR 0053): candidates
-    // `GetAchievementName` (011 and 012 position 15) and
-    // `GetLeaderboardName` (013 position 23) return the game's public
-    // achievement and leaderboard names. The only functions on the page
-    // that return a text are these two and
-    // `GetAchievementDisplayAttribute`, all public game data.
-    ("STEAMUSERSTATS_INTERFACE_VERSION011", 15, Read::ResultText),
-    ("STEAMUSERSTATS_INTERFACE_VERSION012", 15, Read::ResultText),
+    // `docs/shim/meanings.md`, experiment 32 (ADR 0053): candidate
+    // `GetLeaderboardName` (013 position 23) returns the game's public
+    // leaderboard names. The only functions on the page that return a text
+    // are it, `GetAchievementName` and `GetAchievementDisplayAttribute`,
+    // all public game data. `GetAchievementName` (011 and 012 position 15)
+    // was listed for experiment 32 too; since ADR 0059 (decision 2) it is
+    // shadowed and its text is never logged ([`Shadow::AchievementName`]).
     ("STEAMUSERSTATS_INTERFACE_VERSION013", 23, Read::ResultText),
 ];
 
@@ -306,6 +318,14 @@ enum Shadow {
     /// SHA-1 with what the official client wrote into the game's buffer.
     /// Asked like [`Shadow::Subscribed`].
     FileRead,
+    /// `GetNumAchievements` (ADR 0059, decision 2): the low 32 bits of the
+    /// result, compared with the length of Reborn's achievement list once
+    /// `rebornd`'s `StatsReceived` is there.
+    AchievementCount,
+    /// `GetAchievementName(index)` (ADR 0059, decision 2): the SHA-256 of
+    /// the text the result points to, compared with Reborn's name at the
+    /// same index once the list is there. The text is never logged.
+    AchievementName,
 }
 
 impl Shadow {
@@ -322,6 +342,11 @@ impl Shadow {
     /// Whether the call passes a cloud file name in `rdx`.
     fn takes_file_name(self) -> bool {
         matches!(self, Shadow::FileSize | Shadow::FileRead)
+    }
+
+    /// Whether the call is one of the achievement comparisons.
+    fn is_achievement(self) -> bool {
+        matches!(self, Shadow::AchievementCount | Shadow::AchievementName)
     }
 }
 
@@ -375,6 +400,31 @@ const SHADOWS: &[(&str, usize, Shadow)] = &[
         1,
         Shadow::FileRead,
     ),
+    // `docs/shim/meanings.md`: confirmed `GetNumAchievements` (position 14,
+    // under A1 and A3) and `GetAchievementName` (position 15), experiment
+    // 32; ADR 0059 (decision 2) compares them with Reborn's list from
+    // `rebornd`. That the game's index is Reborn's index is not sourced:
+    // the comparison tests it.
+    (
+        "STEAMUSERSTATS_INTERFACE_VERSION011",
+        14,
+        Shadow::AchievementCount,
+    ),
+    (
+        "STEAMUSERSTATS_INTERFACE_VERSION012",
+        14,
+        Shadow::AchievementCount,
+    ),
+    (
+        "STEAMUSERSTATS_INTERFACE_VERSION011",
+        15,
+        Shadow::AchievementName,
+    ),
+    (
+        "STEAMUSERSTATS_INTERFACE_VERSION012",
+        15,
+        Shadow::AchievementName,
+    ),
 ];
 
 /// The calls ADR 0046 answers itself (answer mode): interface version
@@ -418,9 +468,14 @@ fn answer_for(interface: &str, slot: usize) -> Option<usize> {
         Shadow::AppId => given_app_id().map(|_| answer_app_id as *const () as usize),
         // Not in ANSWERS yet: shadow mode first (ADR 0046).
         Shadow::BatteryPower => None,
-        // Ownership, the persona name and cloud files are never answered
-        // by the proxy (ADR 0046, 0055, 0056).
-        Shadow::Subscribed | Shadow::PersonaName | Shadow::FileSize | Shadow::FileRead => None,
+        // Ownership, the persona name, cloud files and achievements are
+        // never answered by the proxy (ADR 0046, 0055, 0056, 0059).
+        Shadow::Subscribed
+        | Shadow::PersonaName
+        | Shadow::FileSize
+        | Shadow::FileRead
+        | Shadow::AchievementCount
+        | Shadow::AchievementName => None,
     }
 }
 
@@ -449,6 +504,9 @@ enum Official {
         max: u32,
         read: crate::daemon::OfficialRead,
     },
+    /// A wake for the achievement comparisons: what the official client
+    /// answered waits in [`ACHIEVEMENTS`], not in the ask (ADR 0059).
+    Achievements,
 }
 
 /// The arguments of a cloud read, copied when the call starts: the file
@@ -500,26 +558,97 @@ fn ask(prefix: String, official: Official) {
                     std::sync::mpsc::TrySendError::Full(ask) => (ask, "worker busy"),
                     std::sync::mpsc::TrySendError::Disconnected(ask) => (ask, "worker thread gone"),
                 };
-                log(&format!("{} shadow: skipped, {why}", ask.prefix));
+                skipped(ask, why);
             }
         }
-        None => log(&format!("{} shadow: no worker thread", ask.prefix)),
+        None => skipped(ask, "no worker thread"),
     }
+}
+
+/// An ask the worker never got: its log line says so. For the
+/// achievement wake, everything waiting in [`ACHIEVEMENTS`] is dropped and
+/// logged, so the next achievement call wakes the worker again.
+fn skipped(ask: Ask, why: &str) {
+    if matches!(ask.official, Official::Achievements) {
+        for (prefix, _) in achievements().take() {
+            log(&format!("{prefix} shadow: skipped, {why}"));
+        }
+    } else if why == "no worker thread" {
+        log(&format!("{} shadow: no worker thread", ask.prefix));
+    } else {
+        log(&format!("{} shadow: skipped, {why}", ask.prefix));
+    }
+}
+
+/// What the official client answered at the achievement calls, waiting
+/// for Reborn's list (ADR 0059, decision 2). Bounded by
+/// [`crate::daemon::MAX_WAITING_ACHIEVEMENTS`]; holds digests, never names.
+static ACHIEVEMENTS: Mutex<crate::daemon::AchievementQueue> =
+    Mutex::new(crate::daemon::AchievementQueue::new());
+
+/// The achievement queue, also after a panic elsewhere held the lock (it
+/// holds plain data, which stays consistent).
+fn achievements() -> std::sync::MutexGuard<'static, crate::daemon::AchievementQueue> {
+    ACHIEVEMENTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Keeps one official achievement answer for the comparison and wakes the
+/// worker if no wake is open (ADR 0059, decision 2). Never waits for
+/// `rebornd`; the lock is held only to push.
+fn achievement_shadow(prefix: String, official: crate::daemon::OfficialAchievement) {
+    use crate::daemon::Pushed;
+    let pushed = achievements().push(prefix, official);
+    match pushed {
+        Pushed::Wake => ask(String::new(), Official::Achievements),
+        Pushed::Kept => {}
+        Pushed::Full(prefix) => log(&format!(
+            "{prefix} shadow: skipped, {} achievement answers already wait",
+            crate::daemon::MAX_WAITING_ACHIEVEMENTS
+        )),
+    }
+}
+
+/// The official text of a `GetAchievementName` call: the SHA-256 of the
+/// NUL-terminated bytes at `address` (at most [`MAX_NAME_BYTES`], one
+/// readable region), read in place; the copy is zeroed when dropped.
+fn achievement_digest_at(address: u64) -> Result<crate::daemon::AchievementDigest, &'static str> {
+    let text = c_text_at(address, MAX_NAME_BYTES).ok_or("no text at the result")?;
+    Ok(crate::daemon::AchievementDigest::of(text.bytes()))
 }
 
 /// The worker: one shadow session with `rebornd` for this process, for the
 /// app given to `arm` only; one `AppOwnership` per `BIsSubscribed`, one
 /// `RequestStats` per 0x44d, one `ComparePersonaName` per
 /// `SteamFriends017` position 0, one `CloudFileSize` or `CloudRead` per
-/// cloud read, all on the same link and queue.
+/// cloud read, all on the same link and queue. For the achievement calls
+/// one `RequestStats` until its `StatsReceived` came (ADR 0059; `rebornd`
+/// answers every `RequestStats` of a run from one fetch), then every
+/// official answer waiting in [`ACHIEVEMENTS`] is compared.
 fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
     use crate::daemon::{
-        compare_file_read, compare_file_size, compare_persona_name, compare_stats_received,
-        compare_subscribed, connect_with_waits,
+        compare_achievement, compare_file_read, compare_file_size, compare_persona_name,
+        compare_stats_received, compare_subscribed, connect_with_waits,
     };
     let mut link = crate::daemon::ShadowLink::default();
     let pid = std::process::id();
     for ask in asks {
+        if matches!(ask.official, Official::Achievements) {
+            // Waits for Reborn's list first; answers that come meanwhile
+            // join the queue and are compared below too.
+            let reborn = given_app_id()
+                .ok_or(())
+                .map(|app_id| link.achievements(pid, app_id, connect_with_waits, STATS_WAIT));
+            for (prefix, official) in achievements().take() {
+                let note = match &reborn {
+                    Err(()) => "shadow: no app ID given".to_owned(),
+                    Ok(reborn) => compare_achievement(&official, reborn.clone()),
+                };
+                log(&format!("{prefix} {note}"));
+            }
+            continue;
+        }
         let note = match (given_app_id(), ask.official) {
             (None, _) => "shadow: no app ID given".to_owned(),
             (Some(app_id), Official::Subscribed(rax)) => {
@@ -543,6 +672,7 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
                 read,
                 link.file_read(pid, app_id, connect_with_waits, &name, max),
             ),
+            (Some(_), Official::Achievements) => continue,
         };
         log(&format!("{} {note}", ask.prefix));
     }
@@ -756,10 +886,12 @@ fn c_text_at(address: u64, max: usize) -> Option<Wiped> {
 /// Whether the call's argument texts stay out of the log: for the persona
 /// name comparison a leftover register could point to the name (ADR 0056);
 /// for the account-data shadows (ownership, cloud reads, ADR 0055) the file
-/// name and old buffer contents.
+/// name and old buffer contents; for the achievement comparisons (ADR
+/// 0059) a leftover register could point to an achievement name.
 fn hides_texts(interface: &str, slot: usize) -> bool {
-    shadow_for(interface, slot)
-        .is_some_and(|shadow| shadow == Shadow::PersonaName || shadow.is_account_data())
+    shadow_for(interface, slot).is_some_and(|shadow| {
+        shadow == Shadow::PersonaName || shadow.is_account_data() || shadow.is_achievement()
+    })
 }
 
 /// The result part of a return line: `rax` as a number, except for an
@@ -882,6 +1014,9 @@ struct Pending {
     /// For a shadowed cloud read: its arguments as the call started
     /// (ADR 0055, stage 1).
     cloud: Option<CloudArgs>,
+    /// For a shadowed `GetAchievementName`: the index the game passed, the
+    /// low 32 bits of `rdx` as the call started (ADR 0059).
+    index: Option<u32>,
 }
 
 /// A read to do when a listed call returns (step 4c, ADR 0043).
@@ -1041,6 +1176,7 @@ extern "C" fn observe_call(
                 after: None,
                 shadow: None,
                 cloud: None,
+                index: None,
             });
         });
         targets()[index]
@@ -1125,6 +1261,22 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                         Err(why) => log(&format!("{prefix} shadow: skipped, {why}")),
                     }
                 }
+                // ADR 0059: kept until Reborn's list is there; the name is
+                // hashed here, before the game can change it.
+                Shadow::AchievementCount => achievement_shadow(
+                    prefix,
+                    crate::daemon::OfficialAchievement::Count(rax as u32),
+                ),
+                Shadow::AchievementName => match call.index {
+                    Some(index) => achievement_shadow(
+                        prefix,
+                        crate::daemon::OfficialAchievement::Name {
+                            index,
+                            text: achievement_digest_at(rax),
+                        },
+                    ),
+                    None => log(&format!("{prefix} shadow: skipped, no index")),
+                },
                 _ => log(&format!(
                     "{prefix} {}",
                     describe_shadow(rax, shadow, given_app_id())
@@ -1225,6 +1377,8 @@ extern "C" fn observe_method(
                 buffer: saved.r8,
                 size: saved.r9 as u32,
             });
+        // ADR 0059: `GetAchievementName`'s `uint32` index, before any swap.
+        let index = (shadow == Some(Shadow::AchievementName)).then_some(saved.rdx as u32);
         let swapped = swap_stand_ins(saved, false);
         if logged {
             let beyond = if slot >= info.counted {
@@ -1261,10 +1415,10 @@ extern "C" fn observe_method(
             .get_or_init(|| own_dir().is_some_and(|dir| dir.join(READ_ONLY_MARKER).exists()));
         let answered = (!read_only).then(|| answer_for(&info.name, slot)).flatten();
         let target = answered.unwrap_or(target);
-        let (shadow, cloud) = if answered.is_some() {
-            (None, None)
+        let (shadow, cloud, index) = if answered.is_some() {
+            (None, None, None)
         } else {
-            (shadow, cloud)
+            (shadow, cloud, index)
         };
         if answered.is_some() && logged {
             log(&format!(
@@ -1286,6 +1440,7 @@ extern "C" fn observe_method(
                 after,
                 shadow,
                 cloud,
+                index,
             });
         });
         target
@@ -1639,9 +1794,12 @@ fn describe_shadow(rax: u64, shadow: Shadow, app_id: Option<u32>) -> String {
         }
         // Needs `rebornd`'s answer: compared by the worker thread
         // (`ask`), never here.
-        Shadow::Subscribed | Shadow::PersonaName | Shadow::FileSize | Shadow::FileRead => {
-            "shadow: asked rebornd".to_owned()
-        }
+        Shadow::Subscribed
+        | Shadow::PersonaName
+        | Shadow::FileSize
+        | Shadow::FileRead
+        | Shadow::AchievementCount
+        | Shadow::AchievementName => "shadow: asked rebornd".to_owned(),
     }
 }
 
@@ -2255,6 +2413,7 @@ mod tests {
             after: None,
             shadow: None,
             cloud: None,
+            index: None,
         }
     }
 
@@ -2322,16 +2481,17 @@ mod tests {
     #[test]
     fn experiment_32_reads() {
         let registers = saved(0x1111_0000, 0x2222_0000, 0x3333_0000);
-        for (interface, position) in [
-            ("STEAMUSERSTATS_INTERFACE_VERSION011", 15),
-            ("STEAMUSERSTATS_INTERFACE_VERSION012", 15),
-            ("STEAMUSERSTATS_INTERFACE_VERSION013", 23),
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION013", 23, &registers, 0),
+            Some(After::ResultText)
+        );
+        // Experiment 32 also read the text of 011 and 012 position 15;
+        // since ADR 0059 (decision 2) the name is shadowed and never logged.
+        for interface in [
+            "STEAMUSERSTATS_INTERFACE_VERSION011",
+            "STEAMUSERSTATS_INTERFACE_VERSION012",
         ] {
-            assert_eq!(
-                after_for(interface, position, &registers, 0),
-                Some(After::ResultText),
-                "{interface} {position}"
-            );
+            assert_eq!(after_for(interface, 15, &registers, 0), None, "{interface}");
         }
         // Only the listed positions: the count (14) and the leaderboard
         // calls around them are logged as before.
@@ -2689,6 +2849,81 @@ mod tests {
         assert!(Shadow::FileSize.is_account_data() && Shadow::FileRead.is_account_data());
         assert!(!Shadow::AppId.is_account_data());
         assert!(Shadow::FileRead.takes_file_name() && !Shadow::Subscribed.takes_file_name());
+    }
+
+    /// A made-up achievement API name.
+    const ACHIEVEMENT: &std::ffi::CStr = c"ACH_TEST_FIRST_STEP";
+
+    #[test]
+    fn achievement_calls_are_shadowed_never_read_as_text_and_never_answered() {
+        for interface in [
+            "STEAMUSERSTATS_INTERFACE_VERSION011",
+            "STEAMUSERSTATS_INTERFACE_VERSION012",
+        ] {
+            assert_eq!(shadow_for(interface, 14), Some(Shadow::AchievementCount));
+            assert_eq!(shadow_for(interface, 15), Some(Shadow::AchievementName));
+            assert!(hides_texts(interface, 14) && hides_texts(interface, 15));
+            assert_eq!(answer_for(interface, 14), None);
+            assert_eq!(answer_for(interface, 15), None);
+            assert!(
+                READS
+                    .iter()
+                    .all(|&(name, position, _)| name != interface || position != 15),
+                "{interface} 15 is no READS result text"
+            );
+        }
+        // 013 has other meanings at these positions (`GetLeaderboardName`
+        // is 23); nothing there is compared.
+        assert_eq!(shadow_for("STEAMUSERSTATS_INTERFACE_VERSION013", 14), None);
+        assert_eq!(shadow_for("STEAMUSERSTATS_INTERFACE_VERSION013", 15), None);
+        assert_eq!(shadow_for("STEAMUSERSTATS_INTERFACE_VERSION011", 12), None);
+        assert!(!Shadow::AchievementName.is_account_data());
+        assert!(Shadow::AchievementCount.is_achievement() && !Shadow::FileRead.is_achievement());
+        assert!(
+            ANSWERS
+                .iter()
+                .all(|&(_, _, answer)| !answer.is_achievement())
+        );
+    }
+
+    #[test]
+    fn an_achievement_name_is_hashed_in_place_and_never_printed() {
+        use crate::daemon::{AchievementDigest, OfficialAchievement, compare_achievement};
+        let address = ACHIEVEMENT.as_ptr() as u64;
+        let digest = achievement_digest_at(address).unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(digest, AchievementDigest::of(ACHIEVEMENT.to_bytes()));
+        assert_eq!(
+            achievement_digest_at(0).map(|_| ()),
+            Err("no text at the result")
+        );
+        // The empty text an invalid index gets has a digest too.
+        assert_eq!(
+            achievement_digest_at(c"".as_ptr() as u64),
+            Ok(AchievementDigest::of(b""))
+        );
+
+        // Every line the proxy writes for these calls: the call line (a
+        // leftover register could point to a name), the return line, the
+        // first note and the comparison. None holds the name.
+        let interface = "STEAMUSERSTATS_INTERFACE_VERSION011";
+        let registers = saved(address, address, address);
+        let official = OfficialAchievement::Name {
+            index: 0,
+            text: Ok(digest),
+        };
+        let lines = [
+            describe_registers(&registers, !hides_texts(interface, 15)),
+            result_note(address, shadow_for(interface, 15)),
+            describe_shadow(address, Shadow::AchievementName, Some(2_143_030)),
+            compare_achievement(&official, Err("offline".to_owned())),
+            format!("{official:?}"),
+        ];
+        for line in &lines {
+            assert!(!line.contains("ACH_"), "{line}");
+            assert!(!line.contains("FIRST_STEP"), "{line}");
+        }
+        assert!(lines[0].contains("texts hidden"), "{}", lines[0]);
+        assert_eq!(lines[1], format!("rax=0x{address:x}"));
     }
 
     #[test]

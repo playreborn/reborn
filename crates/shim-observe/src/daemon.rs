@@ -14,8 +14,8 @@
 //!   (`UserStatsReceived_t`, `docs/shim/meanings.md`, experiment 21) to the
 //!   game, the proxy sends `RequestStats` on the same shadow session and
 //!   waits for the event `StatsReceived` ([`ShadowLink::stats_result`]).
-//! - For `SteamFriends017` position 0 (`GetPersonaName` or
-//!   `ClearRichPresence`, ADR 0056 decision 2) the proxy sends only the
+//! - For `SteamFriends017` position 0 (`GetPersonaName`, experiment 33,
+//!   under A1; ADR 0056 decision 2) the proxy sends only the
 //!   SHA-256 of the text the official client returned
 //!   (`ComparePersonaName`, [`ShadowLink::persona_name`]); `rebornd`
 //!   answers whether it is the account's persona name. Only to a `rebornd`

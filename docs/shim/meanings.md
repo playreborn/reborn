@@ -4402,6 +4402,40 @@ still runs at about 60 s, its 17 and 18 are the game's own calls,
 recorded in all four earlier runs (red line 4). The script needs one log per game; a game whose run fails
 can be run again later, and only its group waits.
 
+
+**Result of experiment 34** (agent runs by the main session after the
+plan time 02:31:23, proxy built from the plan branch; logs recorded by
+`run.sh`: `observe-45060` Cave Crawlers, `observe-27548` Bongo Cat; both
+closed normally, no input): **mismatch** overall, checked by the script.
+
+```text
+observe-45060.log (Cave Crawlers) H1: 1 calls of 6, all true with a small handle written: True -> match
+observe-45060.log (Cave Crawlers) H2: 1 of 1 callbacks 4701 with size 4, a handle of 6 and a 4700 for it next -> match
+observe-45060.log (Cave Crawlers) H3: 1 of 2 callbacks 4700 with size 8 and a handle read later by 1 or 3 -> MISMATCH
+observe-45060.log (Cave Crawlers) C1: 1 of 2 callbacks 4700 for a handle of 6 -> MISMATCH
+observe-45060.log (Cave Crawlers) C2: 1 callbacks 4702, all size 1: True -> match
+observe-45060.log (Cave Crawlers) C3: 1 calls of 21 before the first 4702 (all false: True), 2 after (all true: True), NULL-then-buffer pair: True -> match
+observe-45060.log (Cave Crawlers) C4: buffers wide: True, a wide r9: True, a small non-zero r9: True -> match
+observe-45060.log (Cave Crawlers) group CC: MISMATCH
+observe-27548.log (Bongo Cat) H1: 1 calls of 6, all true with a small handle written: True -> match
+observe-27548.log (Bongo Cat) H2: 1 of 1 callbacks 4701 with size 4, a handle of 6 and a 4700 for it next -> match
+observe-27548.log (Bongo Cat) H3: 4 of 4 callbacks 4700 with size 8 and a handle read later by 1 or 3 -> match
+observe-27548.log (Bongo Cat) B1: 1 calls of 26, all with a 64-bit result no other call returned: True -> match
+observe-27548.log (Bongo Cat) B2: 1 callbacks 703 for 1 results of 26 (one each: True), all size 8: True, numbers: 1, not 1101: True -> match
+observe-27548.log (Bongo Cat) group BC: match
+experiment 34: MISMATCH
+```
+
+As fixed beforehand: group BC matched, so `STEAMINVENTORY_INTERFACE_V003`
+26 is confirmed as `RequestPrices` (experiment 34, under A1, A2 and A5).
+Group CC mismatched (H3 and C1: in Cave Crawlers one of two 4700
+callbacks did not carry the handle of 6 and was not read later by 1 or
+3), so 21 stays a candidate (`GetItemDefinitionIDs`) and 4702 stays a
+candidate by size. H3 did not match in both games, so 6 `GetAllItems`
+and the callbacks 4700 and 4701 stay candidates as well. The second 4700
+in Cave Crawlers is not explained by this plan; finding its source needs
+a new plan.
+
 ## Achievement names and leaderboards (loop iteration 16a)
 
 `python tools/shim/coverage.py` on the experiment 31 branch

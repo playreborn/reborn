@@ -4370,3 +4370,44 @@ stat, achievement or leaderboard write is asked for (Pixel Puzzles'
 upload at start is the game's own, recorded in both earlier runs). The
 script needs one log per game; a game whose run fails can be run again
 later, and only its group waits.
+
+**Result of experiment 32** (agent runs by the main session after the
+plan time 21:44:12, proxy built from the plan branch; logs recorded by
+`run.sh`: `observe-12100` Fallout Shelter, `observe-56900` One's Own
+Exile, `observe-64880` Outcore, `observe-51836` Pixel Puzzles Ultimate;
+all four closed normally; the maintainer was at the computer for Outcore
+and Pixel Puzzles): **match** in all four groups, checked by the script.
+
+```text
+observe-12100.log (Fallout Shelter) F1: 13 calls of 23, all with a text and a 64-bit result: True, one with a wide r8: True, one with r8 no sort method: True -> match
+observe-12100.log (Fallout Shelter) F2: 13 callbacks 703 for a find result, all size 16: True, numbers: 1 -> match
+observe-12100.log (Fallout Shelter) D1: 13 calls of 29, all with a wide r8 that is no data request or upload method, and a 64-bit result: True -> match
+observe-12100.log (Fallout Shelter) D2: 13 callbacks 703 for a 29 result, all size 24: True, numbers: 1, other than 1101 and F2's: True -> match
+observe-12100.log (Fallout Shelter) group L012: match
+observe-56900.log (One's Own Exile) N0: positions before the first 14: [0], 0 callbacks 703 before the first 15 -> match
+observe-56900.log (One's Own Exile) N1: 1 calls of 14, one value: True, value in 4..=49: True -> match
+observe-56900.log (One's Own Exile) N2: 16 calls of 15, indices 0..N-1 in order: True -> match
+observe-56900.log (One's Own Exile) N3: 16 of 16 calls with a result text, all different: True -> match
+observe-56900.log (One's Own Exile) N4: 16 of 16 calls of 15 followed by a 6 with the same name -> match
+observe-56900.log (One's Own Exile) group N012: match
+observe-64880.log (Outcore: Desktop Adventure) N0: positions before the first 14: [0], 0 callbacks 703 before the first 15 -> match
+observe-64880.log (Outcore: Desktop Adventure) N1: 30 calls of 14, one value: True, value in 4..=49: True -> match
+observe-64880.log (Outcore: Desktop Adventure) N2: 29 calls of 15, indices 0..N-1 in order: True -> match
+observe-64880.log (Outcore: Desktop Adventure) N3: 29 of 29 calls with a result text, all different: True -> match
+observe-64880.log (Outcore: Desktop Adventure) group N011: match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F1: 2 calls of 22, all with a text and a 64-bit result: True, one with a wide r8: True, one with r8 no sort method: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F2: 2 callbacks 703 for a find result, all size 16: True, numbers: 1 -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U1: 2 calls of 30, handle used again and 64-bit result: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U2: 2 callbacks 703 for a 30 result, all size 32: True, other than F2's: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) T1: 2 of 2 calls of 23 with a find name as result and a used handle -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) group L013: match
+experiment 32: match
+```
+
+As fixed beforehand: `STEAMUSERSTATS_INTERFACE_VERSION011` and `…012` 14
+`GetNumAchievements` (experiment 32, under A1 and A3) and 15
+`GetAchievementName` (experiment 32); `…012` 23 `FindLeaderboard`
+(experiment 32) and 29 `DownloadLeaderboardEntriesForUsers` (experiment
+32, under A2); `…013` 22 `FindLeaderboard` (experiment 32), 30
+`UploadLeaderboardScore` (experiment 32, under A2) and 23
+`GetLeaderboardName` (experiment 32).

@@ -328,11 +328,11 @@
       "RequestCurrentStats"
     ],
     "14": [
-      "candidate",
-      "GetNumAchievements (experiment 32)"
+      "confirmed",
+      "GetNumAchievements (experiment 32, under A1 and A3)"
     ],
     "15": [
-      "candidate",
+      "confirmed",
       "GetAchievementName (experiment 32)"
     ]
   },
@@ -416,20 +416,20 @@
       "GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write)"
     ],
     "14": [
-      "candidate",
-      "GetNumAchievements (experiment 32)"
+      "confirmed",
+      "GetNumAchievements (experiment 32, under A1 and A3)"
     ],
     "15": [
-      "candidate",
+      "confirmed",
       "GetAchievementName (experiment 32)"
     ],
     "23": [
-      "candidate",
+      "confirmed",
       "FindLeaderboard (experiment 32)"
     ],
     "29": [
-      "candidate",
-      "DownloadLeaderboardEntriesForUsers (experiment 32)"
+      "confirmed",
+      "DownloadLeaderboardEntriesForUsers (experiment 32, under A2)"
     ]
   },
   "STEAMUSERSTATS_INTERFACE_VERSION013": {
@@ -446,16 +446,16 @@
       "RequestUserStats"
     ],
     "22": [
-      "candidate",
+      "confirmed",
       "FindLeaderboard (experiment 32)"
     ],
     "23": [
-      "candidate",
+      "confirmed",
       "GetLeaderboardName (experiment 32)"
     ],
     "30": [
-      "candidate",
-      "UploadLeaderboardScore (experiment 32)"
+      "confirmed",
+      "UploadLeaderboardScore (experiment 32, under A2)"
     ],
     "37": [
       "candidate",

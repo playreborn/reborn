@@ -95,7 +95,7 @@ GAMES = {
     1275670: ("Outcore: Desktop Adventure", V011),
     3086720: ("One's Own Exile", V012),
 }
-PLAN_COMMITTED = None  # set in a follow-up commit to the plan commit's local committer time
+PLAN_COMMITTED = datetime(2026, 11, 23, 4, 20, 29)  # commit 3e1b269 on loop/plan-18a (plan, local committer time)
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 SET = re.compile(

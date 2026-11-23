@@ -5545,7 +5545,8 @@ shadow. No game was run for this plan.
   is and of its normalised form (read as UTF-8, trimmed with `str::trim`,
   lowercased with `str::to_lowercase`). Reborn's names get the same two
   digests. The survey keeps the latest official count and the first
-  digests of each index below 1024 the game asked for.
+  digests of each index below 50 (the proxy's logging limit) the game
+  asked for.
 - **When it writes:** once per process, when the game has asked for
   every index below the latest official count and Reborn's list is
   there. The worker writes three lines right after the per-call note of
@@ -5560,13 +5561,21 @@ shadow. No game was run for this plan.
   The set counts are over distinct digests. *j* is the first index in
   Reborn's list with the same exact digest, `none` if there is none, or
   `notext` if the official result pointed to no text.
-- **Never logged:** a name or a digest. The counts and the indices are
-  the schema's own, the same for every account (ADR 0061, "Why this
-  exposes no account data").
-- **Limits:** a list longer than 50 entries (the proxy's logging limit:
-  only logged calls are shadowed) never completes and gets no survey.
-  An official count above 1024 gets a single "not surveyed" line.
-  Outcore (29) and One's Own Exile (16) are within both limits.
+- **When there is no survey,** one line says why instead, once per
+  process: `shadow survey: not surveyed, <why>`. The reasons are a
+  skipped official answer, no Reborn list when the official list is
+  complete, or an official count above 50 (only the first 50 calls of a
+  position are shadowed, so such a list never completes). Outcore (29)
+  and One's Own Exile (16) are within the limit.
+- **Never logged:** a name or a digest.
+- **The pairs stay local** (ADR 0061, "Where each part may go"). The
+  official order is the open question. If it depended on the account
+  (for example unlocked achievements first), the map would encode the
+  test account's unlock state. So the `i:j` pairs stay in the local log
+  and the script's terminal output, and are never quoted here, in a
+  commit or in a pull request, until an experiment shows the order does
+  not depend on the account. The set counts, the reading and the mapping
+  pattern (counts and yes/no only) may be quoted.
 
 ### Experiment 36 (planned 2026-11-23, before the runs)
 
@@ -5736,7 +5745,7 @@ per log. Preconditions, which say whether the tool worked:
 - **A:** at least one call of 14 and one of 15 on the game's version
   (Outcore `…011`, One's Own Exile `…012`), each with a result line.
 - **B:** exactly one `shadow set:`, one `shadow set normalised:` and one
-  `shadow map:` line. Each carries the prefix of a call of the four
+  `shadow map:` line, and no `shadow survey: not surveyed` line. Each carries the prefix of a call of the four
   positions, on that call's thread, after its result line. *N* in the
   set line equals the official count from 14 (one value), and the map
   has the pairs 0 to *N*-1 in order.
@@ -5755,12 +5764,17 @@ that applies):
 | normalised set: shared = *N* = *M*, official-only = Reborn-only = 0 | "encoding/case" |
 | otherwise | "contents differ" |
 
+Names that collapse into one after normalising (two names on one side
+with the same normalised form) make the normalised shared count smaller
+than *N*. They fall through to "contents differ".
+
 For "order differs" the script prints the **mapping pattern** as a
-finding: the number of fixed points, whether the map is the reversal
-(*j* = *N*-1-*i*), whether it is a rotation (*j* = *i* + *r* mod *N*,
-with *r*), and the number of cycles. For every log that matched A to C
-it prints the set counts and the index pairs `i:j`. These are public
-schema positions (ADR 0061) and are quoted in the result.
+finding: the number of fixed points, reversal (*j* = *N*-1-*i*) yes or
+no, rotation (*j* = *i* + *r* mod *N* for some *r*) yes or no, and the
+number of cycles. For every log that matched A to C it also prints the
+set counts and, marked "local only", the index pairs `i:j`. The result
+quotes the set counts, the reading and the pattern. It does **not**
+quote the pairs (ADR 0061).
 
 **Overall:** "experiment 36: survey complete" when both games have an
 accepted log and both matched A to C. Otherwise the script prints
@@ -5771,9 +5785,11 @@ more than one log per game, a missing game, and logs whose start
 (`observelog.start_of`) is earlier than the plan commit
 (`PLAN_COMMITTED`, set in a follow-up commit; while it is unset, every
 log is rejected). It prints only counts, versions, the kinds of notes,
-readings and index pairs. `--self-check` runs nine made-up logs through
-A to C and the reading table, one for each reading and four that must
-fail, and checks the pattern of a reversal. It must print "self-check:
+readings, the pattern and (local only) the index pairs. `--self-check`
+runs eleven made-up logs through A to C and the reading table: one for
+each reading, one where names collapse after normalising ("contents
+differ"), and five that must fail (among them a "not surveyed" line
+instead of the survey). It also checks the pattern of a reversal. It must print "self-check:
 match".
 
 **What a reading means, and what it does not.**
@@ -5785,7 +5801,7 @@ match".
   and a planned experiment that predicts the official order for a game
   before it is run. Never memory (ADR 0061, AGENTS.md section 4). A
   candidate rule is checked against these pairs before any experiment;
-  the survey gives the pairs for that.
+  the survey gives the pairs for that, on the recorder's computer.
 - **"encoding/case":** the same names up to letter case or surrounding
   white space. A new plan finds out which side differs and how. The
   survey does not say which.
@@ -5821,6 +5837,6 @@ computer, nothing quoted but the lines below):
   lines (all 29 shared, a made-up map keeping the three matching indices
   fixed and permuting the rest) inserted after the last per-call note:
   A to C match, and the reading is "order differs" with the pattern "3
-  fixed points of 29, not the reversal, no rotation, 4 cycles". The copy
+  fixed points of 29, reversal: no, rotation: no, 4 cycles". The copy
   was never written to disk.
 - **Self-check:** `--self-check` prints "self-check: match".

@@ -31,7 +31,7 @@ S  (survey, no verdict) versions, calls per position, per-call note kinds.
 A  At least one call of 14 and one of 15 on the game's version, each with
    a result line.
 B  Exactly one "shadow set:", one "shadow set normalised:" and one
-   "shadow map:" line, each with the prefix of a call of the four
+   "shadow map:" line and no "shadow survey: not surveyed" line, each with the prefix of a call of the four
    positions that has a result line, on that call's thread, after it;
    official N equals the official count from 14 (one value), and the map
    has exactly the pairs 0 to N-1 in order.
@@ -47,11 +47,17 @@ Reading table (fixed before the runs), for a log that matched A to C:
 - normalised: shared = N = M, official-only = Reborn-only = 0
                                                    -> "encoding/case"
 - otherwise                                        -> "contents differ"
+Names that collapse into one after normalising (two official names, or
+two of Reborn's, with the same normalised form) make the normalised
+shared count smaller than N and fall through to "contents differ".
 For "order differs" the mapping pattern is printed as a finding: fixed
-points, whether it is the reversal (j = N-1-i), whether it is a rotation
-(j = i + r mod N, with r), and the number of cycles. These describe the
-pairs; none of them is an order rule Reborn adopts (ADR 0061: a rule needs
-a source or an observation, and a planned experiment).
+points, reversal (j = N-1-i) yes/no, rotation (j = i + r mod N for some
+r) yes/no, and the number of cycles. These describe the pairs; none of
+them is an order rule Reborn adopts (ADR 0061: a rule needs a source or an
+observation, and a planned experiment). The pairs themselves are printed
+for this terminal only: ADR 0061 keeps them out of docs/shim/ until the
+official order is shown not to depend on the account, so the recorded
+result quotes the counts, the reading and the pattern, not the pairs.
 
 "experiment 36: survey complete" when both known games have an accepted
 log and both matched A to C; otherwise "experiment 36: MISMATCH (survey
@@ -66,9 +72,9 @@ PLAN_COMMITTED is the committer time (local, as run.sh writes starts.log)
 of the commit that holds the final plan text; it is set in a follow-up
 commit. While it is None, every log is rejected.
 
-Prints only counts, versions, the kinds of notes, readings and the index
-pairs of the map (public schema positions, ADR 0061); never a name, a
-digest, an address or a register value, nor the reason text of a note.
+Prints only counts, versions, the kinds of notes, readings, the mapping
+pattern and (local only) the index pairs; never a name, a digest, an
+address or a register value, nor the reason text of a note.
 
 Usage: python tools/shim/experiments/036_achievement_list_survey.py <log> <log>
        python tools/shim/experiments/036_achievement_list_survey.py --self-check
@@ -95,7 +101,7 @@ GAMES = {
     1275670: ("Outcore: Desktop Adventure", V011),
     3086720: ("One's Own Exile", V012),
 }
-PLAN_COMMITTED = datetime(2026, 11, 23, 4, 20, 29)  # commit 3e1b269 on loop/plan-18a (plan, local committer time)
+PLAN_COMMITTED = None  # set in a follow-up commit to the plan commit's local committer time
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 SET = re.compile(
@@ -144,6 +150,8 @@ def survey_of(note):
             i, j = pair.split(":")
             pairs.append((int(i), int(j) if j.isdigit() else j))
         return "map", pairs
+    if note.startswith("shadow survey: not surveyed"):
+        return "not surveyed", None
     if note.startswith("shadow set") or note.startswith("shadow map"):
         return "unparsed", None
     return None
@@ -196,7 +204,7 @@ def pattern(pairs, n):
     js = [j for _, j in pairs]
     fixed = sum(1 for i, j in pairs if i == j)
     reverse = all(j == n - 1 - i for i, j in pairs)
-    rotations = [r for r in range(1, n) if all(j == (i + r) % n for i, j in pairs)]
+    rotation = any(all(j == (i + r) % n for i, j in pairs) for r in range(1, n))
     seen, cycles = set(), 0
     for start in range(n):
         if start in seen:
@@ -206,9 +214,8 @@ def pattern(pairs, n):
         while at not in seen:
             seen.add(at)
             at = js[at]
-    rotation = f"rotation by {rotations[0]}" if rotations else "no rotation"
-    return (f"{fixed} fixed points of {n}, {'reversal' if reverse else 'not the reversal'}, "
-            f"{rotation}, {cycles} cycles")
+    return (f"{fixed} fixed points of {n}, reversal: {'yes' if reverse else 'no'}, "
+            f"rotation: {'yes' if rotation else 'no'}, {cycles} cycles")
 
 
 def reading(exact, normalised, pairs):
@@ -246,7 +253,8 @@ def check(lines, label, version):
 
     by_kind = Counter(kind for (kind, _, _, _, _) in surveys)
     placed = all(after for (_, _, _, _, after) in surveys)
-    one_each = all(by_kind[kind] == 1 for kind in SURVEY_KINDS) and by_kind["unparsed"] == 0
+    one_each = (all(by_kind[kind] == 1 for kind in SURVEY_KINDS)
+                and by_kind["unparsed"] == 0 and by_kind["not surveyed"] == 0)
     found = {kind: parsed for (kind, parsed, _, _, _) in surveys}
     values = {c["value"] for k, c in returned.items() if k[1] == 14}
     official = values.pop() if len(values) == 1 else None
@@ -289,7 +297,9 @@ def check(lines, label, version):
           f"{exact['reborn_only']}")
     print(f"{label} set normalised: shared {normalised['shared']}, official-only "
           f"{normalised['official_only']}, Reborn-only {normalised['reborn_only']}")
-    print(f"{label} pairs (official i: Reborn j): {' '.join(f'{i}:{j}' for i, j in pairs)}")
+    # ADR 0061: the pairs are for this terminal only, never for docs/shim/.
+    print(f"{label} pairs (local only, not for docs/shim/; official i: Reborn j): "
+          f"{' '.join(f'{i}:{j}' for i, j in pairs)}")
     result, shape = reading(exact, normalised, pairs)
     print(f"{label} reading: {result}")
     if shape:
@@ -349,7 +359,15 @@ def self_check():
          log(V011, [(0, "notext"), (1, 1), (2, 2), (3, 3)],
              "official 4 (distinct 3, no text 1), Reborn 4 (distinct 4); shared 3, official-only 0, Reborn-only 1",
              "shared 3, official-only 0, Reborn-only 1"), V011, (True, "not read (no text)")),
+        ("names collapse after normalising",
+         log(V011, [(0, 0), (1, "none"), (2, 2), (3, 3)],
+             "official 4 (distinct 4, no text 0), Reborn 4 (distinct 4); shared 3, official-only 1, Reborn-only 1",
+             "shared 3, official-only 0, Reborn-only 0"), V011, (True, "contents differ")),
         ("no map line", log(V011, rotated, full, norm_full, drop="map"), V011, (False, None)),
+        ("not surveyed instead",
+         log(V011, rotated, full, norm_full, drop="map")[:-2]
+         + ["5 ms ThreadId(1) " + V011 + "#15 return 5 shadow survey: not surveyed, "
+            "an official answer was skipped (worker busy)"], V011, (False, None)),
         ("map disagrees with the per-call notes",
          log(V011, rotated, full, norm_full, matches=[True, False, False, False]), V011, (False, None)),
         ("wrong version", log(V012, rotated, full, norm_full), V011, (False, None)),
@@ -365,7 +383,7 @@ def self_check():
             failed += 1
             print(f"self-check '{name}': got {got}, expected {expected} -> MISMATCH")
     reverse = pattern([(0, 3), (1, 2), (2, 1), (3, 0)], 4)
-    if reverse != "0 fixed points of 4, reversal, no rotation, 2 cycles":
+    if reverse != "0 fixed points of 4, reversal: yes, rotation: no, 2 cycles":
         failed += 1
         print(f"self-check 'reversal pattern': got {reverse} -> MISMATCH")
     print("self-check:", "match" if failed == 0 else f"MISMATCH ({failed} cases)")

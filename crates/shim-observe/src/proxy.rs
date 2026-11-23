@@ -256,6 +256,15 @@ const READS: &[(&str, usize, Read)] = &[
     // seventh arguments, counting the object; only the app ID's low 32
     // bits and "text: yes/no" are logged (ADR 0058).
     ("SteamGameServer012", 0, Read::StackAppIdAndText),
+    // `docs/shim/meanings.md`, experiment 32 (ADR 0053): candidates
+    // `GetAchievementName` (011 and 012 position 15) and
+    // `GetLeaderboardName` (013 position 23) return the game's public
+    // achievement and leaderboard names. The only functions on the page
+    // that return a text are these two and
+    // `GetAchievementDisplayAttribute`, all public game data.
+    ("STEAMUSERSTATS_INTERFACE_VERSION011", 15, Read::ResultText),
+    ("STEAMUSERSTATS_INTERFACE_VERSION012", 15, Read::ResultText),
+    ("STEAMUSERSTATS_INTERFACE_VERSION013", 23, Read::ResultText),
 ];
 
 /// Reborn's own answer to a confirmed meaning (shadow mode, ADR 0046).
@@ -2301,6 +2310,36 @@ mod tests {
                 "every entry names a known register"
             );
         }
+    }
+
+    #[test]
+    fn experiment_32_reads() {
+        let registers = saved(0x1111_0000, 0x2222_0000, 0x3333_0000);
+        for (interface, position) in [
+            ("STEAMUSERSTATS_INTERFACE_VERSION011", 15),
+            ("STEAMUSERSTATS_INTERFACE_VERSION012", 15),
+            ("STEAMUSERSTATS_INTERFACE_VERSION013", 23),
+        ] {
+            assert_eq!(
+                after_for(interface, position, &registers, 0),
+                Some(After::ResultText),
+                "{interface} {position}"
+            );
+        }
+        // Only the listed positions: the count (14) and the leaderboard
+        // calls around them are logged as before.
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION011", 14, &registers, 0),
+            None
+        );
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION012", 23, &registers, 0),
+            None
+        );
+        assert_eq!(
+            after_for("STEAMUSERSTATS_INTERFACE_VERSION013", 15, &registers, 0),
+            None
+        );
     }
 
     #[test]

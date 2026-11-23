@@ -4076,3 +4076,338 @@ call would carry. No shadow-mode entry: there is no result to compare.
 `SteamGameServer012` 0 is not in the shim: the shim has no
 `SteamGameServer…` object and no objects for the game server pipe
 (experiment 24).
+## Achievement names and leaderboards (loop iteration 16a)
+
+`python tools/shim/coverage.py` on the experiment 31 branch
+(`loop/plan-15a`, 2026-11-22: 220 positions, 140 confirmed, 80 open). The
+top unknown rows `SteamClient020`/`021` 22, `SteamClient023` 21 (no
+candidate), `SteamUtils010` 34 (no separating experiment) and the
+narrowed `STEAMUSERSTATS_INTERFACE_VERSION013` 37 are handled in loop
+iteration 15a above; no open pull request (`gh pr list`: #39, #46 to #49)
+works on the rows below. The recordings are the reference runs of
+`coverage.md` and every later `run.sh` log in the recorder's data folder
+(raw logs stay there). Page read on 2026-11-22, in two parts (its text is
+longer than one read): <https://partner.steamgames.com/doc/api/ISteamUserStats>
+(every function with its overloads, the call-result structs, the
+leaderboard enums and constants). Argument registers as in experiment 7
+(Microsoft x64 convention).
+
+The page's text-returning functions are `GetAchievementName( uint32
+iAchievement )` ("an empty string" for an invalid index),
+`GetAchievementDisplayAttribute( const char *pchName, const char *pchKey
+)` and `GetLeaderboardName( SteamLeaderboard_t hSteamLeaderboard )` ("an
+empty string if the handle is invalid"). Its `SteamAPICall_t` functions
+and their call results are listed in loop iteration 10a (G). Fields of the
+leaderboard call results, from the page: `LeaderboardFindResult_t`
+(`SteamLeaderboard_t`, `uint8`), `LeaderboardScoresDownloaded_t`
+(`SteamLeaderboard_t`, `SteamLeaderboardEntries_t`, `int`),
+`LeaderboardScoreUploaded_t` (`uint8`, `SteamLeaderboard_t`, `int32`,
+`uint8`, `int`, `int`), `LeaderboardUGCSet_t` (`EResult`,
+`SteamLeaderboard_t`). Enums on the page: `ELeaderboardSortMethod` 0 to 2,
+`ELeaderboardDisplayType` 0 to 3, `ELeaderboardDataRequest` 0 to 3,
+`ELeaderboardUploadScoreMethod` 0 to 2.
+
+Struct sizes below take the two handle types as 64 bits (as experiment 22
+did for `SteamAPICall_t`; derived from recorded values, not from the
+page) and use A2 of experiment 32: a size between the sum of the fields
+and the natural-alignment size. That gives `LeaderboardFindResult_t` 9 to
+16 bytes, `LeaderboardUGCSet_t`, `GlobalStatsReceived_t` and
+`GlobalAchievementPercentagesReady_t` 12 to 16, `UserStatsReceived_t` and
+`LeaderboardScoresDownloaded_t` 20 to 24, `LeaderboardScoreUploaded_t`
+22 to 32, `NumberOfCurrentPlayers_t` 5 to 8. Only
+`LeaderboardScoreUploaded_t` can have 32 bytes.
+
+### `…VERSION011` 14 and 15 (Outcore) and `…VERSION012` 14 and 15 (One's Own Exile): candidates `GetNumAchievements` and `GetAchievementName`
+
+- **Recorded:** Outcore: Desktop Adventure (`…VERSION011`, 2 logs, the
+  same both times): position 0 twice, then 14 and 15 alternating from
+  about 105 ms, 30 calls of 14 and 29 of 15, ending with 14. Every call of
+  14 returned 29 (upper 32 bits zero; `rdx` a stack address with no text,
+  `r8` a stack address at the first call, then 0x2a or 0x18). The calls
+  of 15 had `rdx` 0, 1, ..., 28 in order and returned an address. One's
+  Own Exile (`…VERSION012`, 3 logs): position 0, then 14 once (result 16;
+  `rdx` 1, `r8` and `r9` stack addresses), then 15 and 6 alternating 16
+  times: 15 with `rdx` and `r8` both 0, 1, ..., 15, returning an address;
+  6 with an achievement-like name as text in `rdx` (candidates in loop
+  iteration 7). In both games no call of the interface before 14 except
+  position 0 (confirmed `RequestCurrentStats`), and no 703 callback before
+  the first 15. One's Own Exile also calls position 10 (narrowed:
+  `StoreStats` or `ResetAllStats`, experiment 13) once, at about 88 to
+  97 s, in all three logs, on its own without input; the plan adds
+  nothing to that.
+- **Position 14, every function of the page against the recorded shape**
+  (a value 16 or 29, no text argument, nothing asynchronous before it):
+
+  | Functions (page) | Ruled out by |
+  | --- | --- |
+  | `GetNumAchievements()` | fits (N1, N2) |
+  | `GetTrophySpaceRequiredBeforeInstall()` (`uint64`) | A3 only: the game takes the value as the number of names it asks for |
+  | `GetAchievementName( uint32 )` (a text) | N1: a result of 16 or 29 lies below 0x10000, so it is no text address |
+  | `GetLeaderboardName( SteamLeaderboard_t )` (a text) | N0: no leaderboard handle exists yet; also N1 (no text address) |
+  | `RequestCurrentStats`, `StoreStats`, `GetUserStatsData`, `ResetAllStats`, `SetUserStatsData` (`bool`) | N1 under A1 (value at least 4) |
+  | `GetNumberOfCurrentPlayers`, `RequestGlobalAchievementPercentages` and the other `SteamAPICall_t` functions | N1: upper 32 bits zero, while every recorded call handle used them (experiment 23, C); N0: no 703 for it |
+  | `GetLeaderboardEntryCount`, `GetLeaderboardSortMethod`, `GetLeaderboardDisplayType`, `GetDownloadedLeaderboardEntry` (a leaderboard or entries handle first) | N0: no find or download call result exists yet; for the two enums also N1 (value above 3) |
+  | `GetMostAchievedAchievementInfo` (buffer, `uint32` length, ...) | Outcore: `r8` has non-zero upper 32 bits at the first call (A1); One's Own Exile: `rdx` 1 is no buffer address |
+  | `GetNextMostAchievedAchievementInfo` (`int`, buffer, `uint32`, ...) | Outcore: `rdx` wide (A1); One's Own Exile: `r9` wide (A1) |
+  | every function with a name first (`GetAchievementIcon`, `GetGlobalStatHistory`, `GetStat`, `SetStat`, the achievement functions, `FindLeaderboard`, ...) and the `GetUser…` functions (a name in `r8`) | no text at `rdx` or `r8` |
+
+- **Position 15** (a small index, an address back):
+
+  | Functions (page) | Ruled out by |
+  | --- | --- |
+  | `GetAchievementName( uint32 )` | fits (N2 to N4) |
+  | `GetLeaderboardName( SteamLeaderboard_t )` | N0: no leaderboard handle exists yet |
+  | `GetAchievementDisplayAttribute` (two names) | `rdx` below 0x10000 is no text address |
+  | every function returning a number, `bool`, enum or handle | N3: a text at the result in every call; N4 (One's Own Exile): the text is the name the game passes on to position 6 |
+
+### `…VERSION012` 23 and 29 (Fallout Shelter): candidates `FindLeaderboard` and `DownloadLeaderboardEntriesForUsers`
+
+- **Recorded** (4 logs, the same order every time): 13 calls of 23 at
+  about 96 ms, each with a name as text in `rdx` (leaderboard-like names);
+  `r8` and `r9` vary, `r8` with non-zero upper 32 bits in several calls;
+  each returns a 64-bit value. From about 420 ms, 13 calls of 29, each
+  with a different small `rdx` (upper 32 bits zero), a heap address in
+  `r8` and 4 in `r9`; each returns a 64-bit value. In the one log with
+  703 payloads (`observe-12404`, experiment 22's runs) each of the 26
+  results comes back in a 703: the 13 of 23 with size 16 and one number,
+  the 13 of 29 with size 24 and another number, not 1101.
+- **Position 23:** a text first and a call handle back fit only the
+  page's `FindLeaderboard( const char * )` and `FindOrCreateLeaderboard(
+  const char *, ELeaderboardSortMethod, ELeaderboardDisplayType )`. F1
+  rules out the second without A1: in at least one call the low 32 bits
+  of `r8`, where its enum would be, are none of the page's
+  `ELeaderboardSortMethod` values (0 to 2); under A1 the non-zero upper 32
+  bits rule it out as well. Every other function with a name first returns a `bool`, an
+  `int`, an `int32` or a text, not a call handle that comes back in a 703
+  (F1, F2).
+- **Position 29:** a 64-bit result that comes back in a 703 with size 24
+  fits, by size (A2), `RequestUserStats`, `DownloadLeaderboardEntries`,
+  `DownloadLeaderboardEntriesForUsers` and `UploadLeaderboardScore`. D2
+  rules out `RequestUserStats` (its call result is 1101, experiments 21
+  and 22); D1 rules out `DownloadLeaderboardEntries` and
+  `UploadLeaderboardScore` without A1: their second parameter is an enum
+  (`ELeaderboardDataRequest` 0 to 3, `ELeaderboardUploadScoreMethod` 0 to
+  2), and the low 32 bits of `r8` are none of those values in every call
+  (under A1 the wide `r8` rules them out as well). `AttachLeaderboardUGC`, `RequestGlobalStats`,
+  `RequestGlobalAchievementPercentages`, the two finders and
+  `GetNumberOfCurrentPlayers` have at most 16 bytes. `r9` 4 is in the
+  page's range for `cUsers` ("A maximum of 100 users").
+- The array at `r8` holds Steam IDs if the candidate is right. Nothing is
+  read there and no read is added: that would be account data (ADR 0043).
+
+### `…VERSION013` 22, 30 and 23 (Pixel Puzzles): candidates `FindLeaderboard`, `UploadLeaderboardScore` and `GetLeaderboardName`
+
+- **Recorded** (2 logs, the same both times): at about 730 ms two calls
+  of 22, each with a name as text in `rdx`, `r8` 0xffffffffffffffff, a
+  64-bit result; each result comes back in a 703 with size 16 and the
+  same number as Fallout Shelter's 23 (and Coin Maker Simulator's 22). At
+  about 1.54 s two calls of 30 with small handles in `rdx`, `r8` 1, `r9`
+  2, each a 64-bit result that comes back in a 703 with size 32. At about
+  2.18 s two calls of 23, `rdx` the same two handles, `r8` 0, `r9` the
+  result of a call of 30 (a leftover, by its look), each returning an
+  address.
+- **Position 22:** as `…VERSION012` 23 above: `FindLeaderboard` or
+  `FindOrCreateLeaderboard`; F1 rules out the second without A1 (the low
+  32 bits of `r8`, 0xffffffff, are no `ELeaderboardSortMethod` value, 0 to
+  2; under A1 the non-zero upper 32 bits as well). Coin Maker Simulator's
+  `r8` 4 at this position is also outside those values.
+- **Position 30:** of the page's call results only
+  `LeaderboardScoreUploaded_t` can have 32 bytes (A2), so of the
+  `SteamAPICall_t` functions only `UploadLeaderboardScore(
+  SteamLeaderboard_t, ELeaderboardUploadScoreMethod, int32 nScore, const
+  int32 *pScoreDetails, int cScoreDetailsCount )` fits U2; `r8` 1 is the
+  page's `KeepBest` value. The game uploads this score itself at start,
+  without input, in both earlier runs; the experiment adds nothing (red
+  line 4).
+- **Position 23** (a leaderboard handle in `rdx`, an address back with
+  upper 32 bits zero):
+
+  | Functions (page) | Ruled out by |
+  | --- | --- |
+  | `GetLeaderboardName( SteamLeaderboard_t )` | fits (T1) |
+  | `GetLeaderboardEntryCount` (`int`), `GetLeaderboardSortMethod`, `GetLeaderboardDisplayType` (enums) | T1: a text at the result, the name of a find call |
+  | `SteamAPICall_t` functions with a leaderboard handle first: `AttachLeaderboardUGC`, `DownloadLeaderboardEntries`, `DownloadLeaderboardEntriesForUsers`, `UploadLeaderboardScore` | T1 (a text at the result); the result's upper 32 bits are zero, while every recorded call handle used them (experiment 23, C) |
+  | `GetAchievementName( uint32 )` | the handle's low 32 bits as index get "an empty string", which the proxy's text rule (2 characters or more) does not log (T1) |
+  | `GetAchievementDisplayAttribute` | needs a text at `rdx` |
+
+### Rows looked at and not planned here
+
+- `…VERSION012` 2 (Fallout Shelter: a stat name and a stack address,
+  result 1, right after position 6 returned 0 for the same name) and
+  `…VERSION013` 1 and 39 (a name and a stack address, result 1): the
+  page's read-by-name functions (`GetStat` for `int32` and for `float`,
+  `GetAchievement`, `GetGlobalStat` for `int64` and `double`,
+  `GetAchievementAchievedPercent`) all fit; output bytes would not
+  separate them while the values are 0 (0 looks the same in all of them).
+  Left as not known.
+- `…VERSION013` 3 (Bongo Cat, Pixel Puzzles: a name, a small number in
+  `r8`, result 1, before `StoreStats`) and 8 (a name and two stack
+  addresses, result 1): `SetStat` (both overloads; a `float` would come
+  in `xmm2`, leaving `r8` a leftover), `SetAchievement`,
+  `ClearAchievement`, `IndicateAchievementProgress` and
+  `UpdateAvgRateStat` fit 3; `GetAchievementAndUnlockTime` and
+  `UpdateAvgRateStat` (its two numbers in `xmm` registers) fit 8, and
+  nothing the proxy may read separates them while the values are 0. Telling
+  the writes at 3 apart would mean looking at what they change on the
+  account; left alone (red line 4: plans only watch what games do).
+- `STEAMREMOTESTORAGE_INTERFACE_VERSION014` 21 and 22, `…VERSION016` 22,
+  `STEAMUGC_INTERFACE_VERSION016` 67 and the `STEAMINVENTORY_INTERFACE_V003`
+  rows: recordings looked at, pages not read in this iteration; left for
+  a later one. For the maintainer: Bongo Cat calls
+  `STEAMINVENTORY_INTERFACE_V003` 2 about 50 times with the same handle
+  and, in some calls, the text `accountid` in `r9`. A read of what that
+  call writes could hand back an account identifier, which ADR 0043, 0053
+  and 0058 do not allow; it needs its own decision.
+
+### Experiment 32 (planned 2026-11-22, before the runs)
+
+**Needs READS** (`crates/shim-observe`, ADR 0043 and 0053), added on this
+plan's branch, all three of the kind `result text` (the text `rax` points
+to, 2 to 64 printable characters, `VirtualQuery` first; nothing else):
+
+- `("STEAMUSERSTATS_INTERFACE_VERSION011", 15, Read::ResultText)`;
+- `("STEAMUSERSTATS_INTERFACE_VERSION012", 15, Read::ResultText)`;
+- `("STEAMUSERSTATS_INTERFACE_VERSION013", 23, Read::ResultText)`.
+
+Why no candidate can hand back a ticket, a token, a password or an
+account identifier: the only text-returning functions on the
+`ISteamUserStats` page are `GetAchievementName`,
+`GetAchievementDisplayAttribute` and `GetLeaderboardName`, which return
+the game's public achievement data and leaderboard names; a function
+returning a number gives "result: no text" or, at worst, a short printable
+text at some address, which the script compares but never prints. Raw
+logs stay local; `docs/shim/` quotes no name, handle or callback number
+from these runs. `PAYLOAD_LISTED` already has 703 (experiment 22), and
+nothing is read at `r8` of `…VERSION012` 29.
+
+**Assumptions:** A1 as in experiment 31 (a `bool`, an enum or an 8- to
+32-bit argument or result arrives with the upper 32 bits of its register
+zero). A2: the size in a 703 payload is the size of the call result
+(experiment 22, F), and a struct's size lies between the sum of its
+fields and its size under natural alignment. A3: a value a game takes as
+the end of the indices it passes to a function that returns a name is
+the number of those names (this is what tells `GetNumAchievements` from
+`GetTrophySpaceRequiredBeforeInstall`, which has the same shape).
+
+**Predictions**
+(`tools/shim/experiments/032_achievement_names_and_leaderboards.py`), by
+group, each decided by its own game's log:
+
+- Groups N011 (Outcore, `…VERSION011`) and N012 (One's Own Exile,
+  `…VERSION012`):
+  - N0: before the first call of 14 the interface was called only at
+    position 0, and no 703 is logged before the first call of 15.
+  - N1: 14 is called at least once; every call returns the same N, with
+    4 <= N <= 49 and upper 32 bits zero.
+  - N2: 15 is called exactly N times, with `rdx` (low 32 bits) 0, 1, ...,
+    N-1 in call order.
+  - N3: every call of 15 has a result text; the N texts differ.
+  - N4 (N012 only): every call of 15 is followed, as the next call on the
+    interface, by a call of 6 whose `rdx` text equals that result text.
+- Groups L012 (Fallout Shelter: find 23, download 29) and L013 (Pixel
+  Puzzles: find 22, upload 30, name 23):
+  - F1: the find position is called; every call has a text at `rdx` and a
+    result with non-zero upper 32 bits; at least one has non-zero upper 32
+    bits in `r8`, and at least one has low 32 bits of `r8` outside 0 to 2
+    (`ELeaderboardSortMethod`).
+  - F2: at least one 703 has bytes 0..8 equal to a find result; all such
+    703s have size 16 and one number.
+  - D1 (L012): 29 is called; every call has non-zero upper 32 bits in
+    `r8` and in its result, and low 32 bits of `r8` outside 0 to 3
+    (`ELeaderboardDataRequest`) and 0 to 2
+    (`ELeaderboardUploadScoreMethod`).
+  - D2 (L012): at least one 703 for a result of 29; all have size 24 and
+    one number, which is neither 1101 nor F2's number.
+  - U1 (L013): 30 is called; every call's `rdx` is used again (by a call
+    of 23 or of 30) and its result has non-zero upper 32 bits.
+  - U2 (L013): at least one 703 for a result of 30; all have size 32 and
+    one number, which is not F2's.
+  - T1 (L013): 23 is called; every call has a result text equal to the
+    `rdx` text of a call of 22 made before it, and its `rdx` equals the
+    `rdx` of a call of 30.
+
+**What a match confirms:** N011 matched: `…VERSION011` 14
+`GetNumAchievements` (under A1 and A3) and 15 `GetAchievementName`. N012
+matched: the same for `…VERSION012` 14 and 15. L012 matched:
+`…VERSION012` 23 `FindLeaderboard` and 29
+`DownloadLeaderboardEntriesForUsers` (under A2). L013 matched:
+`…VERSION013` 22 `FindLeaderboard`, 30
+`UploadLeaderboardScore` (under A2) and 23 `GetLeaderboardName`. The
+entries in `meanings.md`, `status.json` and later shim comments carry
+these assumptions. A group that mismatches leaves its candidates as they
+are, with the mismatch noted here; the other groups are not affected.
+
+Checked before the plan time on earlier logs (script functions called
+directly, plan time and `starts.log` check bypassed): Outcore
+`observe-49168` and `observe-47724`, One's Own Exile `observe-51644` and
+`observe-612`: N0 to N2 match, N3 and N4 mismatch (no `READS` entry yet,
+as expected). Fallout Shelter `observe-12404`: L012 matches (no new read
+needed); `observe-29128`, `observe-43972` and `observe-45648` (from before
+703 payloads were logged): F1 and D1 match, F2 and D2 mismatch. Pixel
+Puzzles `observe-55924` and `observe-51312`: F1, F2, U1 and U2 match, T1
+mismatches (no `READS` entry yet). The predictions were written from
+these logs, so they are not the test; only fresh runs after the plan
+commit are.
+
+**Runs:** one run each, started after the plan commit, with the proxy
+built from this branch (`cargo build -p reborn-shim-observe`):
+
+- `tools/shim/run.sh 1275670` (Outcore: Desktop Adventure). The official
+  client showed a launch-option window for it before (experiment 7: the
+  agent chose the default option and Play, ADR 0049; experiment 10: the
+  window was answered too late and the run timed out), so it must be
+  answered promptly.
+- `tools/shim/run.sh 3086720` (One's Own Exile).
+- `tools/shim/run.sh 588430` (Fallout Shelter).
+- `tools/shim/run.sh 351030` (Pixel Puzzles Ultimate). In experiment 27
+  it did not exit on the close request and the maintainer closed it with
+  Alt+F4; never a forced kill (ADR 0044).
+
+The default wait (40 s after Steam loaded) is enough: the calls come in
+the first 0.5 s (Outcore, One's Own Exile, Fallout Shelter) or by about
+2.2 s (Pixel Puzzles, its 703s by about 2 s). No input in any game; no
+stat, achievement or leaderboard write is asked for (Pixel Puzzles'
+upload at start is the game's own, recorded in both earlier runs). The
+script needs one log per game; a game whose run fails can be run again
+later, and only its group waits.
+
+**Result of experiment 32** (agent runs by the main session after the
+plan time 21:44:12, proxy built from the plan branch; logs recorded by
+`run.sh`: `observe-12100` Fallout Shelter, `observe-56900` One's Own
+Exile, `observe-64880` Outcore, `observe-51836` Pixel Puzzles Ultimate;
+all four closed normally; the maintainer was at the computer for Outcore
+and Pixel Puzzles): **match** in all four groups, checked by the script.
+
+```text
+observe-12100.log (Fallout Shelter) F1: 13 calls of 23, all with a text and a 64-bit result: True, one with a wide r8: True, one with r8 no sort method: True -> match
+observe-12100.log (Fallout Shelter) F2: 13 callbacks 703 for a find result, all size 16: True, numbers: 1 -> match
+observe-12100.log (Fallout Shelter) D1: 13 calls of 29, all with a wide r8 that is no data request or upload method, and a 64-bit result: True -> match
+observe-12100.log (Fallout Shelter) D2: 13 callbacks 703 for a 29 result, all size 24: True, numbers: 1, other than 1101 and F2's: True -> match
+observe-12100.log (Fallout Shelter) group L012: match
+observe-56900.log (One's Own Exile) N0: positions before the first 14: [0], 0 callbacks 703 before the first 15 -> match
+observe-56900.log (One's Own Exile) N1: 1 calls of 14, one value: True, value in 4..=49: True -> match
+observe-56900.log (One's Own Exile) N2: 16 calls of 15, indices 0..N-1 in order: True -> match
+observe-56900.log (One's Own Exile) N3: 16 of 16 calls with a result text, all different: True -> match
+observe-56900.log (One's Own Exile) N4: 16 of 16 calls of 15 followed by a 6 with the same name -> match
+observe-56900.log (One's Own Exile) group N012: match
+observe-64880.log (Outcore: Desktop Adventure) N0: positions before the first 14: [0], 0 callbacks 703 before the first 15 -> match
+observe-64880.log (Outcore: Desktop Adventure) N1: 30 calls of 14, one value: True, value in 4..=49: True -> match
+observe-64880.log (Outcore: Desktop Adventure) N2: 29 calls of 15, indices 0..N-1 in order: True -> match
+observe-64880.log (Outcore: Desktop Adventure) N3: 29 of 29 calls with a result text, all different: True -> match
+observe-64880.log (Outcore: Desktop Adventure) group N011: match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F1: 2 calls of 22, all with a text and a 64-bit result: True, one with a wide r8: True, one with r8 no sort method: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) F2: 2 callbacks 703 for a find result, all size 16: True, numbers: 1 -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U1: 2 calls of 30, handle used again and 64-bit result: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) U2: 2 callbacks 703 for a 30 result, all size 32: True, other than F2's: True -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) T1: 2 of 2 calls of 23 with a find name as result and a used handle -> match
+observe-51836.log (Pixel Puzzles Ultimate Jigsaw Puzzles) group L013: match
+experiment 32: match
+```
+
+As fixed beforehand: `STEAMUSERSTATS_INTERFACE_VERSION011` and `…012` 14
+`GetNumAchievements` (experiment 32, under A1 and A3) and 15
+`GetAchievementName` (experiment 32); `…012` 23 `FindLeaderboard`
+(experiment 32) and 29 `DownloadLeaderboardEntriesForUsers` (experiment
+32, under A2); `…013` 22 `FindLeaderboard` (experiment 32), 30
+`UploadLeaderboardScore` (experiment 32, under A2) and 23
+`GetLeaderboardName` (experiment 32).

@@ -16,6 +16,11 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-23: experiment 36 (PRs #58, #59, ADR 0061): the achievement
+  lists of Outcore and One's Own Exile hold exactly the same names in
+  Reborn and the official client (also after normalising); only the
+  **order differs**. That explains experiment 35. The order rule is still
+  open (needs a source or a new plan); the index pairs stay local.
 - 2026-11-23: experiment 35 (PR #57): first live runs of the
   achievement-name shadow. The count (011/012 14) matched in Outcore and
   One's Own Exile, but most names at an index differ from Reborn's i-th

@@ -5840,3 +5840,49 @@ computer, nothing quoted but the lines below):
   fixed points of 29, reversal: no, rotation: no, 4 cycles". The copy
   was never written to disk.
 - **Self-check:** `--self-check` prints "self-check: match".
+
+**Result of experiment 36** (agent runs by the main session after the
+plan time 04:35:23 with binaries built from the plan branch; `rebornd`
+signed in with the stored login, no prompt; logs recorded by `run.sh`:
+`observe-60728` Outcore (the agent left the default launch option and
+clicked Play), `observe-52844` One's Own Exile; both arms said "shadow
+session registered", no logoff, kick, reconnect, WARN or ERROR line in
+`rebornd`'s log, `daemon status` signed in after each run, both games
+closed normally; the screenshot after the second run showed only another
+window in front of the official client, so no client dialog could be
+seen there; it was deleted at once): **survey complete**, checked by the
+script. The two lines with the `i:j` pairs are left out below, as ADR
+0061 requires (local only).
+
+```text
+observe-60728.log (Outcore: Desktop Adventure) S: versions ['011'], calls {'011 #14': 30, '011 #15': 29}, per-call notes [011 #14 match: 30, 011 #15 match: 3, 011 #15 mismatch: 26], 0 notes without a call
+observe-60728.log (Outcore: Desktop Adventure) A: calls with a result line {'011 #14': 30, '011 #15': 29} -> match
+observe-60728.log (Outcore: Desktop Adventure) B: survey lines {'map': 1, 'normalised': 1, 'set': 1}, all after their call's result on its thread: True, official count from 14: 29, N in the set line: 29 -> match
+observe-60728.log (Outcore: Desktop Adventure) C: 29 indices with one per-call note checked against the map, 0 disagree -> match
+observe-60728.log (Outcore: Desktop Adventure) set: official 29 (distinct 29, no text 0), Reborn 29 (distinct 29); shared 29, official-only 0, Reborn-only 0
+observe-60728.log (Outcore: Desktop Adventure) set normalised: shared 29, official-only 0, Reborn-only 0
+observe-60728.log (Outcore: Desktop Adventure) reading: order differs
+observe-60728.log (Outcore: Desktop Adventure) finding: mapping pattern: 3 fixed points of 29, reversal: no, rotation: no, 5 cycles
+observe-60728.log (Outcore: Desktop Adventure): match
+observe-52844.log (One's Own Exile) S: versions ['012'], calls {'012 #14': 1, '012 #15': 16}, per-call notes [012 #14 match: 1, 012 #15 match: 1, 012 #15 mismatch: 15], 0 notes without a call
+observe-52844.log (One's Own Exile) A: calls with a result line {'012 #14': 1, '012 #15': 16} -> match
+observe-52844.log (One's Own Exile) B: survey lines {'map': 1, 'normalised': 1, 'set': 1}, all after their call's result on its thread: True, official count from 14: 16, N in the set line: 16 -> match
+observe-52844.log (One's Own Exile) C: 16 indices with one per-call note checked against the map, 0 disagree -> match
+observe-52844.log (One's Own Exile) set: official 16 (distinct 16, no text 0), Reborn 16 (distinct 16); shared 16, official-only 0, Reborn-only 0
+observe-52844.log (One's Own Exile) set normalised: shared 16, official-only 0, Reborn-only 0
+observe-52844.log (One's Own Exile) reading: order differs
+observe-52844.log (One's Own Exile) finding: mapping pattern: 1 fixed points of 16, reversal: no, rotation: no, 3 cycles
+observe-52844.log (One's Own Exile): match
+experiment 36: survey complete
+readings: Outcore: Desktop Adventure: order differs, One's Own Exile: order differs
+```
+
+As fixed beforehand: in both games every official name is in Reborn's
+list and the other way round, also after normalising, so the contents
+and the spelling are the same and the **order differs** (Outcore: 3
+fixed points of 29, 5 cycles; One's Own Exile: 1 fixed point of 16, 3
+cycles; neither a reversal nor a rotation). This explains experiment
+35's index finding. No order rule is taken from this: any rule Reborn
+adopts needs a source or an observation plus its own planned experiment
+(ADR 0061), and whether the official order depends on the account stays
+open.

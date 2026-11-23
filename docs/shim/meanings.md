@@ -1696,6 +1696,13 @@ would deliver agrees with the official one in size, app ID and
 (none in `rebornd`'s local log); `rebornd` was shut down afterwards. The
 "What stays open" items above stay open.
 
+**Not in this plan, noted afterwards (2026-11-23):** after signing in,
+`rebornd` (`watch_friends`, `apps/rebornd/src/daemon.rs`) sent one
+`set_persona_state` to online, because Reborn's own-status setting
+(`%APPDATA%\Reborn\config\own-status`) held `online`. That is one
+status change of the account that the plan did not list; the maintainer
+accepted it on 2026-11-23. Experiment 33 lists it under its conditions.
+
 ## Callback delivery: `Steam_BGetCallback`, `Steam_FreeLastCallback`, `Steam_GetAPICallResult` (loop iteration 9b)
 
 Pages read 2026-11-22, both opened without signing in:
@@ -4464,7 +4471,16 @@ is recorded (`crates/cm/tests/data/account_info.bin`). One counted run
 per game. Each arm makes `rebornd` fill a shadow cloud folder for that
 game (one app info, one listing, bounded downloads; reads only, at most
 one fill a minute); for Dark Deception and A Park Full of Cats this is a
-side effect, not compared.
+side effect, not compared. The fills of all three games count against
+the one-fill-a-minute limit (`FILL_COOLDOWN`).
+
+**One status change of the account.** After `rebornd` signs in,
+`watch_friends` (`apps/rebornd/src/daemon.rs`) sends one
+`set_persona_state` to online, because Reborn's own-status setting
+(`%APPDATA%\Reborn\config\own-status`) holds `online`. This is the
+only change to the account during the runs; the maintainer accepted it on
+2026-11-23. The same happened in experiment 30 without being in its plan
+(noted there).
 
 **Steps for the main session** (in a normal terminal, not the desktop
 app; on this plan's branch at the commit that sets `PLAN_COMMITTED`):
@@ -4498,11 +4514,27 @@ app; on this plan's branch at the commit that sets `PLAN_COMMITTED`):
    out of the previous fill's cooldown. The 60 s wait (default 40) leaves
    room for the shadow worker, which handles the stats (up to 30 s),
    ownership, persona and cloud comparisons of a game one after another.
+
+For **every** game of steps 5 and 6:
+
+- **Before the run counts:** the arm output `run.sh` shows must contain
+  `rebornd: shadow session registered for app <id>.` If it says that
+  `rebornd` refused the shadow session instead, the run does not count;
+  it may be repeated once after the cause is gone, without any sign-in
+  retry loop (a refusal for `not_signed_in` is a stop, below).
+- **After each `run.sh`, before the next start:** take a screenshot with
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools/shim/shot.ps1
+  -Out <scratch>/033-<id>.png` and look at it for dialogs of the official
+  client (it stays local: it may show the account, ADR 0044); check
+  `rebornd`'s log for `connection to Steam lost`, `signed out` and
+  `reconnecting failed`; and run `target/debug/reborn-cli.exe daemon
+  status`, which must still say `signed in`. Any of these failing is a
+  stop (below); the next game is not started.
 7. `target/debug/reborn-cli.exe daemon shutdown`;
    `target/debug/reborn-observe.exe status` says not armed (if `run.sh`
    ended early, `reborn-observe disarm`).
-8. Check `rebornd`'s log for `connection to Steam lost`, `signed out` and
-   `reconnecting failed` during the runs (there must be none), then run
+8. Check `rebornd`'s log once more for the three lines of the per-run
+   check (there must be none), then run
    `python tools/shim/experiments/033_cloud_and_persona_shadow.py` with the
    three logs `run.sh` named (`log observe-<pid>.log`), full paths.
 
@@ -4533,7 +4565,12 @@ A run that a stop ends, a game that does not start, or a Cave Crawlers run
 whose `rebornd` log lacks the `shadow cloud folder filled` line with
 `failed=0` does not count and may be repeated once with this plan, after
 the cause is gone. A run that completed counts, whatever it shows; it is
-not repeated to get another result.
+not repeated to get another result. A repeat (or any run after a game
+that exited early) may come less than a minute after the previous fill
+started; its arm then hits the fill cooldown and `rebornd` logs `a shadow
+cloud fill started less than a minute ago`. For Cave Crawlers that run
+does not count (no `shadow cloud folder filled` line); wait a minute after
+the previous arm before repeating it.
 
 **What the proxy writes** (`crates/shim-observe/src/proxy.rs`, the step-4
 return line, then the ADR 0046 block and `answer_asks`; `daemon.rs`,
@@ -4600,7 +4637,10 @@ to a text whose SHA-256 equals that of the account's persona name as
 its `rax` would be a leftover. Assumption **A1**: a leftover `rax` of a
 function without a result does not point to a NUL-terminated copy of the
 account's persona name at every call in both games (about the compiled
-code, not from the page). With A1, a full match of the persona part
+code, not from the page). The specific way A1 could fail: a function
+without a result whose code last touched the local user's own persona
+record (for example while clearing that user's rich presence) and left
+`rax` pointing into it, at the name. With A1, a full match of the persona part
 confirms `SteamFriends017` 0 as "`GetPersonaName` (experiment 33, under
 A1)", and `meanings.md`, `status.json` and the shim's comments carry
 that tag; it also shows that Reborn's persona name agrees with the
@@ -4626,7 +4666,7 @@ script's output quoted here and nothing changed in the shim, the proxy or
   run); `shadow mismatch (no text at the result)` is recorded as a hint
   towards `ClearRichPresence`, not a confirmation. The position stays
   narrowed.
-- `shadow: no Reborn answer`, `shadow: skipped`, `shadow: no worker
-  thread` or a missing shadow line (for example the game exited first)
+- `shadow: no Reborn answer`, `shadow: skipped`, `shadow: no app ID
+  given`, `shadow: no worker thread` or a missing shadow line (for example the game exited first)
   means the call was not compared: recorded as "not compared" with the
   kind of note, a MISMATCH of B or C, and no conclusion either way.

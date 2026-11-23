@@ -74,7 +74,7 @@ GAMES = {
     332950: ("Dark Deception", PERSONA, [(FRIENDS, 0)]),
     2610090: ("A Park Full of Cats", PERSONA, [(FRIENDS, 0)]),
 }
-PLAN_COMMITTED = datetime(2026, 11, 22, 21, 38, 54)  # commit f2594f0 on loop/plan-16b (final plan)
+PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 
@@ -92,6 +92,10 @@ def kind_of(note):
         return "no Reborn answer"
     if note.startswith("shadow: skipped"):
         return "skipped"
+    if note == "shadow: no app ID given":
+        return "no app ID given"
+    if note == "shadow: no worker thread":
+        return "no worker thread"
     return "other"
 
 

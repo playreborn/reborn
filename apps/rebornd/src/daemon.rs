@@ -2627,6 +2627,8 @@ mod tests {
             description: "1 bongo beat".to_owned(),
             hidden: true,
             unlocked_at: Some(1_795_133_048),
+            stat_id: 2,
+            bit: 0,
         });
         assert_eq!(
             info,

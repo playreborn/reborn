@@ -788,6 +788,7 @@ mod tests {
             achievement_names: vec![AchievementName {
                 name: "ACH_WIN".to_owned(),
                 display_name: "Win".to_owned(),
+                position: None,
             }],
         }
     }

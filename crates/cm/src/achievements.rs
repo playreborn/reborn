@@ -40,6 +40,13 @@ pub struct Achievement {
     pub hidden: bool,
     /// Unlock time in seconds since the Unix epoch, `None` while locked.
     pub unlocked_at: Option<u32>,
+    /// The ID of the stat whose `bits` hold this achievement (the key of
+    /// the stat in the schema's `stats` object). Schema data, not account
+    /// data (ADR 0062).
+    pub stat_id: u32,
+    /// The key of this achievement in that stat's `bits` object, as a
+    /// number (ADR 0062).
+    pub bit: u32,
 }
 
 /// One stat value of the account, as Steam sent it (`stats` of the
@@ -156,23 +163,26 @@ impl UserStats {
                 .parse()
                 .map_err(|_| Error::StatsSchema(app_id, format!("stat ID `{stat_id}`")))?;
             for (bit, entry) in bits.iter() {
-                let bit: usize = bit.parse().map_err(|_| {
+                let bit: u32 = bit.parse().map_err(|_| {
                     Error::StatsSchema(app_id, format!("bit `{bit}` of stat {stat_id}"))
                 })?;
                 let Some(entry) = entry.as_object() else {
                     continue;
                 };
-                achievements.push(achievement(entry, self.unlock_time(stat_id, bit), language));
+                let mut achievement = achievement(entry, self.unlock_time(stat_id, bit), language);
+                achievement.stat_id = stat_id;
+                achievement.bit = bit;
+                achievements.push(achievement);
             }
         }
         Ok(achievements)
     }
 
-    fn unlock_time(&self, stat_id: u32, bit: usize) -> Option<u32> {
+    fn unlock_time(&self, stat_id: u32, bit: u32) -> Option<u32> {
         self.achievement_blocks
             .iter()
             .find(|block| block.stat_id == stat_id)
-            .and_then(|block| block.unlock_times.get(bit).copied())
+            .and_then(|block| block.unlock_times.get(usize::try_from(bit).ok()?).copied())
             .filter(|&time| time != 0)
     }
 }
@@ -317,6 +327,8 @@ fn achievement(entry: &Object, unlocked_at: Option<u32>, language: &str) -> Achi
         hidden: display.and_then(|display| display.get_str("hidden")) == Some("1"),
         unlocked_at,
         name,
+        stat_id: 0,
+        bit: 0,
     }
 }
 
@@ -516,6 +528,8 @@ mod tests {
                     description: "Win a game".into(),
                     hidden: false,
                     unlocked_at: Some(1_700_000_000),
+                    stat_id: 2,
+                    bit: 0,
                 },
                 Achievement {
                     name: "ACH_SECRET".into(),
@@ -523,6 +537,8 @@ mod tests {
                     description: String::new(),
                     hidden: true,
                     unlocked_at: None,
+                    stat_id: 2,
+                    bit: 1,
                 },
             ]
         );
@@ -588,6 +604,21 @@ mod tests {
             4
         );
         assert!(achievements.iter().all(|a| !a.hidden));
+    }
+
+    #[test]
+    fn recorded_achievements_keep_their_schema_position() {
+        // ADR 0062: the stat ID and the `bits` key of each entry, in schema
+        // order. In the recording stat 1 has an empty `bits` object and
+        // stat 2 holds all 28 achievements (`docs/protocol/achievements.md`).
+        let response = CMsgClientGetUserStatsResponse::parse_from_bytes(RECORDED).unwrap();
+        let achievements = achievements_from(&response, 3_419_430, "english").unwrap();
+        let positions: Vec<(u32, u32)> = achievements
+            .iter()
+            .map(|achievement| (achievement.stat_id, achievement.bit))
+            .collect();
+        let expected: Vec<(u32, u32)> = (0..28).map(|bit| (2, bit)).collect();
+        assert_eq!(positions, expected);
     }
 
     #[test]

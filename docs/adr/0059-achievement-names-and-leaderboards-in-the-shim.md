@@ -1,12 +1,12 @@
 # 0059: Achievement names and leaderboards in the shim
 
-- **Status:** Proposed
+- **Status:** Accepted (decided by the agent under the maintainer's
+  delegation of 2026-11-23, ADR 0060)
 - **Date:** 2026-11-23
-- **Amends (if accepted):** ADR 0055 (when stats are fetched; new shim
+- **Amends:** ADR 0055 (when the achievement list is fetched; new shim
   protocol messages; new shadow comparisons)
 - **Touches:** red lines 3, 4 and 8, the public API of
-  `reborn-shim-protocol` and `reborn-cm`. Under ADR 0051 the agent cannot
-  accept it; the maintainer decides.
+  `reborn-shim-protocol` and `reborn-cm`.
 
 ## Context
 
@@ -24,8 +24,9 @@ leaderboards (loop iteration 16a)") confirmed nine positions of the
 | `…013` 23 | `GetLeaderboardName` | Pixel Puzzles |
 
 LOOP step 7 asks for Reborn's answer in the shim, with a shadow entry
-where Reborn can compute it. This ADR records why none of the nine can be
-answered within the accepted ADRs today, and lays out the options.
+where Reborn can compute it. This ADR records why none of the nine could
+be answered within ADR 0055 as accepted, lays out the options, and
+decides them.
 
 ### What the shim has today
 
@@ -50,37 +51,47 @@ answered:
 
 `rebornd` already answers `RequestStats` for the run's own app with
 `StatsReceived { result, achievement_names }` (`apps/rebornd/src/shim_stats.rs`),
-the names built by `reborn_cm::achievements::UserStats::achievements`
-(every entry under `bits` of every stat, in schema order,
-`docs/protocol/achievements.md`).
+the names built by `reborn_cm::achievements::UserStats::achievements`:
+every entry under `bits` of every stat, stats and bits each in the order
+they appear in the schema (`docs/protocol/achievements.md`).
 
 ### A timing observation that decides the achievement design
 
 From the local logs of experiment 32 and its earlier checks (times in ms
-after the proxy loaded; no names, values or handles quoted):
+after the proxy loaded; no names, values or handles quoted). Outcore
+calls `RequestCurrentStats` twice; the column gives the first call.
 
-| Log | Game | `RequestCurrentStats` (0) | first `GetNumAchievements` (14) | first 0x44d delivered | `Steam_BGetCallback` calls |
-| --- | --- | --- | --- | --- | --- |
-| `observe-49168` | Outcore | 93 | 109 | 425 | 50 |
-| `observe-47724` | Outcore | 90 | 104 | 405 | 50 |
-| `observe-64880` | Outcore | 95 | 112 | 410 | 50 |
-| `observe-51644` | One's Own Exile | 66 | 66 | none | 0 |
-| `observe-612` | One's Own Exile | 63 | 64 | none | 0 |
-| `observe-56900` | One's Own Exile | 66 | 66 | none | 0 |
+| Log | Game | first `RequestCurrentStats` (0) | first `GetNumAchievements` (14) | last `GetAchievementName` (15) returns | first 0x44d delivered | `Steam_BGetCallback` calls |
+| --- | --- | --- | --- | --- | --- | --- |
+| `observe-49168` | Outcore | 93 | 109 | 116 | 425 | 50 |
+| `observe-47724` | Outcore | 90 | 104 | 109 | 405 | 50 |
+| `observe-64880` | Outcore | 95 | 112 | 120 | 410 | 50 |
+| `observe-51644` | One's Own Exile | 66 | 66 | 70 | none | 0 |
+| `observe-612` | One's Own Exile | 63 | 64 | 67 | none | 0 |
+| `observe-56900` | One's Own Exile | 66 | 66 | 69 | none | 0 |
 
-The official client answers `GetNumAchievements` and every
-`GetAchievementName` 0 to 16 ms after `RequestCurrentStats`, about 300 ms
-**before** it delivers `UserStatsReceived_t` (Outcore), or in a game
-that never polls callbacks at all (One's Own Exile). It therefore answers
-from data it already has locally. Reborn's `rebornd` fetches the stats
-(and with them the schema) only on the game's first `RequestStats` (ADR
-0055, "What is cached, and where"), and the official 0x44d took 250 to
-310 ms after the request (experiments 20, 21). So under ADR 0055 as
-accepted, the shim has nothing to answer with when these calls arrive,
-and its rule "honest failure" means it stops the game.
+The official client answers the first `GetNumAchievements` 0 to 17 ms
+after the first `RequestCurrentStats`, and the last `GetAchievementName`
+returns up to about 25 ms after it in Outcore and 3 to 5 ms after it in
+One's Own Exile: all within about 25 ms, roughly 300 ms **before** it
+delivers `UserStatsReceived_t` (Outcore), or in a game that never polls
+`Steam_BGetCallback` at all (One's Own Exile).
 
-What the official client answers on a computer where it has no local
-schema yet (first start of a game) is **not recorded**.
+Where the official client takes these answers from is **not recorded**.
+Two possible causes, neither observed: a cache on disk from earlier runs,
+or a fetch the official client starts itself when the game launches.
+
+The 300 ms is the official client's delay for 0x44d (250 to 310 ms in
+loop iteration 9; 265 to 309 ms recorded in experiments 20 and 21).
+Reborn's own `ClientGetUserStats` round-trip time is **not recorded**.
+`rebornd` fetches the stats (and with them the schema) only on the game's
+first `RequestStats` (ADR 0055, "What is cached, and where"). Unless that
+round trip is much shorter than 25 ms, under ADR 0055 as accepted the
+shim has nothing to answer with when these calls arrive, and its rule
+"honest failure" stops the game.
+
+What the official client answers on a computer where it has never run
+the game is **not recorded**.
 
 ## The nine positions in three groups
 
@@ -90,25 +101,31 @@ schema yet (first start of a game) is **not recorded**.
 
 - **Where Reborn gets it:**
   - Count and API names: the schema in `CMsgClientGetUserStatsResponse`
-    (EMsg 819), already fetched by `Session::user_stats`
-    (`docs/protocol/achievements.md`, source SteamKit issue #531, Steam
-    Achievement Manager `SAM.Game/Manager.cs`; fixture `user_stats.bin`).
+    (EMsg 819), already fetched by `Session::user_stats` with
+    `schema_local_version` -1 ("no local copy, so Steam sends
+    everything"; `docs/protocol/achievements.md`, sources SteamKit issue
+    #531, Goldberg `generate_emu_config.py`, Steam Achievement Manager
+    `SAM.Game/Manager.cs`; fixture `user_stats.bin`).
   - **Unknown, needs a source:** that index *i* of `GetAchievementName`
-    is the *i*-th achievement in Reborn's schema order (stats in schema
-    order, bits in key order). The public `ISteamUserStats` page says only
-    "an index between 0 and `GetNumAchievements`". Also unknown: whether
-    the official count equals Reborn's (every `bits` entry of every stat,
-    group achievements included). Both can be **checked** by a shadow
-    comparison (below), not assumed.
+    is the *i*-th achievement in Reborn's order (above). The public
+    `ISteamUserStats` page says only "an index between 0 and
+    `GetNumAchievements`". Also unknown: whether the official count
+    equals Reborn's (every `bits` entry of every stat, group achievements
+    included). Both are **checked** by a shadow comparison (decision 2),
+    not assumed.
   - `GetLeaderboardName(handle)`: experiment 32 (T1) recorded the result
-    as the text the game passed to `FindLeaderboard` for that handle. The
-    shim could answer it from its own handle table without asking anyone,
-    but only once it hands out handles, which needs group 2's
+    text as equal to the text the game passed to `FindLeaderboard` for
+    that handle. Valve's find answer also carries a `leaderboard_name`.
+    Which of the two the official client returns when they differ (for
+    example only in letter case) is **not recorded**; in that case the
+    shim stops. The shim answers from its own handle table without asking
+    anyone, but only once it hands out handles, which needs
     `FindLeaderboard`.
 - **Shim protocol:** `StatsReceived` already carries `achievement_names`
-  (internal `name` and English `display_name`) in schema order; count and
-  API names need nothing new. The missing piece is **when** the shim has
-  them (decision 1). `GetLeaderboardName` needs nothing from the daemon.
+  (internal `name` and English `display_name`) in Reborn's order; count
+  and API names need nothing new. The missing piece is **when** the shim
+  has them (decision 1). `GetLeaderboardName` needs nothing from the
+  daemon.
 - **ADR 0055's table:** lists only `RequestCurrentStats` and
   `GetAchievementDisplayAttribute` for stats; the event's names were meant
   for the second, delivered after the game's request. It says nothing
@@ -131,7 +148,8 @@ schema yet (first start of a game) is **not recorded**.
     `32752256`, lines 16 to 33); message types in
     `steam-vent-proto-steam` 0.5.2 `steammessages_clientserver_lbs.proto`.
     Never `create_if_not_found` true: the confirmed meaning is the plain
-    find (experiment 32 ruled out `FindOrCreateLeaderboard`).
+    find (experiment 32 ruled out `FindOrCreateLeaderboard`). `app_id` is
+    always the session's own app, never a value from the game.
   - `DownloadLeaderboardEntriesForUsers`: `CMsgClientLBSGetLBEntries`
     (EMsg 5418) with `app_id`, `leaderboard_id`, data request "users" and
     `steamids`; answer EMsg 5419 with entries (`steam_id_user`,
@@ -142,22 +160,27 @@ schema yet (first start of a game) is **not recorded**.
   - **Unknown, needs a source:** how Valve's int32 `leaderboard_id` maps
     to the game's 64-bit `SteamLeaderboard_t`; the byte layout of
     `LeaderboardFindResult_t` and `LeaderboardScoresDownloaded_t` (only
-    their sizes, 16 and 24, are recorded); what the "entries handle" in
-    `LeaderboardScoresDownloaded_t` is and how a game reads the entries
-    (`GetDownloadedLeaderboardEntry` is not confirmed, so a download alone
-    is useless to a game). No fixture of LBS traffic exists; recording one
-    needs a live read from the test account (ADR 0044).
+    the 703 payload sizes, 16 and 24, are recorded; that these are the
+    call results' sizes rests on assumption A2 of experiment 32); what the
+    "entries handle" in `LeaderboardScoresDownloaded_t` is and how a game
+    reads the entries (`GetDownloadedLeaderboardEntry` is not confirmed,
+    so a download alone is useless to a game). No fixture of LBS traffic
+    exists; recording one needs a live read from the test account
+    (ADR 0044).
 - **Account data:** the Steam IDs a game passes to
   `DownloadLeaderboardEntriesForUsers` (Fallout Shelter passes 4 per
   call, 13 calls at start; the array is not read, ADR 0043) are other
   people's or the user's own; the answer holds their scores. Fallout
-  Shelter's 13 finds and 13 downloads at every start would be 26 Valve
-  requests per launch.
+  Shelter makes 13 finds and 13 downloads at every start: 26 Valve
+  requests per launch. In answer mode (official client closed) these
+  replace the official client's own requests; only shadow mode, with
+  both clients signed in, doubles them.
 - **Shim protocol:** new requests, for example
   `FindLeaderboard { name }` → `LeaderboardFound { found, id,
   entry_count }` and `LeaderboardEntriesForUsers { id, users }` →
   `LeaderboardEntries { entries }`, plus a way to deliver call results
-  (703 and its buffer). None exists.
+  (703 and its buffer). None exists; the exact names are settled in the
+  implementation PR.
 - **ADR 0055's table:** has **no leaderboard row** and no "answer for
   another user" rule; its "only for itself" rule covers ownership only.
 
@@ -175,52 +198,54 @@ schema yet (first start of a game) is **not recorded**.
   ValvePython's `leaderboards.py` have find and get-entries only). A
   field list is not a flow. Stopped here for this item, as AGENTS.md
   section 4 rule 4 requires.
-- **Red line 4:** the upload must happen only because the game called
+- **Red line 4:** the upload happens only because the game called
   `UploadLeaderboardScore` in this run, with the game's own score and
   method, and only to the signed-in account. Pixel Puzzles uploads at
-  start without any input (experiment 32, recorded in three runs); that is
-  still the game's own request.
+  start without any input (experiment 32 and its two earlier runs); that
+  is still the game's own request.
 - **Shim protocol:** a write request such as `UploadLeaderboardScore {
   id, method, score, details }` → `Accepted`, later an event with the
   result; refused on shadow sessions (`Request::writes`, ADR 0055).
 - **ADR 0055's table:** no row. Its stage 3 rule applies by analogy:
   writes are never shadowed, each write kind gets a planned answer-mode
-  experiment with a success rule, and a live write from the test account
-  needs the maintainer's OK right before the run.
+  experiment with a success rule.
 
 ## Options for group 1 (achievement count and names)
 
-1. **Stop the game (status quo).** Outcore and One's Own Exile keep
-   stopping at position 14. No new risk; no progress.
-2. **Fetch stats at shim-mode launch.** `rebornd` sends its one
-   `ClientGetUserStats` for the run while it prepares the launch (as it
-   already loads the licence list), and the shim gets the achievement
-   list in the session (`Hello` answer) or as an event before the game
-   starts. Same number of Valve requests for games that ask for stats
-   (one per run), one extra for games that never do. Deviates from ADR
-   0055's "fetched on the game's first `RequestStats`"; the game still
-   gets callback 0x44d only after its own `RequestCurrentStats`.
-3. **Wait inside the call.** The shim, at the first `GetNumAchievements`
-   with a stats request open, blocks the game's call until `StatsReceived`
-   arrives (at most a few seconds, then stop). No extra request, but the
-   game's thread stalls about 300 ms or more, a timing the official
-   client never shows; whether games tolerate it is unrecorded.
-4. **Keep the schema on disk.** Only the public part (count, API names,
-   display names) of a schema fetched in an earlier run, under Reborn's
-   data folder; the first start still needs option 2 or 3. ADR 0055 keeps
-   all of the stats response in memory only, and a stale schema (the
-   developer added achievements) would need a rule (the request has
-   `schema_local_version`, whose meaning is not sourced).
-
-**Proposed:** option 2, with option 3 as the fallback when the launch
-fetch has not finished (bounded wait, then stop). Plus a **shadow
-comparison before any answer mode**: in a shadow session the proxy
-compares the official count with the length of Reborn's list, and the
-official text of each `GetAchievementName(i)` with Reborn's *i*-th
-internal name (the proxy already reads the result text, experiment 32's
-`READS`), logging only "match" or "mismatch". Three games matching
-(LOOP step 7) confirms the order; today two games call these positions
-(Outcore, One's Own Exile), so a third must be recorded.
+- **(a) Stop the game (status quo).** Outcore and One's Own Exile keep
+  stopping at position 14. No new risk; no progress.
+- **(b) Fetch at shim-mode launch.** `rebornd` starts its one
+  `ClientGetUserStats` for the run as part of the launch, alongside the
+  ownership data it already prepares for the run then, and hands the
+  public part (count, internal names, English display names) to the shim
+  as soon as it arrives. One Valve request per run for games that ask for
+  stats (the same as today), one extra for games that never do. The game
+  still gets callback 0x44d only after its own `RequestCurrentStats`.
+  - This brings back part of ADR 0055's rejected alternative 2,
+    "Snapshot at launch". Its reasons do not apply here: it was rejected
+    because it put a lot of account data into the game process up front
+    and could not carry writes. Here only the public schema part reaches
+    the shim (stat values and unlock state stay in `rebornd` as today),
+    writes are untouched, and the extra cost is bounded at one request
+    per launch.
+- **(c) Wait inside the call.** The shim, at the game's first call that
+  needs the list, blocks the call until the list arrives, for a bounded
+  time, then stops. No extra request, but the game's thread stalls for
+  Reborn's round trip, a pause the official client never shows; whether
+  games tolerate it is unrecorded.
+- **(d) Keep the public part on disk.** The count and names of a schema
+  fetched in an earlier run, under Reborn's data folder; the first start
+  still needs (b) or (c). ADR 0055 keeps all of the stats response in
+  memory only, and its logging note treats achievement names as account
+  data (logs say only counts); a file of names would need its own rule.
+  A stale schema (the developer added achievements) would need a rule as
+  well: Reborn sends `schema_local_version` -1 (sourced, above), but what
+  the field does with other values is not sourced.
+- **Checked and dropped: start the fetch when the game asks for the
+  stats interface.** One's Own Exile gets the interface at 64 ms and
+  calls 14 at 66 ms (`observe-56900`); Outcore gets it at 94 ms and calls
+  14 at 112 ms (`observe-64880`). That gains at most about 20 ms over
+  fetching at `RequestCurrentStats`, too little for a Valve round trip.
 
 ## Options for groups 2 and 3 (leaderboards)
 
@@ -231,44 +256,61 @@ internal name (the proxy already reads the result text, experiment 32's
    that reads the 16 bytes of `LeaderboardFindResult_t` from
    `GetAPICallResult`'s buffer (ADR 0056 allows call-result reads) to
    confirm its layout; record a fixture of one live find from the test
-   account; then implement find and name. Downloads only after
-   `GetDownloadedLeaderboardEntry` is confirmed and the Steam-ID question
-   below is decided.
+   account; then implement find and name.
 3. **Uploads** only after a flow source exists and with a separate
-   planned experiment (one live write, maintainer's OK before the run).
+   planned experiment.
 
-**Proposed:** option 1 now, option 2 as the next loop work, option 3 only
-with a source.
+For `DownloadLeaderboardEntriesForUsers` the IDs could be forwarded as the
+game passes them, or filtered. Filtering has no source and would make
+Reborn's answers differ from Valve's (the game would get fewer entries
+than it asked for without knowing why).
 
-## Questions for the maintainer
+## Decision
 
-1. **When to fetch achievement data:** at every shim-mode launch (one
-   extra Valve request for games without stats), or only when the game
-   asks and let the game wait, or keep the public part of the schema on
-   disk between runs, or keep stopping these games?
-2. **Shadow comparison of achievement names:** may the proxy compare the
-   official `GetAchievementName` texts and count with Reborn's (match or
-   mismatch only, names never logged), as an addition to ADR 0055's
-   stage-1 list?
-3. **The third game:** only two recorded games call positions 14 and 15;
-   record a third first (as for `StoreStats`), or accept two?
-4. **Leaderboard reads:** may `rebornd` ask Valve for leaderboards on
-   the game's behalf (one find per name and run, cached for the run;
-   Fallout Shelter would cause 13 finds per start)? And may one live find
-   from the test account be recorded as the fixture?
-5. **Other people's scores:** `DownloadLeaderboardEntriesForUsers` sends
-   Steam IDs the game chose and returns those users' scores. Forward any
-   IDs the game passes (the page takes "a maximum of 100 users"), or only
-   the user's own and friends', or none until decided?
-6. **Score uploads:** agree that `UploadLeaderboardScore` stays stopped
-   until a flow source exists, and that the first live upload is a
-   separate experiment you approve right before the run?
+Decided by the agent under the maintainer's delegation of 2026-11-23
+(ADR 0060):
+
+1. **Achievement list: option (b) with the bounded fallback of (c).**
+   `rebornd` fetches the run's stats at each shim-mode launch, alongside
+   the launch, and only the public schema part (count, internal names,
+   English display names) goes to the shim. If the list has not arrived
+   when the game first calls a position that needs it, that call waits
+   at most **2 s**, then the game stops with a log line, as today. For
+   the user: on a normal connection the game starts as it does with the
+   official client; on a slow one it may pause up to 2 s at start; with
+   no answer it stops as it does today. Stat values, unlock state and the
+   rules for 0x44d stay as ADR 0055 decided.
+2. **Shadow comparison: yes.** In a shadow session the proxy compares the
+   official `GetNumAchievements` value with the length of Reborn's list,
+   and the official text of `GetAchievementName(i)` with Reborn's *i*-th
+   internal name for each index (the proxy already reads the result
+   text, experiment 32's `READS`). Only "match" or "mismatch" is logged,
+   never a name. This adds to ADR 0055's stage-1 list.
+3. **Three games.** A third game that calls these positions is recorded
+   before answer mode; the three-game rule of LOOP step 7 stays.
+4. **Leaderboard reads** (`FindLeaderboard`, `GetLeaderboardName`):
+   allowed in principle, always for the session's own app ID, at most one
+   find per name per run (later finds of the same name are answered from
+   the run's cache). Built only after an experiment has confirmed the
+   layout of the reply data (`LeaderboardFindResult_t`) and the handle
+   mapping. One live find from the test account may be recorded as the
+   fixture.
+5. **Other players' scores** (`DownloadLeaderboardEntriesForUsers`): stay
+   stopped for now. When built, the IDs the game passes are forwarded
+   unchanged, because Valve decides what it returns.
+6. **Score uploads** (`UploadLeaderboardScore`): stay stopped until a
+   public, allowed source sends the message. The first live upload is a
+   separate experiment the agent decides on right before it runs
+   (ADR 0060), and happens only because a game asked (red line 4).
 
 ## Consequences
 
-- If accepted as proposed: Outcore and One's Own Exile get a way past
-  position 14 once the stats object, `RequestCurrentStats` and 0x44d
-  exist in the shim and the shadow comparison has matched in three games.
+- Outcore and One's Own Exile get a way past position 14 once the stats
+  object, `RequestCurrentStats`, 0x44d and the launch fetch exist in the
+  shim, and the shadow comparison has matched in three games.
+- One extra `ClientGetUserStats` per shim-mode launch for games that never
+  ask for stats (red line 8: bounded, one per launch).
 - Leaderboard games (Fallout Shelter, Pixel Puzzles, Coin Maker
-  Simulator) keep stopping at their first find for now.
+  Simulator) keep stopping at their first find until decision 4's
+  experiment and fixture exist.
 - Nothing in this ADR adds a write to the account.

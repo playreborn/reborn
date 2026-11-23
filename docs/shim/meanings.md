@@ -5527,3 +5527,362 @@ other contents, a stale schema on one side, or a different encoding of
 the same name. A new plan explains it (for example by comparing the sets
 without order, still by digest). ADR 0059 decision 3 (a third game) was
 not reached. Nothing in the shim, the proxy or `rebornd` is changed.
+
+## Why the achievement names differ (loop iteration 18a)
+
+Experiment 35 found that the official `GetNumAchievements` equals the
+length of Reborn's list in Outcore and One's Own Exile. The official
+`GetAchievementName(i)`, however, differed from Reborn's *i*-th API name
+in 26 of 29 calls (Outcore) and 15 of 16 (One's Own Exile). The cause is
+open. Experiment 36 surveys it with the lines ADR 0061 adds to the
+shadow. No game was run for this plan.
+
+### The survey in the shadow (ADR 0061, PR #58)
+
+- **What the proxy keeps** (`crates/shim-observe/src/daemon.rs`,
+  `NameDigests`, `normalised`, `AchievementSurvey`; `proxy.rs`,
+  `answer_asks`): for each official name, the SHA-256 of the text as it
+  is and of its normalised form (read as UTF-8, trimmed with `str::trim`,
+  lowercased with `str::to_lowercase`). Reborn's names get the same two
+  digests. The survey keeps the latest official count and the first
+  digests of each index below 50 (the proxy's logging limit) the game
+  asked for.
+- **When it writes:** once per process, when the game has asked for
+  every index below the latest official count and Reborn's list is
+  there. The worker writes three lines right after the per-call note of
+  the call that completed the list, with that call's prefix:
+
+  ```text
+  <prefix> shadow set: official N (distinct d, no text k), Reborn M (distinct e); shared s, official-only o, Reborn-only r
+  <prefix> shadow set normalised: shared s, official-only o, Reborn-only r
+  <prefix> shadow map: 0:j 1:j … (N-1):j
+  ```
+
+  The set counts are over distinct digests. *j* is the first index in
+  Reborn's list with the same exact digest, `none` if there is none, or
+  `notext` if the official result pointed to no text.
+- **When there is no survey,** one line says why instead, once per
+  process: `shadow survey: not surveyed, <why>`. The reasons are a
+  skipped official answer, no Reborn list when the official list is
+  complete, or an official count above 50 (only the first 50 calls of a
+  position are shadowed, so such a list never completes). Outcore (29)
+  and One's Own Exile (16) are within the limit.
+- **Never logged:** a name or a digest.
+- **The pairs stay local** (ADR 0061, "Where each part may go"). The
+  official order is the open question. If it depended on the account
+  (for example unlocked achievements first), the map would encode the
+  test account's unlock state. So the `i:j` pairs stay in the local log
+  and the script's terminal output, and are never quoted here, in a
+  commit or in a pull request, until an experiment shows the order does
+  not depend on the account. The set counts, the reading and the mapping
+  pattern (counts and yes/no only) may be quoted.
+
+### Experiment 36 (planned 2026-11-23, before the runs)
+
+**Games:** Outcore: Desktop Adventure (1275670, `…011`) and One's Own
+Exile (3086720, `…012`), the two recorded games that call 14 and 15
+(experiment 35: no recorded game is a third). No candidates this time.
+
+**Status of the positions before the run.** 14 and 15 on `…011` and
+`…012` are confirmed (experiment 32). The run surveys **Reborn's list**
+against the official one, not the meanings.
+
+**Predictions are open.** This is a survey. The script checks that the
+tool worked (A to C) and then reads the result with a table fixed here,
+before the runs.
+
+**Conditions for the runs.** As for experiment 35: `rebornd` is signed in
+to the test account with the stored login while the official client runs
+and stays signed in to the same account (ADR 0055 stage 1). One counted
+run per game. Each arm makes `rebornd` fill a shadow cloud folder for
+that game (a side effect, not compared; at most one fill a minute,
+`FILL_COOLDOWN`). The proxy's worker sends one `RequestStats` per game
+run, or reuses the one of a 0x44d comparison. `rebornd` answers it from
+one `ClientGetUserStats` for the run's app: one Valve request per run
+(red line 8). The survey adds no request and no message. Reborn asks for
+no write of stats, achievements or leaderboards. A write a game makes by
+itself goes through the official client, as in experiment 32. The one
+status change of experiment 33 happens again (`watch_friends` sets the
+own status to online after sign-in); it was accepted there.
+
+**Input** (ADR 0049, 0060 decision 3):
+
+- **Outcore:** only its launch-option window in the official client,
+  which comes before the game loads Steam. The agent leaves the default
+  option selected and clicks Play.
+- **One's Own Exile:** none.
+
+**Prompts from the game or from Windows** (an in-game EULA, consent or
+privacy screen, a sign-in to any account, a store or purchase prompt, a
+UAC or firewall prompt, a redistributable installer): no click. The
+prompt is left as it is, and `run.sh`'s close request ends the run as
+usual. That run counts as recorded and is never repeated to get past the
+prompt. A UAC or firewall prompt still open after the run is left for
+the maintainer, and no further game is started while it is open.
+
+**Error notices in the official client** (for example "could not be
+started" with an error code, or a connection time-out): **left alone**.
+Experiment 35 closed two such notices, against its plan. This plan does
+not repeat that. If an open notice blocks a further run (it covers the
+launch, or `run.sh` cannot start the game), that is a stop (below).
+
+**Steps for the main session.** Run them in a normal terminal, not the
+desktop app, on this plan's branch at the commit that sets
+`PLAN_COMMITTED`. That branch holds PR #58's survey, so the proxy built
+in step 2 writes the survey lines.
+
+1. **Check:** the official client runs and is signed in to the test
+   account; no game runs; `target/debug/reborn-observe.exe status` says
+   not armed.
+2. **Build:** `cargo build -p rebornd -p reborn-cli -p reborn-shim-observe`.
+3. **Start `rebornd`** in the background, with its output in a local
+   file outside the repository (for example `target/debug/rebornd.exe >
+   <scratch>/rebornd-036.log 2>&1`). This log stays on the computer and is
+   never quoted beyond the lines named here.
+4. **Sign `rebornd` in** with the stored login:
+   `target/debug/reborn-cli.exe daemon library > /dev/null` (not shown).
+   Then `target/debug/reborn-cli.exe daemon status | grep -c ', signed
+   in,'` must print `1`. The status line names the account, so it is not
+   printed or pasted; only this count is looked at. (`not signed in yet
+   (login stored)` also contains "signed in", so a plain search for
+   "signed in" is not enough.) Nothing is typed: no password, no code.
+5. **Outcore:** start `tools/shim/run.sh 1275670 60` in the background,
+   so that the agent can answer the launch-option window in time (it
+   came before Steam loaded in experiments 7, 10, 32 and 35; in
+   experiment 10 it was answered too late). The agent takes a local
+   screenshot, leaves the default option selected and clicks Play. **Do
+   not run `reborn-observe arm --app` by hand before `run.sh`**
+   (experiment 33, step 5). The second argument, 60, is the wait in
+   seconds after the game loaded Steam (the `[S_API]` line), before the
+   close request.
+6. **One's Own Exile:** `tools/shim/run.sh 3086720 60`, in the
+   foreground.
+
+`run.sh` keeps the one-minute gap itself (ADR 0052). The 60 s wait
+leaves room for the shadow worker. The calls come in the first 0.5 s
+(experiments 32 and 35), and the worker waits up to 30 s (`STATS_WAIT`)
+for `rebornd`'s `StatsReceived`. In experiment 35 every call got its
+shadow line within the run.
+
+For **both** games of steps 5 and 6:
+
+- **Before the run counts:** the arm output `run.sh` shows must contain
+  `rebornd: shadow session registered for app <id>.` If `rebornd`
+  refused instead, the run does not count. It may be repeated once after
+  the cause is gone, without any sign-in retry loop (a refusal for
+  `not_signed_in` is a stop, below).
+- **After each `run.sh`, before the next start:**
+  - Take a screenshot with `powershell -NoProfile -ExecutionPolicy Bypass
+    -File tools/shim/shot.ps1 -Out <scratch>/036-<id>.png` and look at it
+    for dialogs of the official client, of the game or of Windows. Then
+    **delete it**; it stays local and may show the account (ADR 0044).
+  - Check `rebornd`'s log for `connection to Steam lost`, `signed out`
+    and `reconnecting failed`.
+  - Run the status check of step 4; it must still print `1`.
+
+  Any of these failing is a stop (below).
+
+7. **Shut down:** `target/debug/reborn-cli.exe daemon shutdown`. Then
+   `target/debug/reborn-observe.exe status` must say not armed (if
+   `run.sh` ended early, run `reborn-observe disarm`).
+8. **Evaluate:** check `rebornd`'s log once more for the three lines of
+   the per-run check (there must be none). Then run `python
+   tools/shim/experiments/036_achievement_list_survey.py` with the two
+   logs `run.sh` named (`log observe-<pid>.log`), as full paths.
+
+**How long.** Each run takes about two to three minutes: up to 65 s for
+the gap, the launch, 60 s after Steam loaded, and the close (both games
+closed normally in experiments 32 and 35). A game that does not close
+adds up to two minutes and the forced end below. About six minutes in
+all.
+
+**Stop rule** (ADR 0055 "Two sign-ins at once", ADR 0044 as amended by
+ADR 0060, LOOP.md "Stop and ask the maintainer"):
+
+- **A sign-in prompt or a failed sign-in:** if `rebornd` or `reborn-cli`
+  asks for Steam Guard, a code, a mobile confirmation or a password, or
+  the sign-in fails: stop. No retry; shut `rebornd` down; no game is
+  started.
+- **A logoff or a kick:** if either client is logged off or kicked during
+  the runs (the official client shows itself offline or signed out, or a
+  dialog about another sign-in; `rebornd`'s log shows `connection to
+  Steam lost`, `signed out` or `reconnecting failed`): no further start.
+  The running game is left to `run.sh`'s close request and two-minute
+  wait. `run.sh` disarms, and `rebornd` is shut down. The run does not
+  count, and the agent signs neither client in again.
+- **Another dialog of the official client:** any dialog other than
+  Outcore's launch-option window (for example a cloud conflict, an
+  agreement or a purchase): stop. Nothing is accepted, and the dialog is
+  left as it is. An error notice that does not block the next run is
+  noted and left open. One that blocks it is a stop.
+- **A rate limit or warning from Valve:** no further start (ADR 0052).
+- **A game still running two minutes after the close request** (`run.sh`
+  prints `STILL RUNNING after 2 minutes`): before ending it, the agent
+  checks three things. Two minutes have passed since the close request.
+  The process ID still exists. Its executable path is the game's
+  (`Get-Process -Id <pid>` with its `Path` under the game's
+  `steamapps\common` folder). Only then does it end that one process
+  with `taskkill /F /PID <pid>` (ADR 0060 decision 4; never the official
+  client, `rebornd` or any other process). It notes the forced end in
+  the result and goes on. Its log counts if it has the calls and the
+  survey lines.
+
+A run that a stop ends, or a game that does not start, does not count.
+It may be repeated once with this plan after the cause is gone. A run
+that completed counts, whatever it shows. It is not repeated to get
+another result.
+
+**What the proxy writes,** for a logged call `<n>` on thread `<t>`: the
+call line, the result line and the per-call shadow note, as in
+experiment 35. Then, once per process after the note of the call that
+completed the list, the three survey lines above, with the same prefix.
+
+**Predictions** (`tools/shim/experiments/036_achievement_list_survey.py`),
+per log. Preconditions, which say whether the tool worked:
+
+- **S** (survey, no verdict): the `STEAMUSERSTATS` versions called, the
+  calls per position, and the kinds of the per-call notes.
+- **A:** at least one call of 14 and one of 15 on the game's version
+  (Outcore `…011`, One's Own Exile `…012`), each with a result line.
+- **B:** exactly one `shadow set:`, one `shadow set normalised:` and one
+  `shadow map:` line, and no `shadow survey: not surveyed` line. Each carries the prefix of a call of the four
+  positions, on that call's thread, after its result line. *N* in the
+  set line equals the official count from 14 (one value), and the map
+  has the pairs 0 to *N*-1 in order.
+- **C:** the map agrees with the per-call notes. For each index with
+  exactly one note, and that note `shadow match` or `shadow mismatch`,
+  the note is `shadow match` exactly when the map gives *j* = *i*.
+
+**Reading table**, fixed here, for a log that matched A to C (first row
+that applies):
+
+| Condition | Reading |
+| --- | --- |
+| no text *k* > 0 | "not read (no text)" |
+| exact set: shared = *N* = *M*, official-only = Reborn-only = 0, *d* = *e* = *N*; map is the identity | "same order (contradicts experiment 35)" |
+| exact set as in the row above; map is not the identity | "order differs" |
+| normalised set: shared = *N* = *M*, official-only = Reborn-only = 0 | "encoding/case" |
+| otherwise | "contents differ" |
+
+Names that collapse into one after normalising (two names on one side
+with the same normalised form) make the normalised shared count smaller
+than *N*. They fall through to "contents differ".
+
+For "order differs" the script prints the **mapping pattern** as a
+finding: the number of fixed points, reversal (*j* = *N*-1-*i*) yes or
+no, rotation (*j* = *i* + *r* mod *N* for some *r*) yes or no, and the
+number of cycles. For every log that matched A to C it also prints the
+set counts and, marked "local only", the index pairs `i:j`. The result
+quotes the set counts, the reading and the pattern. It does **not**
+quote the pairs (ADR 0061).
+
+**Overall:** "experiment 36: survey complete" when both games have an
+accepted log and both matched A to C. Otherwise the script prints
+"experiment 36: MISMATCH (survey incomplete)", and no reading is
+recorded for the game that failed. The script rejects a log given twice,
+a log not recorded by `run.sh` for these games (`observelog.app_of`),
+more than one log per game, a missing game, and logs whose start
+(`observelog.start_of`) is earlier than the plan commit
+(`PLAN_COMMITTED`, set in a follow-up commit; while it is unset, every
+log is rejected). It prints only counts, versions, the kinds of notes,
+readings, the pattern and (local only) the index pairs. `--self-check`
+runs eleven made-up logs through A to C and the reading table: one for
+each reading, one where names collapse after normalising ("contents
+differ"), and five that must fail (among them a "not surveyed" line
+instead of the survey). It also checks the pattern of a reversal. It must print "self-check:
+match".
+
+**What a reading means, and what it does not.**
+
+- **"order differs":** the official client returns the same names as
+  Reborn's list, in another order. The mapping pattern is a **finding**,
+  not a rule. Any order Reborn later adopts for `GetAchievementName`
+  needs a source (a public page, an allowed reference) or an observation,
+  and a planned experiment that predicts the official order for a game
+  before it is run. Never memory (ADR 0061, AGENTS.md section 4). A
+  candidate rule is checked against these pairs before any experiment;
+  the survey gives the pairs for that, on the recorder's computer.
+- **"encoding/case":** the same names up to letter case or surrounding
+  white space. A new plan finds out which side differs and how. The
+  survey does not say which.
+- **"contents differ":** at least one official name is not in Reborn's
+  list even after normalising, and the official-only and Reborn-only
+  counts say how many. Possible causes, as possibilities only: a stale
+  schema on one side, names outside the stats' `bits`, or an encoding
+  that trimming and lowercasing does not undo. A new plan tells them
+  apart.
+- **"not read (no text)":** some official results pointed to no text; no
+  conclusion.
+- **"same order (contradicts experiment 35)":** the survey's map
+  disagrees with experiment 35's per-call notes. C already checks that
+  map and notes agree within one run, so this would mean the official
+  list changed between the runs. Recorded as such, and a new plan looks
+  at it.
+
+The two games may get different readings. Each is recorded for its own
+game. Nothing in the shim, the proxy or `rebornd` is changed because of
+the result without a new plan.
+
+**Already checked** (before the plan time; logs read only on this
+computer, nothing quoted but the lines below):
+
+- **On the experiment 35 logs** `observe-63908` (Outcore) and
+  `observe-54644` (One's Own Exile), recorded before the survey existed,
+  through `check()` with the plan time and the `starts.log` check
+  bypassed: S shows the same calls as experiment 35 (Outcore 30 of 14
+  and 29 of 15, notes 3 match and 26 mismatch; One's Own Exile 1 of 14
+  and 16 of 15, 1 match and 15 mismatch), and A matches. B mismatches,
+  since there are no survey lines.
+- **On a copy of the Outcore log** in memory, with three made-up survey
+  lines (all 29 shared, a made-up map keeping the three matching indices
+  fixed and permuting the rest) inserted after the last per-call note:
+  A to C match, and the reading is "order differs" with the pattern "3
+  fixed points of 29, reversal: no, rotation: no, 4 cycles". The copy
+  was never written to disk.
+- **Self-check:** `--self-check` prints "self-check: match".
+
+**Result of experiment 36** (agent runs by the main session after the
+plan time 04:35:23 with binaries built from the plan branch; `rebornd`
+signed in with the stored login, no prompt; logs recorded by `run.sh`:
+`observe-60728` Outcore (the agent left the default launch option and
+clicked Play), `observe-52844` One's Own Exile; both arms said "shadow
+session registered", no logoff, kick, reconnect, WARN or ERROR line in
+`rebornd`'s log, `daemon status` signed in after each run, both games
+closed normally; the screenshot after the second run showed only another
+window in front of the official client, so no client dialog could be
+seen there; it was deleted at once): **survey complete**, checked by the
+script. The two lines with the `i:j` pairs are left out below, as ADR
+0061 requires (local only).
+
+```text
+observe-60728.log (Outcore: Desktop Adventure) S: versions ['011'], calls {'011 #14': 30, '011 #15': 29}, per-call notes [011 #14 match: 30, 011 #15 match: 3, 011 #15 mismatch: 26], 0 notes without a call
+observe-60728.log (Outcore: Desktop Adventure) A: calls with a result line {'011 #14': 30, '011 #15': 29} -> match
+observe-60728.log (Outcore: Desktop Adventure) B: survey lines {'map': 1, 'normalised': 1, 'set': 1}, all after their call's result on its thread: True, official count from 14: 29, N in the set line: 29 -> match
+observe-60728.log (Outcore: Desktop Adventure) C: 29 indices with one per-call note checked against the map, 0 disagree -> match
+observe-60728.log (Outcore: Desktop Adventure) set: official 29 (distinct 29, no text 0), Reborn 29 (distinct 29); shared 29, official-only 0, Reborn-only 0
+observe-60728.log (Outcore: Desktop Adventure) set normalised: shared 29, official-only 0, Reborn-only 0
+observe-60728.log (Outcore: Desktop Adventure) reading: order differs
+observe-60728.log (Outcore: Desktop Adventure) finding: mapping pattern: 3 fixed points of 29, reversal: no, rotation: no, 5 cycles
+observe-60728.log (Outcore: Desktop Adventure): match
+observe-52844.log (One's Own Exile) S: versions ['012'], calls {'012 #14': 1, '012 #15': 16}, per-call notes [012 #14 match: 1, 012 #15 match: 1, 012 #15 mismatch: 15], 0 notes without a call
+observe-52844.log (One's Own Exile) A: calls with a result line {'012 #14': 1, '012 #15': 16} -> match
+observe-52844.log (One's Own Exile) B: survey lines {'map': 1, 'normalised': 1, 'set': 1}, all after their call's result on its thread: True, official count from 14: 16, N in the set line: 16 -> match
+observe-52844.log (One's Own Exile) C: 16 indices with one per-call note checked against the map, 0 disagree -> match
+observe-52844.log (One's Own Exile) set: official 16 (distinct 16, no text 0), Reborn 16 (distinct 16); shared 16, official-only 0, Reborn-only 0
+observe-52844.log (One's Own Exile) set normalised: shared 16, official-only 0, Reborn-only 0
+observe-52844.log (One's Own Exile) reading: order differs
+observe-52844.log (One's Own Exile) finding: mapping pattern: 1 fixed points of 16, reversal: no, rotation: no, 3 cycles
+observe-52844.log (One's Own Exile): match
+experiment 36: survey complete
+readings: Outcore: Desktop Adventure: order differs, One's Own Exile: order differs
+```
+
+As fixed beforehand: in both games every official name is in Reborn's
+list and the other way round, also after normalising, so the contents
+and the spelling are the same and the **order differs** (Outcore: 3
+fixed points of 29, 5 cycles; One's Own Exile: 1 fixed point of 16, 3
+cycles; neither a reversal nor a rotation). This explains experiment
+35's index finding. No order rule is taken from this: any rule Reborn
+adopts needs a source or an observation plus its own planned experiment
+(ADR 0061), and whether the official order depends on the account stays
+open.

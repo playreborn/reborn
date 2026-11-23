@@ -569,14 +569,20 @@ fn ask(prefix: String, official: Official) {
 /// achievement wake, everything waiting in [`ACHIEVEMENTS`] is dropped and
 /// logged, so the next achievement call wakes the worker again.
 fn skipped(ask: Ask, why: &str) {
-    if matches!(ask.official, Official::Achievements) {
-        for (prefix, _) in achievements().take() {
-            log(&format!("{prefix} shadow: skipped, {why}"));
-        }
-    } else if why == "no worker thread" {
-        log(&format!("{} shadow: no worker thread", ask.prefix));
+    let note = if why == "no worker thread" {
+        "shadow: no worker thread".to_owned()
     } else {
-        log(&format!("{} shadow: skipped, {why}", ask.prefix));
+        format!("shadow: skipped, {why}")
+    };
+    if matches!(ask.official, Official::Achievements) {
+        // Taken (which also clears the open wake) before logging, so the
+        // lock is not held while the log is written.
+        let waiting = achievements().take();
+        for (prefix, _) in waiting {
+            log(&format!("{prefix} {note}"));
+        }
+    } else {
+        log(&format!("{} {note}", ask.prefix));
     }
 }
 
@@ -640,7 +646,10 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
             let reborn = given_app_id()
                 .ok_or(())
                 .map(|app_id| link.achievements(pid, app_id, connect_with_waits, STATS_WAIT));
-            for (prefix, official) in achievements().take() {
+            // Bound first: the guard is dropped here, not held while
+            // the log is written.
+            let waiting = achievements().take();
+            for (prefix, official) in waiting {
                 let note = match &reborn {
                     Err(()) => "shadow: no app ID given".to_owned(),
                     Ok(reborn) => compare_achievement(&official, reborn.clone()),
@@ -818,8 +827,9 @@ fn stats_received_at(rax: u64, rdx: u64) -> Option<crate::daemon::OfficialStats>
     crate::daemon::OfficialStats::new(size, &first)
 }
 
-/// Longest result text hashed for the persona name comparison; a longer
-/// one counts as no text. A bound chosen here, not a documented limit.
+/// Longest result text hashed for the persona name and achievement name
+/// comparisons; a longer one counts as no text. A bound chosen here, not a
+/// documented limit.
 const MAX_NAME_BYTES: usize = 1024;
 
 /// The SHA-256 of the NUL-terminated text at `address`, read in place and

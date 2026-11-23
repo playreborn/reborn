@@ -283,9 +283,10 @@ Decided by the agent under the maintainer's delegation of 2026-11-23
 2. **Shadow comparison: yes.** In a shadow session the proxy compares the
    official `GetNumAchievements` value with the length of Reborn's list,
    and the official text of `GetAchievementName(i)` with Reborn's *i*-th
-   internal name for each index (the proxy already reads the result
-   text, experiment 32's `READS`). Only "match" or "mismatch" is logged,
-   never a name. This adds to ADR 0055's stage-1 list.
+   internal name for each index (the proxy reads the result text in
+   memory, hashes it with SHA-256 and compares digests; the text is never
+   logged, and position 15 is no longer a `READS` result text). Only
+   "match" or "mismatch" is logged, never a name. This adds to ADR 0055's stage-1 list.
 3. **Three games.** A third game that calls these positions is recorded
    before answer mode; the three-game rule of LOOP step 7 stays.
 4. **Leaderboard reads** (`FindLeaderboard`, `GetLeaderboardName`):

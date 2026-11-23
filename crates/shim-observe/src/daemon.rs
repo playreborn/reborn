@@ -180,7 +180,16 @@ impl<R: Lines, W: Write> Client<R, W> {
             let Some(reply) = self.reader.next_line(None)? else {
                 return Err(DaemonError::Unexpected);
             };
-            match decode::<DaemonMessage>(&reply).map_err(|_| DaemonError::Unexpected)? {
+            let mut reply = reply.into_bytes();
+            let message = std::str::from_utf8(&reply)
+                .map_err(|_| DaemonError::Unexpected)
+                .and_then(|text| {
+                    decode::<DaemonMessage>(text).map_err(|_| DaemonError::Unexpected)
+                });
+            // A stale `StatsReceived` skipped here holds achievement names:
+            // the line is zeroed (best effort) like in `stats_answer`.
+            wipe(&mut reply);
+            match message? {
                 DaemonMessage::Response {
                     id: answered,
                     response,
@@ -472,7 +481,10 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
     /// first `StatsReceived` this session read (also one read for 0x44d),
     /// otherwise from a `RequestStats` sent now, waiting at most `wait` for
     /// its event. A wait that runs out or a refusal is not kept: the next
-    /// question asks again, as [`Self::stats_result`] does.
+    /// question asks again, as [`Self::stats_result`] does. An event with a
+    /// result other than OK is kept (it is Valve's real answer for the run,
+    /// which `rebornd` repeats): every later comparison then says why there
+    /// is no list, without asking again.
     pub fn achievements(
         &mut self,
         pid: u32,
@@ -788,7 +800,9 @@ pub struct RebornAchievements {
 
 impl RebornAchievements {
     /// From the event's fields: the API names are hashed, then their text
-    /// and the display names are zeroed (best effort) and dropped.
+    /// and the display names are zeroed (best effort) and dropped. With a
+    /// result other than OK there is no list (the event carries no names);
+    /// the result is kept all the same, for the 0x44d comparison.
     pub fn from_event(result: i32, names: Vec<reborn_shim_protocol::AchievementName>) -> Self {
         let digests = if result != 1 {
             Err("Valve's stats result was not OK")

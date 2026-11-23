@@ -18,8 +18,8 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 - 2026-11-23: experiment 34 (PR #55): Bongo Cat group matched,
   `STEAMINVENTORY_INTERFACE_V003` 26 confirmed as `RequestPrices` (under
-  A1, A2, A5); Cave Crawlers group **mismatched** (a second 4700 callback
-  without 6's handle), so 6, 21 and the callbacks 4700/4701/4702 stay
+  A1, A2, A5); Cave Crawlers group **mismatched** (the first of two 4700
+  callbacks without 6's handle), so 6, 21 and the callbacks 4700/4701/4702 stay
   candidates. Inventory 2 (`accountid`) deferred by the agent under ADR
   0060. Now 151 of 220 (M4 alone: 141 of 205, 69 %).
 - 2026-11-23: ADR 0060 (maintainer): the agent decides on the

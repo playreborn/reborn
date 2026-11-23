@@ -501,7 +501,7 @@
   "STEAMINVENTORY_INTERFACE_V003": {
     "6": [
       "candidate",
-      "GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle)"
+      "GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) (experiment 34: H3 mismatched in Cave Crawlers)"
     ],
     "1": [
       "candidate",
@@ -513,7 +513,7 @@
     ],
     "21": [
       "candidate",
-      "GetItemDefinitionIDs (experiment 34 planned)"
+      "GetItemDefinitionIDs (experiment 34: Cave Crawlers group mismatched on H3/C1; C3 and C4 matched)"
     ],
     "26": [
       "confirmed",

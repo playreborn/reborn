@@ -48,7 +48,7 @@ Of these, called by the M4 games: 205; confirmed: 141; open: 64.
 | candidate | 3 | `SteamUser021` | 2 | GetSteamID |
 | candidate | 2 | `STEAMAPPS_INTERFACE_VERSION008` | 4 | GetCurrentGameLanguage or GetAvailableGameLanguages |
 | candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 1 | GetResultItems or SerializeResult |
-| candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 | GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) |
+| candidate | 2 | `STEAMINVENTORY_INTERFACE_V003` | 6 | GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) (experiment 34: H3 mismatched in Cave Crawlers) |
 | candidate | 2 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 13 | a function taking only a file name (FileExists, FilePersisted, FileForget, FileDelete, GetFileSize and others) |
 | candidate | 2 | `STEAMSCREENSHOTS_INTERFACE_VERSION003` | 3 | narrowed: HookScreenshots (experiment 27) |
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION012` | 6 | GetAchievement, GetStat, GetGlobalStat or GetAchievementAchievedPercent (or a name-only write) |
@@ -59,7 +59,7 @@ Of these, called by the M4 games: 205; confirmed: 141; open: 64.
 | candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 11 | AddPromoItem, TriggerItemDrop, GrantPromoItems or a no-argument call |
 | candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 13 | AddPromoItems, GetItemsByID, GetItemsWithPrices or a call with leftover arguments |
 | candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 20 | LoadItemDefinitions or another call returning 1 (no separating read) |
-| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 21 | GetItemDefinitionIDs (experiment 34 planned) |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 21 | GetItemDefinitionIDs (experiment 34: Cave Crawlers group mismatched on H3/C1; C3 and C4 matched) |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 18 | narrowed: GetFileCount (experiment 26) |
 | candidate | 1 | `STEAMUGC_INTERFACE_VERSION020` | 77 | narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26) |

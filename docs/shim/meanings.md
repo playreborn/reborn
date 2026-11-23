@@ -4402,7 +4402,6 @@ still runs at about 60 s, its 17 and 18 are the game's own calls,
 recorded in all four earlier runs (red line 4). The script needs one log per game; a game whose run fails
 can be run again later, and only its group waits.
 
-
 **Result of experiment 34** (agent runs by the main session after the
 plan time 02:31:23, proxy built from the plan branch; logs recorded by
 `run.sh`: `observe-45060` Cave Crawlers, `observe-27548` Bongo Cat; both
@@ -4432,8 +4431,8 @@ Group CC mismatched (H3 and C1: in Cave Crawlers one of two 4700
 callbacks did not carry the handle of 6 and was not read later by 1 or
 3), so 21 stays a candidate (`GetItemDefinitionIDs`) and 4702 stays a
 candidate by size. H3 did not match in both games, so 6 `GetAllItems`
-and the callbacks 4700 and 4701 stay candidates as well. The second 4700
-in Cave Crawlers is not explained by this plan; finding its source needs
+and the callbacks 4700 and 4701 stay candidates as well. The first of the
+two 4700 callbacks in Cave Crawlers is not explained by this plan; finding its source needs
 a new plan.
 
 ## Achievement names and leaderboards (loop iteration 16a)

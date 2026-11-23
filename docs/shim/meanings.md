@@ -5125,3 +5125,405 @@ and no result is claimed.
   recorded (ADR 0059, decision 3), and the shadow comparison matches in
   three games (LOOP step 7). An experiment plan with predictions is
   committed before the first run.
+
+## First live runs of the achievement-name shadow (loop iteration 17b)
+
+PR #56 added the shadow comparison of ADR 0059 decision 2 for
+`STEAMUSERSTATS_INTERFACE_VERSION011` and `…012` position 14
+(`GetNumAchievements`, confirmed under A1 and A3) and position 15
+(`GetAchievementName`, confirmed), both from experiment 32. It has never
+run against a game (the tool is described in "Shadow comparison for
+achievement count and names" above). Experiment 35 is its first live run, and it looks for
+the third game ADR 0059 decision 3 asks for before answer mode. No game
+was run for this plan.
+
+### Experiment 35 (planned 2026-11-23, before the runs)
+
+**Games from the recordings** (every `observe-*.log` in Reborn's data
+folder, 150 files, scanned on 2026-11-23 for calls of `…011`/`…012` 14 or
+15): only Outcore: Desktop Adventure (1275670, `…011`; `observe-49168`,
+`observe-47724`, `observe-64880`) and One's Own Exile (3086720, `…012`;
+`observe-51644`, `observe-612`, `observe-56900`, and the earlier
+`observe-47612`, which `starts.log` does not name). Every other recorded
+game that asks for a stats interface either uses `…013`, whose positions
+14 and 15 have other meanings and are not compared, or never calls 14 or
+15 (Gravitas, UNBEATABLE [white label], Cave Crawlers and Dark Deception
+on `…011`; An Arcade Full of Cats, HoloCure, Please, Touch The Artwork 2,
+A Park Full of Cats and Fallout Shelter on `…012`). **No recorded game is
+a third.**
+
+**Owned games not recorded.** The test account's installed games (by the
+`LastOwner` field of the local app manifests, compared with that of a
+known test-account game; no Steam ID read out) are all either recorded,
+32-bit (Super Jigsaw Puzzle: Generations, Coloring Pixels, Life is
+Strange, Higurashi, Katawa Shoujo, SCP – Containment Breach, Travellin
+Cats in Paris, Cube Escape: Paradox; M5), How Fish Is Made (no Steam
+library loaded up to its menu, `m4-games.md`) or Spacewar (480, Valve's
+test app, no game to record). None is a candidate.
+
+**Candidates, free games to add** (decided by the agent under the
+maintainer's delegation of 2026-11-23, ADR 0060; ADR 0044 and 0052 allow
+adding free games an experiment planned here needs). From
+`recording-candidates.md`, the games whose store pages list **Steam
+Achievements**, without an EULA, third-party account or anti-cheat named,
+re-read on 2026-11-23 (one fetch each):
+
+| App | Name | Store page, 2026-11-23 | Min. disk |
+| --- | --- | --- | --- |
+| 742500 | Nonogram - Master's Legacy | free to play (paid DLC); released 2018-11-08; Single-player, Steam Achievements, Steam Workshop, Steam Cloud; no EULA, account or anti-cheat named; 64-bit not stated | not stated |
+| 444930 | Zaccaria Pinball | free to play (paid DLC and tables); Early Access 2016-06-16, released 2025-10-16; Single-player, Online PvP, Steam Achievements ("at least 45" in Story Mode), Steam Cloud, Steam Leaderboards; no EULA, account or anti-cheat named; 64-bit required | 3 GB |
+| 2093940 | vivid/stasis | free; Early Access 2023-03-07, released 2025-07-05; Single-player, Steam Achievements, Steam Cloud, Steam Leaderboards; no EULA, account or anti-cheat named; 64-bit required | 4 GB |
+
+Left out: Jigsaw Puzzle Dreams (1653970; its page lists no
+achievements), Picross Touch and Simutrans (EULA: the agent never
+accepts an agreement, ADR 0060), Classic Marathon (its page lists
+achievements, but online co-op and PvP; kept for a later plan if none of
+the three is a third). A listed achievement feature makes a stats
+interface likely, not calls of 14 and 15 at start, and not version
+`…011` or `…012`; that shows only in the log. The older Nonogram build is
+the likeliest of the three for an older interface version; this is a
+guess, not a source.
+
+This plan names the three games, so their free licenses may be added to
+the test account for this experiment (3 of the 50 a day, ADR 0052),
+each after checking price and size once more on the store page right
+before adding it, through the store page's button or the install dialog
+(ADR 0044). Ownership stays real (red line 3); the account owns none of
+their paid DLC. Each is installed through `steam://install/<app id>` with
+the default folder only if the client shows at most 10 GB. A game that
+turns out 32-bit is not run; it is noted for M5 (step 2 says how this is
+checked).
+
+**Status of the positions before the run.** 14 and 15 on `…011` and
+`…012` are confirmed (experiment 32). The runs test **Reborn's list**,
+not the meanings.
+
+**Conditions for the runs.** As for experiment 33: `rebornd` signed in
+to the test account with the stored login while the official client runs
+and stays signed in to the same account (ADR 0055 stage 1). One counted
+run per game. Each arm makes `rebornd` fill a shadow cloud folder for
+that game (side effect, not compared; at most one fill a minute,
+`FILL_COOLDOWN`). For the comparison the proxy's worker sends one
+`RequestStats` per game run (or reuses the one of a 0x44d comparison);
+`rebornd` answers it from one `ClientGetUserStats` for the run's app
+(`apps/rebornd/src/shim_stats.rs`): one Valve request per run (red line
+8). No stat, achievement or leaderboard write is asked for by Reborn; a
+write a game makes by itself goes through the official client, as in
+experiment 32. The one status change of experiment 33 (`watch_friends`
+sets the own status to online after sign-in) happens again; accepted
+there.
+
+**Input** (ADR 0049, 0060 decision 3):
+
+- Outcore: only its launch-option window in the official client, which
+  comes before the game loads Steam: leave the default option selected
+  and click Play.
+- Candidates: input only in a launcher that appears **before** the game
+  has loaded Steam (no `[S_API]` line yet, so `dbwin.ps1` has not printed
+  the game's process ID). Once the game has loaded Steam, no input at
+  all: no title screen, no menu, no dialog.
+- One's Own Exile: none.
+
+**Prompts from the game or from Windows** (an in-game EULA, consent or
+privacy screen, a sign-in to any account, a store or purchase prompt, a
+UAC or firewall prompt, a redistributable installer): no click; the
+prompt is left as it is, and `run.sh`'s close request ends the run as
+usual. That run counts as recorded (for a candidate, as checked or "not a
+third game", whatever its log shows) and is never repeated to get past
+the prompt. A UAC or firewall prompt still open after the run is left for
+the maintainer, and no further game is started while it is open.
+
+**Steps for the main session** (in a normal terminal, not the desktop
+app; on this plan's branch at the commit that sets `PLAN_COMMITTED`):
+
+1. Check: the official client runs and is signed in to the test account;
+   no game runs; `target/debug/reborn-observe.exe status` says not armed.
+2. Candidates: for each of 742500, 444930, 2093940, read its store page
+   once (price free, size as above), add the free license with the store
+   page's button, then `steam://install/<app id>` with the default
+   folder. If the official client shows any agreement, payment or
+   account dialog while adding or installing, that candidate is
+   **dropped**: the dialog is not accepted and is left alone, and no
+   further step (no other candidate, no run) starts while a dialog of
+   the official client stays open. After the download, find the
+   executable Steam launches for the game (the launch entry of the app
+   info as the official client shows it under the game's properties, or,
+   if that is not visible, the only `.exe` the game folder has at its
+   top) and search the whole game folder recursively for
+   `steam_api64.dll` and `steam_api.dll`. A game whose launched
+   executable is 32-bit or whose folder has only `steam_api.dll` is
+   dropped (M5). If a kept game still leaves no proxy log, `run.sh` says
+   `no S_API line seen` and names no log: that is a rejection of the
+   game for this experiment (noted, not a crash) and not repeated.
+3. Build: `cargo build -p rebornd -p reborn-cli -p reborn-shim-observe`.
+4. Start `rebornd` in the background with its output in a local file
+   outside the repository (for example `target/debug/rebornd.exe >
+   <scratch>/rebornd-035.log 2>&1`); this log stays on the computer and is
+   never quoted beyond the lines named here.
+5. Sign `rebornd` in with the stored login: `target/debug/reborn-cli.exe
+   daemon library > /dev/null` (not shown). Then
+   `target/debug/reborn-cli.exe daemon status | grep -c ', signed in,'`
+   must print `1`. The status line names the account, so it is not
+   printed or pasted; only this count is looked at. (`not signed in yet
+   (login stored)` also contains "signed in", so a plain search for
+   "signed in" is not enough.) Nothing is typed: no password, no code.
+6. `tools/shim/run.sh 1275670 60` (Outcore), started in the background,
+   so that the agent can answer the launch-option window in time (it
+   came before Steam loaded in experiments 7, 10 and 32; in experiment 10
+   it was answered too late). The agent takes a local screenshot, leaves
+   the default option selected and clicks Play. **Do not run
+   `reborn-observe arm --app` by hand before `run.sh`** (experiment 33,
+   step 5). The second argument, 60, is the wait in seconds after the
+   game loaded Steam (the `[S_API]` line), before the close request.
+7. `tools/shim/run.sh 3086720 60` (One's Own Exile), in the foreground.
+8. `tools/shim/run.sh <app id> 60` for each candidate that step 2 kept,
+   in the order 742500, 444930, 2093940, started in the background so a
+   launcher before Steam loads can be answered (input rule above).
+
+`run.sh` keeps the one-minute gap itself (ADR 0052). The 60 s wait leaves
+room for the shadow worker: the calls come in the first 0.5 s (Outcore,
+One's Own Exile, experiment 32), and the worker waits up to 30 s
+(`STATS_WAIT`) for `rebornd`'s `StatsReceived`, after any 0x44d
+comparison of the same game.
+
+For **every** game of steps 6 to 8:
+
+- **Before the run counts:** the arm output `run.sh` shows must contain
+  `rebornd: shadow session registered for app <id>.` If `rebornd`
+  refused instead, the run does not count; it may be repeated once after
+  the cause is gone, without any sign-in retry loop (a refusal for
+  `not_signed_in` is a stop, below).
+- **After each `run.sh`, before the next start:** take a screenshot with
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tools/shim/shot.ps1
+  -Out <scratch>/035-<id>.png`, look at it for dialogs of the official
+  client, of the game or of Windows, and **delete it** once looked at (it
+  stays local and may show the account, ADR 0044); check `rebornd`'s log
+  for `connection to Steam lost`, `signed out` and `reconnecting failed`;
+  run the status check of step 5, which must still print `1`. Any of
+  these failing is a stop (below).
+9. `target/debug/reborn-cli.exe daemon shutdown`;
+   `target/debug/reborn-observe.exe status` says not armed (if `run.sh`
+   ended early, `reborn-observe disarm`).
+10. Check `rebornd`'s log once more for the three lines of the per-run
+    check (there must be none), then run
+    `python tools/shim/experiments/035_achievement_name_shadow.py` with
+    the logs `run.sh` named (`log observe-<pid>.log`), full paths, one
+    per game run.
+
+**How long.** Each run takes about two to three minutes: up to 65 s for
+the gap, the launch, 60 s after Steam loaded, and the close (Outcore
+and One's Own Exile closed normally in experiment 32; a game that does
+not close adds up to two minutes and the forced end below). The two
+known games take about six minutes, all five about 15 minutes of runs.
+Adding and installing the candidates comes before, and depends on the
+download (about 7 GB for Zaccaria Pinball and vivid/stasis together
+at most, by their pages).
+
+**Stop rule** (ADR 0055 "Two sign-ins at once", ADR 0044 as amended by
+ADR 0060, LOOP.md "Stop and ask the maintainer"):
+
+- If `rebornd` or `reborn-cli` asks for Steam Guard, a code, a mobile
+  confirmation or a password, or the sign-in fails: stop, no retry, shut
+  `rebornd` down, no game is started.
+- If either client is logged off or kicked during the runs (the official
+  client shows itself offline or signed out, or a dialog about another
+  sign-in; `rebornd`'s log shows `connection to Steam lost`, `signed out`
+  or `reconnecting failed`): no further start; the running game is left
+  to `run.sh`'s close request and two-minute wait, `run.sh` disarms,
+  `rebornd` is shut down, the run does not count, and neither client is
+  signed in again by the agent.
+- A dialog of the official client other than Outcore's launch-option
+  window (for example a cloud conflict, an agreement, a purchase): stop,
+  nothing is accepted; the dialog is left as it is.
+- If Valve shows a rate limit or a warning: no further start (ADR 0052).
+- A game still running two minutes after the close request (`run.sh`
+  prints `STILL RUNNING after 2 minutes`; since this plan its branch
+  without an `[S_API]` line waits the same two minutes as its normal
+  branch, instead of 10 s): before ending it, the agent checks that two
+  minutes have passed since the close request, that the process ID still
+  exists, and that its executable path is the game's (`Get-Process -Id
+  <pid>` with its `Path` under the game's `steamapps\common` folder). Only
+  then it ends that one process with `taskkill /F /PID <pid>` (ADR 0060
+  decision 4; never the official client, `rebornd` or any other process),
+  notes it in the result, and goes on. Its log counts if it has the
+  calls.
+
+A run that a stop ends, or a game that does not start, does not count
+and may be repeated once with this plan after the cause is gone. A run
+that completed counts, whatever it shows; it is not repeated to get
+another result.
+
+**What the proxy writes** (`crates/shim-observe/src/proxy.rs`,
+`observe_return`, `achievement_shadow`, `answer_asks`; `daemon.rs`,
+`compare_achievement`), for a logged call `<n>` on thread `<t>`: the call
+line `… ThreadId(<t>) <Interface>#<pos> call <n> …` (register texts
+hidden; `rdx` holds the index at 15), the result line `… return <n>
+rax=0x…`, and later, from the worker once Reborn's list is there, the
+shadow line with the same prefix, `… return <n> <note>`, where `<note>` is
+`shadow match`, `shadow mismatch`, `shadow mismatch (no text at the
+result)` (position 15), `shadow: no Reborn answer (<why>)`, `shadow:
+skipped, <why>`, `shadow: no app ID given` or `shadow: no worker thread`.
+No name and no digest is ever logged.
+
+**Predictions** (`tools/shim/experiments/035_achievement_name_shadow.py`),
+per log:
+
+- S (survey, no verdict): the `STEAMUSERSTATS` versions the game called
+  and the number of calls of each of `…011`/`…012` 14 and 15.
+- A: at least one call with a result line of 14 **and** one of 15 on the
+  same version (Outcore on `…011`, One's Own Exile on `…012`; a candidate
+  on either). A candidate that fails A is "not a third game": with no
+  call of the four positions it gets no verdict; with some (14 only, or
+  14 and 15 on different versions) its B and C are still checked, as
+  findings.
+- B: every call of the four positions in the log has a result line and
+  exactly one shadow line with the same position, call number and
+  thread after it; no shadow line of these positions is without its call.
+- C: every such shadow line says exactly `shadow match`.
+- K (coverage, no verdict): "distinct indices compared *k* of *N*": *k*
+  distinct indices of 15 (low 32 bits of `rdx` at the call, public
+  schema positions) whose call got `shadow match` or `shadow mismatch`,
+  *N* the official count from 14 (low 32 bits of its result; "N not one
+  value" when the calls of 14 disagree).
+
+"experiment 35: match" needs both known games and every candidate that
+called the positions to match (A to C for known games, B and C for
+candidates). "ADR 0059 decision 3: reached" needs, in addition, at least
+one candidate that matched A, B and C. The script rejects a log given
+twice, logs not recorded by `run.sh` for these games
+(`observelog.app_of`), more than one log per game, a missing known game,
+and logs whose start (`observelog.start_of`) is earlier than the plan
+commit (`PLAN_COMMITTED`, set in a follow-up commit; while it is unset
+every log is rejected). It prints only counts, versions, the kind of each
+note and match or MISMATCH. `--self-check` runs nine made-up logs through
+A to C and K (among them a candidate with 14 only and one with 14 and 15
+on different versions, both "not a third game", and a `skipped, worker
+busy` note) and must print "self-check: match".
+
+**What a match confirms.** In each matching game, for the *k* indices
+the game asked for (K): the official `GetNumAchievements` equals the
+length of Reborn's list (`reborn_cm::achievements::UserStats::achievements`:
+every `bits` entry of every stat, in schema order), and the official
+`GetAchievementName(i)` equals Reborn's *i*-th API name at each of those
+*k* indices. Where *k* equals *N*, that is Reborn's whole list and its
+order for that game; where *k* is smaller (a game that asks for only some
+indices, or the proxy's limit below), the claim is only for the indices
+compared. These are the two unknowns ADR 0059 names ("index *i* is
+Reborn's *i*-th achievement", "the official count equals Reborn's"), for
+these games. It confirms nothing new about the meanings of 14 and 15
+(already confirmed), and nothing about the display names
+(`GetAchievementDisplayAttribute` is not compared).
+
+**What stays open.** Answer mode for 14 and 15 needs the shim's
+`STEAMUSERSTATS` object (none exists, ADR 0059 "What the shim has
+today"), `RequestCurrentStats` sending `RequestStats`, 0x44d delivery and
+the launch-time fetch with its 2 s wait (decision 1); a shadow match does
+not test any of them, and in particular not whether Reborn's list arrives
+within the 25 ms the official client takes. Without a matching candidate,
+decision 3's third game stays open and a new plan picks more candidates
+(for example Classic Marathon). An index the games never ask for stays
+uncompared, and so does every call after a position's first 50 logged
+calls (the proxy's logging limit): a candidate with more than 50
+achievements has its later indices not compared, and the script sees
+only the logged calls.
+
+**How a mismatch is recorded.** The script's output is quoted here, and
+nothing in the shim, the proxy or `rebornd` is changed to make it match
+without a new plan.
+
+- `shadow mismatch` at 14: "the official count differs from the length
+  of Reborn's list in <game>". This is a finding about Reborn's list
+  **or** the tool (for example achievements outside the stats' `bits`,
+  hidden ones the official client leaves out, or a fault in reading the
+  result); which one, a new plan tells apart. The 15 lines are then read
+  with that in mind.
+- 15 lines that say `shadow mismatch`: the **index finding**: "the
+  official name at *i* differs from Reborn's *i*-th", recorded with the
+  number of such calls (the script's "finding" line) and K. Possible
+  causes, as possibilities only and not as findings: another order than
+  Reborn's schema order, other contents of the list, a stale schema on
+  one side, or a different encoding of the same name. It is a valid
+  result of the experiment; a new plan explains it (for example by
+  comparing the sets without order, still by digest).
+- `shadow mismatch (no text at the result)`: the official result pointed
+  to no readable text; recorded as such, no conclusion about Reborn.
+- `shadow: no Reborn answer`, `shadow: skipped` (for example `skipped,
+  worker busy`: the worker's queue holds at most 16 asks, `MAX_ASKS`, and
+  a game that makes many other shadowed calls at start, such as DLC
+  ownership checks in Zaccaria Pinball with its many DLC, may fill it),
+  `shadow: no app ID given`, `shadow: no worker thread` or a missing
+  shadow line (for example the game exited first): the call was not
+  compared; recorded as "not compared" with the kind of note, a MISMATCH
+  of B or C, and no conclusion either way.
+
+**Already checked** (before the plan time, script with the plan time and
+the `starts.log` check bypassed in a scratch copy): on the experiment 32
+logs `observe-64880` (Outcore) and `observe-56900` (One's Own Exile),
+recorded before the shadow existed, S shows the expected calls
+(Outcore 30 calls of `…011` 14 and 29 of 15; One's Own Exile 1 of `…012`
+14 and 16 of 15), A matches, B and C mismatch (no shadow lines), as
+expected. Copies of both with a `shadow match` line after every result
+line, and a third copy given as a candidate, give "experiment 35: match"
+and "ADR 0059 decision 3: reached", with K "distinct indices compared 29
+of 29" (Outcore) and "16 of 16" (One's Own Exile); one `shadow mismatch`
+on a 15 line
+gives a MISMATCH of C and a finding line; a candidate log with only
+`…013` calls gives "not a third game"; a log given twice is rejected.
+The copies were made in a scratch folder and deleted. After the review,
+`--self-check` prints "self-check: match".
+
+**Result of experiment 35** (agent runs by the main session after the
+plan time 03:50:43 with binaries built from the plan branch; `rebornd`
+signed in with the stored login, no prompt; logs recorded by `run.sh`:
+`observe-63908` Outcore (the agent left the default launch option and
+clicked Play), `observe-54644` One's Own Exile, `observe-19540` Zaccaria
+Pinball; every arm said "shadow session registered", no logoff, kick,
+reconnect, WARN or ERROR line in `rebornd`'s log, `daemon status` signed
+in after every run, screenshots looked at and deleted). Candidates:
+Nonogram - Master's Legacy was dropped as 32-bit (only `steam_api.dll`);
+vivid/stasis was dropped because its install failed with a connection
+time-out dialog in the official client. **Deviation:** the agent closed
+that dialog, against the plan's "left alone" and ADR 0044's limit on
+clicks in the official client; it was an error notice only, nothing was
+accepted. Zaccaria Pinball installed, but the official client reported
+that it could not be started (error code 51). The game process did start
+under the proxy (two `CreateInterface` calls and their returns are
+logged, then no interface method calls), so whether the proxy caused
+error 51 is unknown. Under the plan this run **does not count**; it is
+not repeated because the cause is not known, so "after the cause is
+gone" cannot be met. The script lists it as "not a third game". The
+error 51 notice is an official-client dialog; the agent closed it too
+(same deviation, an error notice only).
+**MISMATCH**, checked by the script.
+
+```text
+observe-63908.log (Outcore: Desktop Adventure) S: versions ['011'], calls {'011 #14': 30, '011 #15': 29}
+observe-63908.log (Outcore: Desktop Adventure) A: calls with a result line {'011 #14': 30, '011 #15': 29} -> match
+observe-63908.log (Outcore: Desktop Adventure) B: 59 of 59 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-63908.log (Outcore: Desktop Adventure) C: shadow notes [011 #14 match: 30, 011 #15 match: 3, 011 #15 mismatch: 26] -> MISMATCH
+observe-63908.log (Outcore: Desktop Adventure) K: distinct indices compared 29 of 29
+observe-63908.log (Outcore: Desktop Adventure) finding: 0 count mismatches (14); 26 calls where the official name at i differs from Reborn's i-th (15); 0 with no official text
+observe-63908.log (Outcore: Desktop Adventure): MISMATCH
+observe-54644.log (One's Own Exile) S: versions ['012'], calls {'012 #14': 1, '012 #15': 16}
+observe-54644.log (One's Own Exile) A: calls with a result line {'012 #14': 1, '012 #15': 16} -> match
+observe-54644.log (One's Own Exile) B: 17 of 17 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-54644.log (One's Own Exile) C: shadow notes [012 #14 match: 1, 012 #15 match: 1, 012 #15 mismatch: 15] -> MISMATCH
+observe-54644.log (One's Own Exile) K: distinct indices compared 16 of 16
+observe-54644.log (One's Own Exile) finding: 0 count mismatches (14); 15 calls where the official name at i differs from Reborn's i-th (15); 0 with no official text
+observe-54644.log (One's Own Exile): MISMATCH
+observe-19540.log (Zaccaria Pinball) S: versions [], calls {}
+observe-19540.log (Zaccaria Pinball) A: no call of 011/012 14 or 15 -> not a third game
+experiment 35: MISMATCH
+ADR 0059 decision 3: not reached (0 of 0 checked candidates are a third game)
+```
+
+As fixed beforehand: in both known games the count (14) matched, every
+call got exactly one shadow line, and all indices were compared (K 29 of
+29 and 16 of 16). Most 15 calls mismatched: this is the **index
+finding**, "the official name at *i* differs from Reborn's *i*-th", in
+26 of 29 calls in Outcore and 15 of 16 in One's Own Exile. Possible
+causes, as possibilities only: another order than Reborn's schema order,
+other contents, a stale schema on one side, or a different encoding of
+the same name. A new plan explains it (for example by comparing the sets
+without order, still by digest). ADR 0059 decision 3 (a third game) was
+not reached. Nothing in the shim, the proxy or `rebornd` is changed.

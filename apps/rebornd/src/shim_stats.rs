@@ -35,12 +35,15 @@
 //!   as `StatsReceived` with that result and no names.
 //! - Stats and achievement names are account data: only counts and the
 //!   result are logged.
+//! - Each name carries its place in the schema (stat ID and `bits` key,
+//!   protocol 0.4, ADR 0062): schema data, not account data. Older peers
+//!   ignore the field.
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use reborn_cm::{FALLBACK_LANGUAGE, UserStats};
-use reborn_shim_protocol::{AchievementName, Event, Response, UnavailableReason};
+use reborn_shim_protocol::{AchievementName, Event, Response, SchemaPosition, UnavailableReason};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -344,7 +347,8 @@ async fn fetch_with_retries<B: StatsBackend>(
 }
 
 /// The event for Valve's answer, `None` if it cannot be read. Names come
-/// from the schema in English (ADR 0055, "Language of achievement names").
+/// from the schema in English (ADR 0055, "Language of achievement names"),
+/// each with its stat ID and `bits` key (ADR 0062).
 pub fn stats_event(answer: &UserStats) -> Option<Event> {
     if !answer.is_ok() {
         return Some(Event::StatsReceived {
@@ -360,6 +364,10 @@ pub fn stats_event(answer: &UserStats) -> Option<Event> {
             .map(|achievement| AchievementName {
                 name: achievement.name,
                 display_name: achievement.display_name,
+                position: Some(SchemaPosition {
+                    stat_id: achievement.stat_id,
+                    bit: achievement.bit,
+                }),
             })
             .collect(),
     })
@@ -515,9 +523,19 @@ pub mod tests {
             AchievementName {
                 name: "PET_1".to_owned(),
                 display_name: "Bongo Beat 1".to_owned(),
+                position: Some(SchemaPosition { stat_id: 2, bit: 0 }),
             }
         );
         assert_eq!(achievement_names[27].display_name, "Merchant");
+        // ADR 0062: the schema positions, in Reborn's (schema) order.
+        let positions: Vec<Option<SchemaPosition>> = achievement_names
+            .iter()
+            .map(|achievement| achievement.position)
+            .collect();
+        let expected: Vec<Option<SchemaPosition>> = (0..28)
+            .map(|bit| Some(SchemaPosition { stat_id: 2, bit }))
+            .collect();
+        assert_eq!(positions, expected);
     }
 
     #[test]
@@ -734,6 +752,7 @@ pub mod tests {
                 achievement_names: vec![AchievementName {
                     name: "PET_1".to_owned(),
                     display_name: "Bongo Beat 1".to_owned(),
+                    position: Some(SchemaPosition { stat_id: 2, bit: 0 }),
                 }],
             }));
         let text = format!("{stats:?}");

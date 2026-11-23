@@ -32,6 +32,15 @@
 //! the daemon's [`Session::version`] says 0.3 or later
 //! ([`Version::has_persona_name_comparison`]).
 //!
+//! Version 0.4 adds each achievement's place in the stats schema to
+//! [`Event::StatsReceived`] ([`AchievementName::position`],
+//! [`SchemaPosition`]; ADR 0062): the stat ID and the `bits` key, schema
+//! data, not account data. The field is optional and an older peer
+//! ignores it (no message type is added), but only a daemon of 0.4 or
+//! later sends it, so a peer reads it only after the daemon's
+//! [`Session::version`] says 0.4 or later
+//! ([`Version::has_schema_positions`]).
+//!
 //! Persona name comparison (ADR 0056, decision 2): a shadow session may
 //! send [`Request::ComparePersonaName`] with the SHA-256 of the text the
 //! official client returned at `SteamFriends017` position 0
@@ -49,7 +58,7 @@ use serde::{Deserialize, Serialize};
 
 /// The protocol version in [`Request::Hello`]. A daemon refuses a shim
 /// with another major version.
-pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 3 };
+pub const PROTOCOL_VERSION: Version = Version { major: 0, minor: 4 };
 
 /// A protocol version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +74,12 @@ impl Version {
     /// [`Request::ComparePersonaName`] (added in 0.3).
     pub fn has_persona_name_comparison(self) -> bool {
         self.major == 0 && self.minor >= 3
+    }
+
+    /// Whether a daemon of this version sends [`AchievementName::position`]
+    /// in [`Event::StatsReceived`] (added in 0.4, ADR 0062).
+    pub fn has_schema_positions(self) -> bool {
+        self.major == 0 && self.minor >= 4
     }
 }
 
@@ -270,6 +285,22 @@ pub struct AchievementName {
     pub name: String,
     /// Its display name.
     pub display_name: String,
+    /// Where the schema holds it (protocol 0.4, ADR 0062); `None` from an
+    /// older daemon, which does not send the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<SchemaPosition>,
+}
+
+/// An achievement's place in the game's stats schema (ADR 0062): the stat
+/// whose `bits` object holds it and its key there
+/// (`docs/protocol/achievements.md`). Schema data: the same for every
+/// account that gets the schema, with no unlock state, value or time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchemaPosition {
+    /// The stat ID, the key of the stat in the schema's `stats` object.
+    pub stat_id: u32,
+    /// The key in that stat's `bits` object, as a number.
+    pub bit: u32,
 }
 
 /// The daemon's answer.
@@ -552,7 +583,7 @@ mod tests {
         let line = encode(&message)?;
         assert_eq!(
             line,
-            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242}}\n"
+            "{\"id\":1,\"request\":{\"type\":\"hello\",\"version\":{\"major\":0,\"minor\":4},\"pid\":4242}}\n"
         );
         assert_eq!(decode::<ShimMessage>(&line)?, message);
         Ok(())
@@ -574,7 +605,7 @@ mod tests {
         })?;
         assert_eq!(
             line,
-            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":3},\"app_id\":2143030}}\n"
+            "{\"id\":7,\"response\":{\"type\":\"session\",\"version\":{\"major\":0,\"minor\":4},\"app_id\":2143030}}\n"
         );
         Ok(())
     }
@@ -655,15 +686,32 @@ mod tests {
                 achievement_names: vec![AchievementName {
                     name: "PET_1".to_owned(),
                     display_name: "Bongo Beat 1".to_owned(),
+                    position: Some(SchemaPosition { stat_id: 2, bit: 0 }),
                 }],
             },
         };
         let line = encode(&received)?;
         assert_eq!(
             line,
-            "{\"event\":{\"type\":\"stats_received\",\"result\":1,\"achievement_names\":[{\"name\":\"PET_1\",\"display_name\":\"Bongo Beat 1\"}]}}\n"
+            "{\"event\":{\"type\":\"stats_received\",\"result\":1,\"achievement_names\":[{\"name\":\"PET_1\",\"display_name\":\"Bongo Beat 1\",\"position\":{\"stat_id\":2,\"bit\":0}}]}}\n"
         );
         assert_eq!(decode::<DaemonMessage>(&line)?, received);
+
+        // A 0.3 daemon sends no position: it reads as `None`, and `None` is
+        // not written.
+        let older = "{\"event\":{\"type\":\"stats_received\",\"result\":1,\"achievement_names\":[{\"name\":\"PET_1\",\"display_name\":\"Bongo Beat 1\"}]}}\n";
+        let without = DaemonMessage::Event {
+            event: Event::StatsReceived {
+                result: 1,
+                achievement_names: vec![AchievementName {
+                    name: "PET_1".to_owned(),
+                    display_name: "Bongo Beat 1".to_owned(),
+                    position: None,
+                }],
+            },
+        };
+        assert_eq!(decode::<DaemonMessage>(older)?, without);
+        assert_eq!(encode(&without)?, older);
 
         let refused = DaemonMessage::Event {
             event: Event::StatsReceived {
@@ -692,7 +740,7 @@ mod tests {
                     pid: 4242,
                     app_id: 332_950,
                 },
-                "{\"id\":6,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n",
+                "{\"id\":6,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":4},\"pid\":4242,\"app_id\":332950}}\n",
             ),
         ] {
             let message = ShimMessage { id: 6, request };
@@ -742,6 +790,38 @@ mod tests {
             "{\"id\":8,\"response\":{\"type\":\"unavailable\",\"reason\":\"not_received\"}}\n"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_0_3_reader_ignores_the_position() -> Result<(), FrameError> {
+        // The shape of `AchievementName` in protocol 0.3, without the field
+        // of 0.4: a 0.4 line still reads (serde skips unknown fields).
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct OldName {
+            name: String,
+            display_name: String,
+        }
+        let line = encode(&AchievementName {
+            name: "PET_1".to_owned(),
+            display_name: "Bongo Beat 1".to_owned(),
+            position: Some(SchemaPosition { stat_id: 2, bit: 7 }),
+        })?;
+        assert_eq!(
+            decode::<OldName>(&line)?,
+            OldName {
+                name: "PET_1".to_owned(),
+                display_name: "Bongo Beat 1".to_owned(),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_0_4_daemons_send_schema_positions() {
+        assert!(PROTOCOL_VERSION.has_schema_positions());
+        assert!(!Version { major: 0, minor: 3 }.has_schema_positions());
+        assert!(Version { major: 0, minor: 5 }.has_schema_positions());
+        assert!(!Version { major: 1, minor: 4 }.has_schema_positions());
     }
 
     #[test]

@@ -42,7 +42,9 @@
 //!   indices only. The official indices are public schema positions; the
 //!   Reborn index each maps to may depend on the account while the
 //!   official order is unexplained, so the map stays in the local log
-//!   (ADR 0061).
+//!   (ADR 0061). ADR 0062 adds, for each Reborn index, the stat ID and
+//!   `bits` key of that achievement in the schema, and a summary of them
+//!   (from a `rebornd` of protocol 0.4 or later; schema data, no name).
 //!
 //! Whether an app is owned, the stats, the persona name, file names, file
 //! sizes and file contents are account data (ADR 0055, 0056): the log gets
@@ -59,7 +61,7 @@ use std::time::Duration;
 
 use reborn_shim_protocol::{
     DaemonMessage, Event, NameDigest, PROTOCOL_VERSION, RefusalReason, Request, Response,
-    ShimMessage, UnavailableReason, Version, decode, encode,
+    SchemaPosition, ShimMessage, UnavailableReason, Version, decode, encode,
 };
 
 /// Longest line read from `rebornd`: a `CloudRead` answer carries up to
@@ -347,7 +349,7 @@ impl<R: Lines, W: Write> Client<R, W> {
             .map_err(|_| DaemonError::Unexpected)
             .and_then(|text| decode::<DaemonMessage>(text).map_err(|_| DaemonError::Unexpected));
         wipe(&mut line);
-        // `StatsReceived` is the only event of protocols 0.2 and 0.3.
+        // `StatsReceived` is the only event of protocols 0.2 to 0.4.
         match message? {
             DaemonMessage::Event {
                 event:
@@ -519,14 +521,23 @@ impl<R: Lines, W: Write> ShadowLink<R, W> {
         connect: impl FnOnce() -> io::Result<Client<R, W>>,
         wait: Duration,
     ) -> Result<RebornAchievements, String> {
-        let (client, _) = self.client(pid, app_id, connect)?;
+        let (client, version) = self.client(pid, app_id, connect)?;
         let answer = match client.request_stats() {
             Ok(Ok(())) => client.stats_answer(wait),
             Ok(Err(reason)) => return Err(reason_name(reason)),
             Err(error) => Err(error),
         };
         match answer {
-            Ok(Some(answer)) => Ok(answer),
+            Ok(Some(mut answer)) => {
+                // ADR 0062: only a 0.4 daemon sends the schema positions.
+                if !version.has_schema_positions() {
+                    answer.positions = Err(format!(
+                        "rebornd speaks protocol {}.{}, schema positions need 0.4",
+                        version.major, version.minor
+                    ));
+                }
+                Ok(answer)
+            }
             Ok(None) => Err(format!("no stats event within {} s", wait.as_secs())),
             Err(error) => Err(self.fail(error)),
         }
@@ -850,12 +861,15 @@ pub const MAX_REBORN_ACHIEVEMENTS: usize = 10_000;
 /// Valve's `EResult` and the internal (API) names in Reborn's order
 /// (`reborn_cm::achievements::UserStats::achievements`: every `bits`
 /// entry of every stat, in schema order; `docs/protocol/achievements.md`)
-/// as SHA-256 digests, or why there is no list.
+/// as SHA-256 digests, or why there is no list. With them, for the survey
+/// of ADR 0062, each entry's place in the schema (stat ID and `bits` key),
+/// or why there are none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RebornAchievements {
     /// The `EResult` Valve sent; 1 is OK.
     pub result: i32,
     names: Result<Vec<NameDigests>, &'static str>,
+    positions: Result<Vec<SchemaPosition>, String>,
 }
 
 impl RebornAchievements {
@@ -874,6 +888,14 @@ impl RebornAchievements {
                 .map(|name| NameDigests::of(name.name.as_bytes()))
                 .collect())
         };
+        let positions = match &digests {
+            Err(why) => Err((*why).to_owned()),
+            Ok(_) => names
+                .iter()
+                .map(|name| name.position)
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| "an entry without a schema position".to_owned()),
+        };
         for name in names {
             wipe(&mut name.name.into_bytes());
             wipe(&mut name.display_name.into_bytes());
@@ -881,6 +903,7 @@ impl RebornAchievements {
         Self {
             result,
             names: digests,
+            positions,
         }
     }
 }
@@ -1020,11 +1043,14 @@ pub const MAX_SURVEYED_NAMES: usize = 50;
 /// answer for that index). Once the game has asked for every index below
 /// the latest official count, [`Self::finish`] gives three notes: (a) the
 /// set comparison, (b) the same for the normalised forms, and (c) the
-/// index mapping. When no survey can be made, one note says why
+/// index mapping; then (ADR 0062) (d) the schema structure, for each Reborn
+/// index the stat ID and `bits` key, and (e) its summary, or one note why
+/// there is no structure. When no survey can be made, one note says why
 /// ([`Self::finish`], [`Self::give_up`]). Counts and indices only, never a
 /// name or a digest; the notes are given once per process. The mapping's
 /// Reborn indices may depend on the account (ADR 0061, "What the mapping
-/// may reveal"), so the map stays in the local log.
+/// may reveal"), so the map stays in the local log. The structure is
+/// schema data (ADR 0062); next to the map it stays local too.
 #[derive(Debug, Default)]
 pub struct AchievementSurvey {
     count: Option<u32>,
@@ -1087,19 +1113,20 @@ impl AchievementSurvey {
         let official = (0..count)
             .map(|index| self.names.get(&(index as u32)).copied())
             .collect::<Option<Vec<_>>>()?;
-        let reborn = match reborn.map(|reborn| &reborn.names) {
-            Ok(Ok(names)) => names,
-            Ok(Err(why)) => {
-                return self
-                    .give_up(&format!("no Reborn list ({why})"))
-                    .map(|note| vec![note]);
-            }
-            Err(why) => {
-                return self
-                    .give_up(&format!("no Reborn list ({why})"))
-                    .map(|note| vec![note]);
-            }
-        };
+        let (reborn, reborn_positions) =
+            match reborn.map(|reborn| (&reborn.names, &reborn.positions)) {
+                Ok((Ok(names), positions)) => (names, positions),
+                Ok((Err(why), _)) => {
+                    return self
+                        .give_up(&format!("no Reborn list ({why})"))
+                        .map(|note| vec![note]);
+                }
+                Err(why) => {
+                    return self
+                        .give_up(&format!("no Reborn list ({why})"))
+                        .map(|note| vec![note]);
+                }
+            };
         self.done = true;
         let no_text = official.iter().filter(|name| name.is_none()).count();
         let exact = |names: &[NameDigests]| -> Vec<AchievementDigest> {
@@ -1135,8 +1162,51 @@ impl AchievementSurvey {
             })
             .collect();
         let map = format!("shadow map: {}", pairs.join(" "));
-        Some(vec![set, normalised, map])
+        let mut notes = vec![set, normalised, map];
+        notes.extend(schema_notes(reborn.len(), &reborn_positions));
+        Some(notes)
     }
+}
+
+/// ADR 0062's lines for Reborn's list of `len` entries: (d) `shadow schema:`
+/// with `j:stat/bit` for each Reborn index `j`, and (e) `shadow schema
+/// summary:` with the number of distinct stat IDs and whether Reborn's
+/// (schema document) order is ascending by stat ID, then bit. Or one note
+/// why not: no positions from `rebornd`, or a list longer than
+/// [`MAX_SURVEYED_NAMES`] (the line stays short).
+fn schema_notes(len: usize, positions: &Result<Vec<SchemaPosition>, String>) -> Vec<String> {
+    let positions = match positions {
+        Err(why) => return vec![format!("shadow schema: not logged, {why}")],
+        Ok(positions) if positions.len() != len => {
+            return vec!["shadow schema: not logged, positions do not fit the list".to_owned()];
+        }
+        Ok(positions) if len > MAX_SURVEYED_NAMES => {
+            return vec![format!(
+                "shadow schema: not logged, Reborn's list is longer than {MAX_SURVEYED_NAMES}"
+            )];
+        }
+        Ok(positions) => positions,
+    };
+    let entries: Vec<String> = positions
+        .iter()
+        .enumerate()
+        .map(|(index, at)| format!("{index}:{}/{}", at.stat_id, at.bit))
+        .collect();
+    let stats = positions
+        .iter()
+        .map(|at| at.stat_id)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let ascending = positions
+        .windows(2)
+        .all(|pair| (pair[0].stat_id, pair[0].bit) < (pair[1].stat_id, pair[1].bit));
+    vec![
+        format!("shadow schema: {}", entries.join(" ")),
+        format!(
+            "shadow schema summary: stats {stats}, ascending by stat then bit: {}",
+            if ascending { "yes" } else { "no" }
+        ),
+    ]
 }
 
 /// The number of distinct digests.
@@ -1307,7 +1377,7 @@ mod tests {
         };
         assert_eq!(
             sent(client),
-            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":4},\"pid\":4242,\"app_id\":332950}}\n\
              {\"id\":2,\"request\":{\"type\":\"app_ownership\",\"app_id\":332950}}\n\
              {\"id\":3,\"request\":{\"type\":\"app_ownership\",\"app_id\":332950}}\n"
         );
@@ -1554,7 +1624,7 @@ mod tests {
         // session's own app only.
         assert_eq!(
             sent(client),
-            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":4},\"pid\":4242,\"app_id\":332950}}\n\
              {\"id\":2,\"request\":{\"type\":\"request_stats\"}}\n\
              {\"id\":3,\"request\":{\"type\":\"request_stats\"}}\n"
         );
@@ -1961,6 +2031,7 @@ mod tests {
             .map(|index| reborn_shim_protocol::AchievementName {
                 name: format!("ACH_{index}"),
                 display_name: String::new(),
+                position: None,
             })
             .collect();
         let long = RebornAchievements::from_event(1, names);
@@ -1986,20 +2057,20 @@ mod tests {
                 },
                 WAIT,
             )
-            .cloned();
-        assert_eq!(reborn, Ok(three()));
+            .map(|reborn| reborn.names.clone());
+        assert_eq!(reborn, Ok(three().names));
         let never = || -> io::Result<_> { panic!("connected again") };
         assert_eq!(
             link.achievements(4242, DARK_DECEPTION, never, WAIT)
-                .cloned(),
-            Ok(three())
+                .map(|reborn| reborn.names.clone()),
+            Ok(three().names)
         );
         let State::Ready(client, _) = &link.state else {
             panic!("no session");
         };
         assert_eq!(
             sent(client),
-            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":3},\"pid\":4242,\"app_id\":332950}}\n\
+            "{\"id\":1,\"request\":{\"type\":\"shadow_hello\",\"version\":{\"major\":0,\"minor\":4},\"pid\":4242,\"app_id\":332950}}\n\
              {\"id\":2,\"request\":{\"type\":\"request_stats\"}}\n",
             "one RequestStats, no name sent"
         );
@@ -2080,19 +2151,37 @@ mod tests {
         assert_eq!(queue.take().len(), MAX_WAITING_ACHIEVEMENTS);
     }
 
-    /// Reborn's made-up list `names`, as `rebornd` would send it.
+    /// Reborn's made-up list `names`, as a `rebornd` of protocol 0.4 would
+    /// send it: all in stat 1, bit `j` for the `j`-th name.
     fn reborn_of(names: &[&str]) -> RebornAchievements {
+        let positions: Vec<SchemaPosition> = (0..names.len())
+            .map(|bit| SchemaPosition {
+                stat_id: 1,
+                bit: u32::try_from(bit).unwrap_or(u32::MAX),
+            })
+            .collect();
+        reborn_at(names, &positions)
+    }
+
+    /// Reborn's made-up list `names` with the schema positions `positions`.
+    fn reborn_at(names: &[&str], positions: &[SchemaPosition]) -> RebornAchievements {
         RebornAchievements::from_event(
             1,
             names
                 .iter()
-                .map(|name| reborn_shim_protocol::AchievementName {
+                .zip(positions)
+                .map(|(name, position)| reborn_shim_protocol::AchievementName {
                     name: (*name).to_owned(),
                     display_name: format!("Display {name}"),
+                    position: Some(*position),
                 })
                 .collect(),
         )
     }
+
+    const SCHEMA_THREE: &str = "shadow schema: 0:1/0 1:1/1 2:1/2";
+    const SUMMARY_ONE_STAT: &str =
+        "shadow schema summary: stats 1, ascending by stat then bit: yes";
 
     /// Runs `official` through a survey against `reborn`, as the worker
     /// does: every note `finish` gives after each answer.
@@ -2125,6 +2214,8 @@ mod tests {
                  shared 3, official-only 0, Reborn-only 0",
                 "shadow set normalised: shared 3, official-only 0, Reborn-only 0",
                 "shadow map: 0:2 1:0 2:1",
+                SCHEMA_THREE,
+                SUMMARY_ONE_STAT,
             ]
         );
         // One name only Valve's, one only Reborn's.
@@ -2141,6 +2232,8 @@ mod tests {
                  shared 2, official-only 1, Reborn-only 1",
                 "shadow set normalised: shared 2, official-only 1, Reborn-only 1",
                 "shadow map: 0:0 1:none 2:2",
+                SCHEMA_THREE,
+                SUMMARY_ONE_STAT,
             ]
         );
     }
@@ -2161,6 +2254,8 @@ mod tests {
                  shared 1, official-only 2, Reborn-only 2",
                 "shadow set normalised: shared 3, official-only 0, Reborn-only 0",
                 "shadow map: 0:none 1:none 2:2",
+                SCHEMA_THREE,
+                SUMMARY_ONE_STAT,
             ]
         );
         assert_eq!(normalised(b"  Ach_\xc3\x84 \n"), "ach_\u{e4}");
@@ -2193,6 +2288,8 @@ mod tests {
                     .to_owned(),
                 "shadow set normalised: shared 1, official-only 0, Reborn-only 1".to_owned(),
                 "shadow map: 0:notext 1:1".to_owned(),
+                "shadow schema: 0:1/0 1:1/1".to_owned(),
+                SUMMARY_ONE_STAT.to_owned(),
             ])
         );
         survey.add(&name(0, "ACH_ONE"));
@@ -2269,11 +2366,133 @@ mod tests {
             big.add(&name(index, "A"));
         }
         let notes = big.finish(Ok(&reborn)).unwrap_or_default();
-        assert_eq!(notes.len(), 3);
+        assert_eq!(notes.len(), 5);
         assert!(
             notes[2].ends_with(&format!(" {}:0", bound - 1)),
             "{}",
             notes[2]
+        );
+    }
+
+    /// The survey lines of a list of two names that the official client
+    /// gives in reverse, against Reborn's list `reborn`.
+    fn reversed_two(reborn: &RebornAchievements) -> Vec<String> {
+        survey(
+            &[
+                OfficialAchievement::Count(2),
+                name(0, "ACH_TWO"),
+                name(1, "ACH_ONE"),
+            ],
+            reborn,
+        )
+    }
+
+    #[test]
+    fn the_schema_lines_give_stat_and_bit_per_reborn_index() {
+        // Two stats, bits out of order in the document: not ascending.
+        let reborn = reborn_at(
+            &["ACH_ONE", "ACH_TWO"],
+            &[
+                SchemaPosition { stat_id: 7, bit: 3 },
+                SchemaPosition { stat_id: 2, bit: 0 },
+            ],
+        );
+        let notes = reversed_two(&reborn);
+        assert_eq!(
+            notes[2..],
+            [
+                "shadow map: 0:1 1:0",
+                "shadow schema: 0:7/3 1:2/0",
+                "shadow schema summary: stats 2, ascending by stat then bit: no",
+            ]
+        );
+        // One stat, bit keys out of numeric order.
+        let reborn = reborn_at(
+            &["ACH_ONE", "ACH_TWO"],
+            &[
+                SchemaPosition {
+                    stat_id: 1,
+                    bit: 10,
+                },
+                SchemaPosition { stat_id: 1, bit: 2 },
+            ],
+        );
+        assert_eq!(
+            reversed_two(&reborn)[4],
+            "shadow schema summary: stats 1, ascending by stat then bit: no"
+        );
+    }
+
+    #[test]
+    fn without_positions_the_schema_line_says_why() {
+        // An event without positions (as from a 0.3 daemon that sent none).
+        let without = RebornAchievements::from_event(
+            1,
+            ["ACH_ONE", "ACH_TWO"]
+                .iter()
+                .map(|name| reborn_shim_protocol::AchievementName {
+                    name: (*name).to_owned(),
+                    display_name: String::new(),
+                    position: None,
+                })
+                .collect(),
+        );
+        assert_eq!(
+            reversed_two(&without)[3..],
+            ["shadow schema: not logged, an entry without a schema position"]
+        );
+        // A list longer than the bound: the line would grow too long.
+        let bound = MAX_SURVEYED_NAMES + 1;
+        let names: Vec<String> = (0..bound).map(|index| format!("ACH_{index}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let long = reborn_of(&names);
+        let notes = survey(&[OfficialAchievement::Count(1), name(0, "ACH_0")], &long);
+        assert_eq!(
+            notes[3..],
+            ["shadow schema: not logged, Reborn's list is longer than 50"]
+        );
+    }
+
+    const SESSION_0_3: &str =
+        r#"{"id":1,"response":{"type":"session","version":{"major":0,"minor":3},"app_id":332950}}"#;
+    const SESSION_0_4: &str =
+        r#"{"id":1,"response":{"type":"session","version":{"major":0,"minor":4},"app_id":332950}}"#;
+    const STATS_TWO_PLACED: &str = r#"{"event":{"type":"stats_received","result":1,"achievement_names":[{"name":"ACH_ONE","display_name":"One","position":{"stat_id":5,"bit":0}},{"name":"ACH_TWO","display_name":"Two","position":{"stat_id":5,"bit":1}}]}}"#;
+
+    /// Reborn's list as the link reads it from a daemon that answers the
+    /// hello with `session`.
+    fn listed_by(session: &'static str) -> RebornAchievements {
+        let mut link = ShadowLink::default();
+        link.achievements(
+            4242,
+            DARK_DECEPTION,
+            || {
+                Ok(scripted(&[
+                    session,
+                    r#"{"id":2,"response":{"type":"accepted"}}"#,
+                    STATS_TWO_PLACED,
+                ]))
+            },
+            WAIT,
+        )
+        .cloned()
+        .unwrap_or_else(|why| panic!("{why}"))
+    }
+
+    #[test]
+    fn schema_positions_are_read_only_from_a_0_4_daemon() {
+        assert_eq!(
+            reversed_two(&listed_by(SESSION_0_4))[3..],
+            [
+                "shadow schema: 0:5/0 1:5/1",
+                "shadow schema summary: stats 1, ascending by stat then bit: yes",
+            ]
+        );
+        // A 0.3 daemon does not send the field; one that did would not be
+        // read either.
+        assert_eq!(
+            reversed_two(&listed_by(SESSION_0_3))[3..],
+            ["shadow schema: not logged, rebornd speaks protocol 0.3, schema positions need 0.4"]
         );
     }
 
@@ -2294,7 +2513,7 @@ mod tests {
             name(1, "ach_secret_one"),
         ];
         let notes = survey(&official, &reborn);
-        assert_eq!(notes.len(), 3);
+        assert_eq!(notes.len(), 5);
         for note in &notes {
             assert!(!note.to_lowercase().contains("secret"), "{note}");
             for text in ["ACH_SECRET_ONE", "ACH_SECRET_TWO", "ach_secret_one"] {
@@ -2303,7 +2522,7 @@ mod tests {
             // Only digits, spaces and the fixed words of the notes.
             assert!(
                 note.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || " :;,()-".contains(c)),
+                    .all(|c| c.is_ascii_alphanumeric() || " :;,()-/".contains(c)),
                 "{note}"
             );
         }

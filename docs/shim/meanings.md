@@ -5471,3 +5471,51 @@ gives a MISMATCH of C and a finding line; a candidate log with only
 `…013` calls gives "not a third game"; a log given twice is rejected.
 The copies were made in a scratch folder and deleted. After the review,
 `--self-check` prints "self-check: match".
+
+**Result of experiment 35** (agent runs by the main session after the
+plan time 03:50:43 with binaries built from the plan branch; `rebornd`
+signed in with the stored login, no prompt; logs recorded by `run.sh`:
+`observe-63908` Outcore (the agent left the default launch option and
+clicked Play), `observe-54644` One's Own Exile, `observe-19540` Zaccaria
+Pinball; every arm said "shadow session registered", no logoff, kick,
+reconnect, WARN or ERROR line in `rebornd`'s log, `daemon status` signed
+in after every run, screenshots looked at and deleted). Candidates:
+Nonogram - Master's Legacy was dropped as 32-bit (only `steam_api.dll`);
+vivid/stasis was dropped because its install failed with a connection
+time-out dialog in the official client, which the agent closed (an error
+notice, no agreement); Zaccaria Pinball installed, but the official
+client reported that it could not be started (error code 51), so its log
+has no calls; it is "not a third game", and the run is not repeated.
+**MISMATCH**, checked by the script.
+
+```text
+observe-63908.log (Outcore: Desktop Adventure) S: versions ['011'], calls {'011 #14': 30, '011 #15': 29}
+observe-63908.log (Outcore: Desktop Adventure) A: calls with a result line {'011 #14': 30, '011 #15': 29} -> match
+observe-63908.log (Outcore: Desktop Adventure) B: 59 of 59 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-63908.log (Outcore: Desktop Adventure) C: shadow notes [011 #14 match: 30, 011 #15 match: 3, 011 #15 mismatch: 26] -> MISMATCH
+observe-63908.log (Outcore: Desktop Adventure) K: distinct indices compared 29 of 29
+observe-63908.log (Outcore: Desktop Adventure) finding: 0 count mismatches (14); 26 calls where the official name at i differs from Reborn's i-th (15); 0 with no official text
+observe-63908.log (Outcore: Desktop Adventure): MISMATCH
+observe-54644.log (One's Own Exile) S: versions ['012'], calls {'012 #14': 1, '012 #15': 16}
+observe-54644.log (One's Own Exile) A: calls with a result line {'012 #14': 1, '012 #15': 16} -> match
+observe-54644.log (One's Own Exile) B: 17 of 17 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-54644.log (One's Own Exile) C: shadow notes [012 #14 match: 1, 012 #15 match: 1, 012 #15 mismatch: 15] -> MISMATCH
+observe-54644.log (One's Own Exile) K: distinct indices compared 16 of 16
+observe-54644.log (One's Own Exile) finding: 0 count mismatches (14); 15 calls where the official name at i differs from Reborn's i-th (15); 0 with no official text
+observe-54644.log (One's Own Exile): MISMATCH
+observe-19540.log (Zaccaria Pinball) S: versions [], calls {}
+observe-19540.log (Zaccaria Pinball) A: no call of 011/012 14 or 15 -> not a third game
+experiment 35: MISMATCH
+ADR 0059 decision 3: not reached (0 of 0 checked candidates are a third game)
+```
+
+As fixed beforehand: in both known games the count (14) matched, every
+call got exactly one shadow line, and all indices were compared (K 29 of
+29 and 16 of 16). Most 15 calls mismatched: this is the **index
+finding**, "the official name at *i* differs from Reborn's *i*-th", in
+26 of 29 calls in Outcore and 15 of 16 in One's Own Exile. Possible
+causes, as possibilities only: another order than Reborn's schema order,
+other contents, a stale schema on one side, or a different encoding of
+the same name. A new plan explains it (for example by comparing the sets
+without order, still by digest). ADR 0059 decision 3 (a third game) was
+not reached. Nothing in the shim, the proxy or `rebornd` is changed.

@@ -74,7 +74,7 @@ GAMES = {
     332950: ("Dark Deception", PERSONA, [(FRIENDS, 0)]),
     2610090: ("A Park Full of Cats", PERSONA, [(FRIENDS, 0)]),
 }
-PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
+PLAN_COMMITTED = datetime(2026, 11, 23, 1, 37, 21)  # commit 312e112 on loop/plan-16b (final plan, after review)
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 

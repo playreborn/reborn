@@ -111,7 +111,14 @@
 //! worker compares them once Reborn's list is there. The call lines of
 //! these positions leave out register texts, position 15 is no longer a
 //! `READS` result text (experiment 32 is done), and the log says only
-//! match, mismatch or why.
+//! match, mismatch or why. ADR 0061 adds a second digest of each name, of
+//! its trimmed and lowercased form, and, once the game has asked for every
+//! index below the official count, three survey lines after the call that
+//! completed the list: set counts, the same for the normalised forms, and
+//! the index mapping (`crate::daemon::AchievementSurvey`), or one
+//! `shadow survey: not surveyed, <why>` line (a skipped official answer, no
+//! Reborn list, a list longer than 50). Counts and indices only; the map
+//! stays in the local log (ADR 0061).
 //!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
@@ -578,9 +585,11 @@ fn skipped(ask: Ask, why: &str) {
         // Taken (which also clears the open wake) before logging, so the
         // lock is not held while the log is written.
         let waiting = achievements().take();
+        let last = waiting.last().map(|(prefix, _)| prefix.clone());
         for (prefix, _) in waiting {
             log(&format!("{prefix} {note}"));
         }
+        survey_skipped(last.as_deref(), why);
     } else {
         log(&format!("{} {note}", ask.prefix));
     }
@@ -609,19 +618,50 @@ fn achievement_shadow(prefix: String, official: crate::daemon::OfficialAchieveme
     match pushed {
         Pushed::Wake => ask(String::new(), Official::Achievements),
         Pushed::Kept => {}
-        Pushed::Full(prefix) => log(&format!(
-            "{prefix} shadow: skipped, {} achievement answers already wait",
-            crate::daemon::MAX_WAITING_ACHIEVEMENTS
-        )),
+        Pushed::Full(prefix) => {
+            let why = format!(
+                "{} achievement answers already wait",
+                crate::daemon::MAX_WAITING_ACHIEVEMENTS
+            );
+            log(&format!("{prefix} shadow: skipped, {why}"));
+            survey_skipped(Some(&prefix), &why);
+        }
+    }
+}
+
+/// The survey of ADR 0061 for this process, fed by the worker and ended
+/// early by a skipped official answer; holds digests, never names.
+static SURVEY: Mutex<crate::daemon::AchievementSurvey> =
+    Mutex::new(crate::daemon::AchievementSurvey::new());
+
+/// The survey, also after a panic elsewhere held the lock (plain data).
+fn survey() -> std::sync::MutexGuard<'static, crate::daemon::AchievementSurvey> {
+    SURVEY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// An official achievement answer was not kept, so the official list can
+/// never be complete: the survey's "not surveyed" note, once, with the
+/// prefix of the skipped call (if there is one). The lock is released
+/// before logging.
+fn survey_skipped(prefix: Option<&str>, why: &str) {
+    let note = survey().give_up(&format!("an official answer was skipped ({why})"));
+    if let Some(note) = note {
+        match prefix {
+            Some(prefix) => log(&format!("{prefix} {note}")),
+            None => log(&note),
+        }
     }
 }
 
 /// The official text of a `GetAchievementName` call: the SHA-256 of the
-/// NUL-terminated bytes at `address` (at most [`MAX_NAME_BYTES`], one
-/// readable region), read in place; the copy is zeroed when dropped.
-fn achievement_digest_at(address: u64) -> Result<crate::daemon::AchievementDigest, &'static str> {
+/// NUL-terminated bytes at `address` (at most [`MAX_NAME_BYTES`], in one
+/// readable region, read in place) and of their normalised form (ADR
+/// 0061). The copy of the bytes is zeroed when dropped.
+fn achievement_digest_at(address: u64) -> Result<crate::daemon::NameDigests, &'static str> {
     let text = c_text_at(address, MAX_NAME_BYTES).ok_or("no text at the result")?;
-    Ok(crate::daemon::AchievementDigest::of(text.bytes()))
+    Ok(crate::daemon::NameDigests::of(text.bytes()))
 }
 
 /// The worker: one shadow session with `rebornd` for this process, for the
@@ -655,6 +695,21 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
                     Ok(reborn) => compare_achievement(&official, reborn.clone()),
                 };
                 log(&format!("{prefix} {note}"));
+                // ADR 0061: once the official list is complete, the set
+                // counts and the index mapping (or why there are none),
+                // after the call that completed it. Bound first, so the
+                // lock is not held while the log is written.
+                let notes = {
+                    let mut guard = survey();
+                    guard.add(&official);
+                    guard.finish(match &reborn {
+                        Err(()) => Err("no app ID given".to_owned()),
+                        Ok(reborn) => reborn.clone(),
+                    })
+                };
+                for note in notes.into_iter().flatten() {
+                    log(&format!("{prefix} {note}"));
+                }
             }
             continue;
         }
@@ -1285,7 +1340,10 @@ extern "C" fn observe_return(rax: u64, xmm0: u64, after_rsp: usize, rax_slot: *m
                             text: achievement_digest_at(rax),
                         },
                     ),
-                    None => log(&format!("{prefix} shadow: skipped, no index")),
+                    None => {
+                        log(&format!("{prefix} shadow: skipped, no index"));
+                        survey_skipped(Some(&prefix), "no index");
+                    }
                 },
                 _ => log(&format!(
                     "{prefix} {}",
@@ -2898,10 +2956,13 @@ mod tests {
 
     #[test]
     fn an_achievement_name_is_hashed_in_place_and_never_printed() {
-        use crate::daemon::{AchievementDigest, OfficialAchievement, compare_achievement};
+        use crate::daemon::{
+            AchievementDigest, NameDigests, OfficialAchievement, compare_achievement,
+        };
         let address = ACHIEVEMENT.as_ptr() as u64;
         let digest = achievement_digest_at(address).unwrap_or_else(|why| panic!("{why}"));
-        assert_eq!(digest, AchievementDigest::of(ACHIEVEMENT.to_bytes()));
+        assert_eq!(digest, NameDigests::of(ACHIEVEMENT.to_bytes()));
+        assert_eq!(digest.exact, AchievementDigest::of(ACHIEVEMENT.to_bytes()));
         assert_eq!(
             achievement_digest_at(0).map(|_| ()),
             Err("no text at the result")
@@ -2909,7 +2970,7 @@ mod tests {
         // The empty text an invalid index gets has a digest too.
         assert_eq!(
             achievement_digest_at(c"".as_ptr() as u64),
-            Ok(AchievementDigest::of(b""))
+            Ok(NameDigests::of(b""))
         );
 
         // Every line the proxy writes for these calls: the call line (a
@@ -3105,6 +3166,12 @@ mod tests {
 
     #[test]
     fn logs_the_first_calls_then_every_ten_thousandth() {
+        // ADR 0061: the survey keeps exactly the indices a complete list
+        // of logged (so shadowed) calls can have.
+        assert_eq!(
+            usize::try_from(LOG_FIRST).ok(),
+            Some(crate::daemon::MAX_SURVEYED_NAMES)
+        );
         assert!(should_log(1));
         assert!(should_log(50));
         assert!(!should_log(51));

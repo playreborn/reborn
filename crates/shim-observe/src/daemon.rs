@@ -33,15 +33,25 @@
 //!   with the event `StatsReceived` of a `RequestStats` on the same shadow
 //!   session ([`ShadowLink::achievements`]; protocol 0.2, so no further
 //!   version gate). Reborn's names are hashed as the event is read and
-//!   kept only as digests ([`RebornAchievements`]).
+//!   kept only as digests ([`RebornAchievements`]). Once the game has
+//!   asked for every index below the official count, the worker logs the
+//!   survey of ADR 0061 ([`AchievementSurvey`]): the set counts of the
+//!   official and Reborn's digests, the same for the normalised forms
+//!   ([`normalised`]), and for each official index the Reborn index with
+//!   the same digest, or one note why there is no survey. Counts and
+//!   indices only. The official indices are public schema positions; the
+//!   Reborn index each maps to may depend on the account while the
+//!   official order is unexplained, so the map stays in the local log
+//!   (ADR 0061).
 //!
 //! Whether an app is owned, the stats, the persona name, file names, file
 //! sizes and file contents are account data (ADR 0055, 0056): the log gets
 //! only `shadow match` or `shadow mismatch` ([`compare_subscribed`],
 //! [`compare_stats_received`], [`compare_persona_name`],
 //! [`compare_file_size`], [`compare_file_read`], [`compare_achievement`])
-//! or why there is no answer, never the values, no file name, no size and
-//! no achievement name.
+//! or why there is no answer, and for the achievement list the counts and
+//! indices of [`AchievementSurvey`]; never the values, no file name, no
+//! size, no achievement name and no digest.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::mpsc;
@@ -764,7 +774,7 @@ fn wipe(bytes: &mut [u8]) {
 /// The SHA-256 of an achievement's API name (ADR 0059, decision 2). ADR
 /// 0055 treats the names as account data in logs, so `Debug` never shows
 /// the digest and there is no `Display`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AchievementDigest([u8; 32]);
 
 impl AchievementDigest {
@@ -781,6 +791,56 @@ impl std::fmt::Debug for AchievementDigest {
     }
 }
 
+/// The two digests kept of one achievement name: of its bytes as they are
+/// ([`Self::exact`], the comparison of ADR 0059 decision 2) and of its
+/// normalised form ([`Self::folded`], the normalised set count of ADR
+/// 0061). Never the name itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NameDigests {
+    /// The SHA-256 of the bytes as they are.
+    pub exact: AchievementDigest,
+    /// The SHA-256 of the normalised form ([`normalised`]).
+    pub folded: AchievementDigest,
+}
+
+impl NameDigests {
+    /// Both digests of the bytes of a name (without a NUL). The normalised
+    /// form is zeroed once hashed; what [`normalised`] leaves behind while
+    /// building it is not (see there).
+    pub fn of(bytes: &[u8]) -> Self {
+        let mut folded = normalised(bytes).into_bytes();
+        let digests = Self {
+            exact: AchievementDigest::of(bytes),
+            folded: AchievementDigest::of(&folded),
+        };
+        wipe(&mut folded);
+        digests
+    }
+}
+
+/// The normalised form of a name for ADR 0061's third count: read as UTF-8
+/// (bytes that are not valid UTF-8 become U+FFFD on both sides alike),
+/// white space trimmed at both ends (`str::trim`, Unicode `White_Space`)
+/// and lowercased (`str::to_lowercase`, Unicode's lowercase mapping, which
+/// stands in for case folding). It finds names that differ only in letter
+/// case or surrounding white space; other encoding differences (for
+/// example a name in another code page) are not undone. Two names that
+/// differ only in this way have the same normalised form.
+///
+/// Copies left behind: for bytes that are not valid UTF-8,
+/// `from_utf8_lossy` makes a repaired copy, which is zeroed here once the
+/// lowercase form is built. `to_lowercase` may grow its buffer while
+/// building, and the buffers it leaves behind are freed without being
+/// zeroed; that is not reached (best effort).
+pub fn normalised(bytes: &[u8]) -> String {
+    let lossy = String::from_utf8_lossy(bytes);
+    let folded = lossy.trim().to_lowercase();
+    if let std::borrow::Cow::Owned(repaired) = lossy {
+        wipe(&mut repaired.into_bytes());
+    }
+    folded
+}
+
 /// Most entries of Reborn's achievement list kept for the comparison: a
 /// bound chosen here, not a documented limit. A longer list is not
 /// compared.
@@ -795,7 +855,7 @@ pub const MAX_REBORN_ACHIEVEMENTS: usize = 10_000;
 pub struct RebornAchievements {
     /// The `EResult` Valve sent; 1 is OK.
     pub result: i32,
-    names: Result<Vec<AchievementDigest>, &'static str>,
+    names: Result<Vec<NameDigests>, &'static str>,
 }
 
 impl RebornAchievements {
@@ -811,7 +871,7 @@ impl RebornAchievements {
         } else {
             Ok(names
                 .iter()
-                .map(|name| AchievementDigest::of(name.name.as_bytes()))
+                .map(|name| NameDigests::of(name.name.as_bytes()))
                 .collect())
         };
         for name in names {
@@ -833,13 +893,13 @@ pub enum OfficialAchievement {
     /// `ISteamUserStats` page; the low 32 bits of `rax`).
     Count(u32),
     /// `GetAchievementName(index)`: the index the game passed (low 32 bits
-    /// of `rdx`, the page's `uint32 iAchievement`) and the digest of the
+    /// of `rdx`, the page's `uint32 iAchievement`) and the digests of the
     /// text the result pointed to, or why there was none.
     Name {
         /// The index the game asked for.
         index: u32,
-        /// The digest of the official text.
-        text: Result<AchievementDigest, &'static str>,
+        /// The digests of the official text.
+        text: Result<NameDigests, &'static str>,
     },
 }
 
@@ -870,13 +930,13 @@ pub fn compare_achievement(
         }
         OfficialAchievement::Name {
             index,
-            text: Ok(digest),
+            text: Ok(digests),
         } => {
             let reborn = usize::try_from(*index)
                 .ok()
-                .and_then(|index| names.get(index).copied())
+                .and_then(|index| names.get(index).map(|name| name.exact))
                 .unwrap_or_else(|| AchievementDigest::of(b""));
-            *digest == reborn
+            digests.exact == reborn
         }
     };
     if same {
@@ -946,6 +1006,157 @@ impl AchievementQueue {
         self.woken = false;
         std::mem::take(&mut self.waiting)
     }
+}
+
+/// Highest official index the survey keeps, plus one. The proxy shadows
+/// only logged calls, the first 50 of a position (`LOG_FIRST` in
+/// `proxy.rs`, checked by a test there) and then every 10,000th, so a
+/// longer list can never be complete; its survey says so instead.
+pub const MAX_SURVEYED_NAMES: usize = 50;
+
+/// The survey of ADR 0061 over one game's official achievement list: the
+/// official count and, for each index the game asked for below
+/// [`MAX_SURVEYED_NAMES`], the digests of the official name (the first
+/// answer for that index). Once the game has asked for every index below
+/// the latest official count, [`Self::finish`] gives three notes: (a) the
+/// set comparison, (b) the same for the normalised forms, and (c) the
+/// index mapping. When no survey can be made, one note says why
+/// ([`Self::finish`], [`Self::give_up`]). Counts and indices only, never a
+/// name or a digest; the notes are given once per process. The mapping's
+/// Reborn indices may depend on the account (ADR 0061, "What the mapping
+/// may reveal"), so the map stays in the local log.
+#[derive(Debug, Default)]
+pub struct AchievementSurvey {
+    count: Option<u32>,
+    names: std::collections::BTreeMap<u32, Option<NameDigests>>,
+    done: bool,
+}
+
+impl AchievementSurvey {
+    /// An empty survey.
+    pub const fn new() -> Self {
+        Self {
+            count: None,
+            names: std::collections::BTreeMap::new(),
+            done: false,
+        }
+    }
+
+    /// Keeps one official answer: the latest count, or the first digests
+    /// of an index (`None` for a call whose result pointed to no text).
+    pub fn add(&mut self, official: &OfficialAchievement) {
+        match official {
+            OfficialAchievement::Count(count) => self.count = Some(*count),
+            OfficialAchievement::Name { index, text } => {
+                if usize::try_from(*index).is_ok_and(|index| index < MAX_SURVEYED_NAMES) {
+                    self.names
+                        .entry(*index)
+                        .or_insert_with(|| text.as_ref().ok().copied());
+                }
+            }
+        }
+    }
+
+    /// No survey for this process, for example because an official answer
+    /// was not kept: the note, once; `None` if the notes were given already.
+    pub fn give_up(&mut self, why: &str) -> Option<String> {
+        if self.done {
+            return None;
+        }
+        self.done = true;
+        Some(format!("shadow survey: not surveyed, {why}"))
+    }
+
+    /// The three notes once the official list is complete (indices 0 to
+    /// count - 1 all asked for), compared with Reborn's list. Instead, one
+    /// "not surveyed" note for a count above [`MAX_SURVEYED_NAMES`], or for
+    /// a complete list without Reborn's list. `None` before the list is
+    /// complete, for an official count of 0, and after a note was given.
+    pub fn finish(&mut self, reborn: Result<&RebornAchievements, String>) -> Option<Vec<String>> {
+        let count = usize::try_from(self.count?).ok()?;
+        if self.done || count == 0 {
+            return None;
+        }
+        if count > MAX_SURVEYED_NAMES {
+            let why = format!(
+                "official count above {MAX_SURVEYED_NAMES} (the proxy shadows only the first \
+                 {MAX_SURVEYED_NAMES} calls of a position)"
+            );
+            return self.give_up(&why).map(|note| vec![note]);
+        }
+        let official = (0..count)
+            .map(|index| self.names.get(&(index as u32)).copied())
+            .collect::<Option<Vec<_>>>()?;
+        let reborn = match reborn.map(|reborn| &reborn.names) {
+            Ok(Ok(names)) => names,
+            Ok(Err(why)) => {
+                return self
+                    .give_up(&format!("no Reborn list ({why})"))
+                    .map(|note| vec![note]);
+            }
+            Err(why) => {
+                return self
+                    .give_up(&format!("no Reborn list ({why})"))
+                    .map(|note| vec![note]);
+            }
+        };
+        self.done = true;
+        let no_text = official.iter().filter(|name| name.is_none()).count();
+        let exact = |names: &[NameDigests]| -> Vec<AchievementDigest> {
+            names.iter().map(|name| name.exact).collect()
+        };
+        let folded = |names: &[NameDigests]| -> Vec<AchievementDigest> {
+            names.iter().map(|name| name.folded).collect()
+        };
+        let present: Vec<NameDigests> = official.iter().flatten().copied().collect();
+        let (shared, official_only, reborn_only) = set_counts(&exact(&present), &exact(reborn));
+        let (distinct_official, distinct_reborn) =
+            (distinct(&exact(&present)), distinct(&exact(reborn)));
+        let set = format!(
+            "shadow set: official {count} (distinct {distinct_official}, no text {no_text}), \
+             Reborn {} (distinct {distinct_reborn}); shared {shared}, \
+             official-only {official_only}, Reborn-only {reborn_only}",
+            reborn.len()
+        );
+        let (shared, official_only, reborn_only) = set_counts(&folded(&present), &folded(reborn));
+        let normalised = format!(
+            "shadow set normalised: shared {shared}, official-only {official_only}, \
+             Reborn-only {reborn_only}"
+        );
+        let pairs: Vec<String> = official
+            .iter()
+            .enumerate()
+            .map(|(index, name)| match name {
+                None => format!("{index}:notext"),
+                Some(name) => match reborn.iter().position(|ours| ours.exact == name.exact) {
+                    Some(at) => format!("{index}:{at}"),
+                    None => format!("{index}:none"),
+                },
+            })
+            .collect();
+        let map = format!("shadow map: {}", pairs.join(" "));
+        Some(vec![set, normalised, map])
+    }
+}
+
+/// The number of distinct digests.
+fn distinct(digests: &[AchievementDigest]) -> usize {
+    digests
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+/// Shared, official-only and Reborn-only, counted over distinct digests.
+fn set_counts(
+    official: &[AchievementDigest],
+    reborn: &[AchievementDigest],
+) -> (usize, usize, usize) {
+    use std::collections::HashSet;
+    let official: HashSet<_> = official.iter().collect();
+    let reborn: HashSet<_> = reborn.iter().collect();
+    let shared = official.intersection(&reborn).count();
+    (shared, official.len() - shared, reborn.len() - shared)
 }
 
 /// The SHA-1 of `bytes`; ADR 0055 compares `FileRead` "by size and SHA-1
@@ -1646,7 +1857,7 @@ mod tests {
     fn name(index: u32, text: &str) -> OfficialAchievement {
         OfficialAchievement::Name {
             index,
-            text: Ok(AchievementDigest::of(text.as_bytes())),
+            text: Ok(NameDigests::of(text.as_bytes())),
         }
     }
 
@@ -1867,6 +2078,241 @@ mod tests {
             Pushed::Full("full".to_owned())
         );
         assert_eq!(queue.take().len(), MAX_WAITING_ACHIEVEMENTS);
+    }
+
+    /// Reborn's made-up list `names`, as `rebornd` would send it.
+    fn reborn_of(names: &[&str]) -> RebornAchievements {
+        RebornAchievements::from_event(
+            1,
+            names
+                .iter()
+                .map(|name| reborn_shim_protocol::AchievementName {
+                    name: (*name).to_owned(),
+                    display_name: format!("Display {name}"),
+                })
+                .collect(),
+        )
+    }
+
+    /// Runs `official` through a survey against `reborn`, as the worker
+    /// does: every note `finish` gives after each answer.
+    fn survey(official: &[OfficialAchievement], reborn: &RebornAchievements) -> Vec<String> {
+        let mut survey = AchievementSurvey::new();
+        let mut notes = Vec::new();
+        for answer in official {
+            survey.add(answer);
+            if let Some(more) = survey.finish(Ok(reborn)) {
+                notes.extend(more);
+            }
+        }
+        notes
+    }
+
+    #[test]
+    fn the_survey_tells_another_order_from_other_contents() {
+        let reborn = reborn_of(&["ACH_ONE", "ACH_TWO", "ACH_THREE"]);
+        // Same names, another order.
+        let official = [
+            OfficialAchievement::Count(3),
+            name(0, "ACH_THREE"),
+            name(1, "ACH_ONE"),
+            name(2, "ACH_TWO"),
+        ];
+        assert_eq!(
+            survey(&official, &reborn),
+            [
+                "shadow set: official 3 (distinct 3, no text 0), Reborn 3 (distinct 3); \
+                 shared 3, official-only 0, Reborn-only 0",
+                "shadow set normalised: shared 3, official-only 0, Reborn-only 0",
+                "shadow map: 0:2 1:0 2:1",
+            ]
+        );
+        // One name only Valve's, one only Reborn's.
+        let official = [
+            OfficialAchievement::Count(3),
+            name(0, "ACH_ONE"),
+            name(1, "ACH_NEW"),
+            name(2, "ACH_THREE"),
+        ];
+        assert_eq!(
+            survey(&official, &reborn),
+            [
+                "shadow set: official 3 (distinct 3, no text 0), Reborn 3 (distinct 3); \
+                 shared 2, official-only 1, Reborn-only 1",
+                "shadow set normalised: shared 2, official-only 1, Reborn-only 1",
+                "shadow map: 0:0 1:none 2:2",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_normalised_count_finds_case_and_white_space() {
+        let reborn = reborn_of(&["ACH_ONE", "Ach_Two", "ACH_THREE"]);
+        let official = [
+            OfficialAchievement::Count(3),
+            name(0, "ach_one"),
+            name(1, " ACH_TWO\t"),
+            name(2, "ACH_THREE"),
+        ];
+        assert_eq!(
+            survey(&official, &reborn),
+            [
+                "shadow set: official 3 (distinct 3, no text 0), Reborn 3 (distinct 3); \
+                 shared 1, official-only 2, Reborn-only 2",
+                "shadow set normalised: shared 3, official-only 0, Reborn-only 0",
+                "shadow map: 0:none 1:none 2:2",
+            ]
+        );
+        assert_eq!(normalised(b"  Ach_\xc3\x84 \n"), "ach_\u{e4}");
+        assert_eq!(normalised(b"\xff"), "\u{fffd}");
+    }
+
+    #[test]
+    fn the_survey_waits_for_every_index_and_reports_once() {
+        let reborn = reborn_of(&["ACH_ONE", "ACH_TWO"]);
+        let mut survey = AchievementSurvey::new();
+        assert_eq!(survey.finish(Ok(&reborn)), None, "no count yet");
+        survey.add(&name(1, "ACH_TWO"));
+        survey.add(&OfficialAchievement::Count(2));
+        assert_eq!(survey.finish(Ok(&reborn)), None, "index 0 not asked for");
+        // An index beyond the count does not complete the list.
+        survey.add(&name(5, ""));
+        assert_eq!(survey.finish(Ok(&reborn)), None);
+        let no_text = OfficialAchievement::Name {
+            index: 0,
+            text: Err("no text at the result"),
+        };
+        survey.add(&no_text);
+        // A later answer for the same index does not replace the first.
+        survey.add(&name(0, "ACH_ONE"));
+        assert_eq!(
+            survey.finish(Ok(&reborn)),
+            Some(vec![
+                "shadow set: official 2 (distinct 1, no text 1), Reborn 2 (distinct 2); \
+                 shared 1, official-only 0, Reborn-only 1"
+                    .to_owned(),
+                "shadow set normalised: shared 1, official-only 0, Reborn-only 1".to_owned(),
+                "shadow map: 0:notext 1:1".to_owned(),
+            ])
+        );
+        survey.add(&name(0, "ACH_ONE"));
+        assert_eq!(survey.finish(Ok(&reborn)), None, "given once");
+    }
+
+    #[test]
+    fn the_survey_needs_reborns_list_and_stays_bounded() {
+        // A complete list without Reborn's list: one note, once.
+        let failed = RebornAchievements::from_event(2, Vec::new());
+        assert_eq!(
+            survey(&[OfficialAchievement::Count(1), name(0, "A")], &failed),
+            ["shadow survey: not surveyed, no Reborn list (Valve's stats result was not OK)"]
+        );
+        let mut offline = AchievementSurvey::new();
+        offline.add(&OfficialAchievement::Count(1));
+        assert_eq!(
+            offline.finish(Err("offline".to_owned())),
+            None,
+            "not complete yet"
+        );
+        offline.add(&name(0, "A"));
+        assert_eq!(
+            offline.finish(Err("offline".to_owned())),
+            Some(vec![
+                "shadow survey: not surveyed, no Reborn list (offline)".to_owned()
+            ])
+        );
+        assert_eq!(offline.finish(Err("offline".to_owned())), None);
+        let reborn = reborn_of(&["A"]);
+        assert!(survey(&[OfficialAchievement::Count(0)], &reborn).is_empty());
+        // A skipped official answer ends the survey, once.
+        let mut skipped = AchievementSurvey::new();
+        assert_eq!(
+            skipped.give_up("an official answer was skipped (worker busy)"),
+            Some(
+                "shadow survey: not surveyed, an official answer was skipped (worker busy)"
+                    .to_owned()
+            )
+        );
+        assert_eq!(skipped.give_up("again"), None);
+        skipped.add(&OfficialAchievement::Count(1));
+        skipped.add(&name(0, "A"));
+        assert_eq!(
+            skipped.finish(Ok(&reborn)),
+            None,
+            "no survey after giving up"
+        );
+        let bound = u32::try_from(MAX_SURVEYED_NAMES).unwrap_or(u32::MAX);
+        let mut big = AchievementSurvey::new();
+        for index in 0..bound * 2 {
+            big.add(&name(index, "A"));
+        }
+        big.add(&name(u32::MAX, "A"));
+        assert_eq!(
+            big.names.len(),
+            MAX_SURVEYED_NAMES,
+            "indices above the bound are dropped"
+        );
+        big.add(&OfficialAchievement::Count(bound + 1));
+        assert_eq!(
+            big.finish(Ok(&reborn)),
+            Some(vec![
+                "shadow survey: not surveyed, official count above 50 (the proxy shadows only \
+                 the first 50 calls of a position)"
+                    .to_owned()
+            ])
+        );
+        assert_eq!(big.finish(Ok(&reborn)), None);
+        // A complete list of the largest surveyed size.
+        big = AchievementSurvey::new();
+        big.add(&OfficialAchievement::Count(bound));
+        for index in 0..bound {
+            big.add(&name(index, "A"));
+        }
+        let notes = big.finish(Ok(&reborn)).unwrap_or_default();
+        assert_eq!(notes.len(), 3);
+        assert!(
+            notes[2].ends_with(&format!(" {}:0", bound - 1)),
+            "{}",
+            notes[2]
+        );
+    }
+
+    fn sha256_hex_for_test(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn the_survey_shows_no_name_and_no_digest() {
+        let reborn = reborn_of(&["ACH_SECRET_ONE", "ACH_SECRET_TWO"]);
+        let official = [
+            OfficialAchievement::Count(2),
+            name(0, "ACH_SECRET_TWO"),
+            name(1, "ach_secret_one"),
+        ];
+        let notes = survey(&official, &reborn);
+        assert_eq!(notes.len(), 3);
+        for note in &notes {
+            assert!(!note.to_lowercase().contains("secret"), "{note}");
+            for text in ["ACH_SECRET_ONE", "ACH_SECRET_TWO", "ach_secret_one"] {
+                assert!(!note.contains(&sha256_hex_for_test(text.as_bytes())[..16]));
+            }
+            // Only digits, spaces and the fixed words of the notes.
+            assert!(
+                note.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || " :;,()-".contains(c)),
+                "{note}"
+            );
+        }
+        let shown = format!("{:?}", NameDigests::of(b"ACH_SECRET_ONE"));
+        assert!(!shown.contains("SECRET"), "{shown}");
+        assert!(
+            !shown.contains(&sha256_hex_for_test(b"ACH_SECRET_ONE")[..16]),
+            "{shown}"
+        );
     }
 
     #[test]

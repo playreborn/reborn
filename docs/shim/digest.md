@@ -16,6 +16,23 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-23: experiment 33 **matched** (PR #52): first live runs of the
+  cloud reads shadow (Cave Crawlers: `GetFileSize` and `FileRead` agree)
+  and the persona name shadow (Dark Deception, A Park Full of Cats: 3 of 3
+  match); `SteamFriends017` 0 confirmed as `GetPersonaName` (under A1).
+  `rebornd` signed in with the stored login, no prompt; one online-status
+  change from `own-status`, accepted by the maintainer (also happened in
+  experiment 30). Answering `GetPersonaName` in the shim needs the
+  maintainer (account data). Now 150 of 220 (M4 alone: 140 of 205, 68 %).
+- 2026-11-23: experiment 32 **matched** (PR #51): nine UserStats positions
+  confirmed: 011/012 14 `GetNumAchievements` (under A1 and A3), 011/012 15
+  `GetAchievementName`, 012 23 and 013 22 `FindLeaderboard`, 012 29
+  `DownloadLeaderboardEntriesForUsers` and 013 30 `UploadLeaderboardScore`
+  (under A2), 013 23 `GetLeaderboardName`. Shim answers (LOOP step 7)
+  still to come.
+- 2026-11-22: the shim accepts `SteamUtils009` 16 `SetWarningMessageHook`
+  and never calls the hook (PR #49); notice before the first shim-mode
+  launch of a game, ADR 0057 (PR #46).
 - 2026-11-22: experiment 31 **matched** (Gravitas, Dark Deception; PR
   #48): `SteamUtils009` 16 confirmed as `SetWarningMessageHook` (under
   A1 and A2) and `SteamGameServer012` 0 as `InitGameServer` (under A3).

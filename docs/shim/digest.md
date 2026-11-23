@@ -16,6 +16,17 @@ first, so the maintainer can read a day's work quickly and stop anything.
 
 ## Log
 
+- 2026-11-23: experiment 34 (PR #55): Bongo Cat group matched,
+  `STEAMINVENTORY_INTERFACE_V003` 26 confirmed as `RequestPrices` (under
+  A1, A2, A5); Cave Crawlers group **mismatched** (the first of two 4700
+  callbacks without 6's handle), so 6, 21 and the callbacks 4700/4701/4702 stay
+  candidates. Inventory 2 (`accountid`) deferred by the agent under ADR
+  0060. Now 151 of 220 (M4 alone: 141 of 205, 69 %).
+- 2026-11-23: ADR 0060 (maintainer): the agent decides on the
+  maintainer's behalf and may end a hung game; ADR 0059 accepted by the
+  agent under it (achievement list at launch, name shadow first,
+  leaderboard reads later, uploads and other players' scores stay
+  stopped).
 - 2026-11-23: experiment 33 **matched** (PR #52): first live runs of the
   cloud reads shadow (Cave Crawlers: `GetFileSize` and `FileRead` agree)
   and the persona name shadow (Dark Deception, A Park Full of Cats: in 2 games, 3

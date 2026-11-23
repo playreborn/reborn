@@ -4090,6 +4090,351 @@ call would carry. No shadow-mode entry: there is no result to compare.
 `SteamGameServer012` 0 is not in the shim: the shim has no
 `SteamGameServer…` object and no objects for the game server pipe
 (experiment 24).
+
+## Inventory results, remote storage and UGC rows (loop iteration 17a)
+
+`python tools/shim/coverage.py` on `main` (2026-11-23, after #52 merged: 220 positions,
+150 confirmed, 70 open). The top unknown rows (`STEAMUSERSTATS_INTERFACE_VERSION013`
+3 and 1, `SteamClient020`/`021` 22, `SteamUtils010` 34, `SteamClient023`
+21) were looked at in loop iterations 15a and 16a above; no new
+recordings of them since. Experiment 33 (#52, merged: `STEAMREMOTESTORAGE_INTERFACE_VERSION014` 15
+and 1, `SteamFriends017` 0) and the open #53 (ADR 0059) do not work on
+the rows below.
+The recordings are the reference runs of `coverage.md` and every later
+`run.sh` log in the recorder's data folder (raw logs stay there):
+Cave Crawlers 15 logs, Bongo Cat 4, Cartapli 6, HoloCure 4. Pages read on
+2026-11-23: <https://partner.steamgames.com/doc/api/ISteamInventory> (33
+function headings, 36 signatures with the `SetProperty` overloads, 6
+callbacks),
+<https://partner.steamgames.com/doc/api/ISteamRemoteStorage> (59
+functions, deprecated ones included) and
+<https://partner.steamgames.com/doc/api/ISteamUGC> (in two parts; every
+function up to `GetWorkshopEULAStatus`). The page order is alphabetical,
+not the order of positions. Argument registers as in experiment 7
+(Microsoft x64 convention). Values below 0x10000 are called small; a value
+with non-zero upper 32 bits is called wide.
+
+### `STEAMINVENTORY_INTERFACE_V003`: what is recorded
+
+- **Cave Crawlers** (the same start in all 15 logs; the reference run
+  also called 6 again at about 12 s): at about 1.1 s position 6
+  (`rdx` a stack address; it writes a small handle there, experiment 14),
+  then 21 with `rdx` 0, `r8` a stack address and `r9` small, result 0,
+  then 20 with `rdx` 0xf, `r8` the same heap address position 6 had in
+  `r8` and `r9` small, result 1. About 0.2 s later a 4702 callback (size
+  1), and in the same millisecond two calls of 21: `rdx` 0, then `rdx` a
+  heap address, both with the same stack address in `r8` and a heap
+  address in `r9`, both result 1. Then a 4700 (size 8), a 4701 (size 4) and
+  a 4700 again, then position 1 with the handle of 6.
+- **Bongo Cat** (4 logs): at about 0.77 s, in this order: 11 (`rdx` a
+  stack address, `r8` 8, `r9` an address in a module, result 1), 13 (`rdx`
+  a stack address, `r8` a heap address, `r9` 2, result 1), 6 (writes a
+  small handle), 26 (`rdx` 0x18, `r8` small, `r9` the same module address,
+  a 64-bit result with wide upper bits). A 4702 at about 1 s, then a 4701
+  and a 4700 (about 1.24 s), followed by 3 and 1 with the handle of 6; at
+  about 1.39 s two more 4700s and, for two other small handles, 3, 1, 1, 3,
+  5 each. Position 2 is called about 50 times with a handle, `r8` 0 and,
+  in some calls, a property-like name in `r9` (`accountid`, `itemid`,
+  `quantity`). If the game keeps running past about 60 s it calls 17 and
+  18 once a minute, each followed by 3, 1 and 5 for one handle. In the one
+  log with 703 payloads (`observe-42296`), the result of 26 came back in
+  one 703 with size 8 (loop iteration 10a already noted the `r9` 8 of its
+  `Steam_GetAPICallResult`).
+- **Callbacks on the page**, fields as listed: `SteamInventoryResultReady_t`
+  (`m_handle` `SteamInventoryResult_t`, `m_result` `EResult`),
+  `SteamInventoryFullUpdate_t` (`m_handle`),
+  `SteamInventoryDefinitionUpdate_t` (no fields),
+  `SteamInventoryEligiblePromoItemDefIDs_t` (`EResult`, `CSteamID`, `int`,
+  `bool`), `SteamInventoryStartPurchaseResult_t` (`EResult`, `uint64`,
+  `uint64`), `SteamInventoryRequestPricesResult_t` (`EResult`,
+  `m_rgchCurrency` given as `char`). Under A2 of experiment 32, with the
+  handle and the `EResult` as 32 bits (A1): 8, 4, 1 (an empty struct),
+  17 to 24, 20 to 24 and 5 to 8 bytes. So 4700 (size 8) and 4701 (size 4)
+  are the only recorded numbers whose sizes fit `SteamInventoryResultReady_t`
+  and `SteamInventoryFullUpdate_t`, and 4702 (size 1) fits only the struct
+  with no fields; these are candidates by size, nothing more, until their
+  bytes are seen. The page says of `SteamInventoryFullUpdate_t`:
+  "Triggered when GetAllItems successfully returns a result which is newer
+  / fresher than the last known result", and "The regular
+  SteamInventoryResultReady_t callback will still be triggered immediately
+  afterwards".
+
+### Position 6: `GetAllItems`, separated by callback 4701
+
+Experiment 14 left four candidates that write "a new result handle"
+through `SteamInventoryResult_t *pResultHandle` and return true:
+`GetAllItems`, `GrantPromoItems`, `TriggerItemDrop` and `AddPromoItem`.
+Of these, the page ties `SteamInventoryFullUpdate_t` to `GetAllItems`
+only. If the 4701 payload holds the handle position 6 wrote, and is
+followed by a 4700 for the same handle, position 6 is `GetAllItems`
+(under A6 below). Needs 4700 and 4701 in `PAYLOAD_LISTED`.
+
+### Position 21 (Cave Crawlers): candidate `GetItemDefinitionIDs`
+
+Shape: two pointer-sized arguments, `rdx` NULL in the first two calls and
+a buffer in the third, `r8` the same stack address throughout; false
+before the 4702, true after it. The page: `GetItemDefinitionIDs(
+SteamItemDef_t *pItemDefIDs, uint32 *punItemDefIDsArraySize )` returns
+false "if item definitions have not been loaded from the server", "If
+`pItemDefIDs` is NULL then this will return the number of elements the
+array needs to hold", and it should be called "in response to a
+SteamInventoryDefinitionUpdate_t callback".
+
+| Functions (page) | Ruled out by |
+| --- | --- |
+| `GetItemDefinitionIDs` | fits (C3, C4) |
+| `GetResultItems`, `SerializeResult`, `GetResultItemProperty`, `GetResultStatus`, `GetResultTimestamp`, `CheckResultSteamID`, `DestroyResult` (a result handle first) | C4: the buffer `rdx` is wide (A1) |
+| `GetItemPrice`, `GetItemDefinitionProperty` (an item definition first) | C4: wide `rdx` (A1) |
+| `GetItemsWithPrices( pArrayItemDefs, pPrices, uint32 unArrayLength )` | C4: a wide `r9` (A1) |
+| `GetEligiblePromoItemDefinitionIDs( CSteamID, pItemDefIDs, punItemDefIDsArraySize )` | C4: a non-zero `r9` below 0x10000 is no size pointer (A3) |
+| the `pResultHandle` functions that return true always for a user (`AddPromoItem`, `AddPromoItems`, `ConsumeItem`, `DeserializeResult`, `GenerateItems`, `GetAllItems`, `GetItemsByID`, `GrantPromoItems`, `TransferItemQuantity`, `TriggerItemDrop`) | C3: the first call returns false; also C1 (no new result, A4) |
+| `ExchangeItems`, `SubmitUpdateProperties` (also write a result handle) | C1: no 4700 for a handle position 6 did not write (A4) |
+| `LoadItemDefinitions` (always true) | C3 (a false result) |
+| `GetNumItemsWithPrices` (`uint32`), `SendItemDropHeartbeat`, `StartUpdateProperties`, `RequestPrices`, `RequestEligiblePromoItemDefinitionsIDs`, `StartPurchase`, `RemoveProperty`, `SetProperty` | C3: its result follows the 4702 (0 before, 1 after); for the handle-returning ones also not a call handle (A1); `RemoveProperty` and `SetProperty` need a name text at `r9`, and none was logged |
+
+The last row rests on C3: a function whose page result does not depend on
+loaded definitions would have to turn from 0 to 1 exactly at the 4702 in
+every run. That is a timing argument, stated as such.
+
+### Position 26 (Bongo Cat): candidate `RequestPrices`
+
+A 64-bit result that comes back in a 703 of size 8. The page's
+`SteamAPICall_t` functions are `RequestPrices()`,
+`RequestEligiblePromoItemDefinitionsIDs( CSteamID )` and `StartPurchase(
+pArrayItemDefs, punArrayQuantity, unArrayLength )`; their call results
+are 5 to 8, 17 to 24 and 20 to 24 bytes (A2), so B2's size 8 leaves
+`RequestPrices`. `StartUpdateProperties()` returns a
+`SteamInventoryUpdateHandle_t`, not a call handle, and
+`SendItemDropHeartbeat()` returns nothing (A5, with B1: no other call
+returned the value). Every function with arguments: `rdx` 0x18 is no
+pointer (A3) for those with a pointer first and no handle or item
+definition worth a 64-bit result for the others (they return `bool`,
+`uint32`, `EResult` or nothing; A1). `RequestPrices` "Returns a
+SteamAPICall_t" with the call result `SteamInventoryRequestPricesResult_t`.
+
+### Other inventory positions: candidates, no experiment
+
+- **5** (Bongo Cat: a handle the game has just read in `rdx`, a result that
+  looks like an address and is the same in every call, also returned by
+  17): the page's functions that return nothing are `DestroyResult(
+  resultHandle )` and `SendItemDropHeartbeat()`; `StartUpdateProperties()`
+  returns a 64-bit handle. Every other function returns a `bool`, `uint32`
+  or `EResult` (ruled out by the wide result, A1) or a call handle (no 703
+  for it in `observe-42296`). Candidates: `DestroyResult`,
+  `SendItemDropHeartbeat` or `StartUpdateProperties`. Nothing the proxy may
+  read tells a void function from another.
+- **11** (`rdx` a stack address, `r8` 8, `r9` a module address, result
+  1): with a pointer first and a small second argument, `AddPromoItem` and
+  `TriggerItemDrop`; with one argument (`r8` a leftover) `GrantPromoItems`;
+  with none, `LoadItemDefinitions`, `GetNumItemsWithPrices`,
+  `StartUpdateProperties` or `SendItemDropHeartbeat`. `GetAllItems` is
+  position 6. The other functions need a pointer at `r8` or a handle in
+  `rdx` (A1, A3). Telling the grant functions apart would need the
+  server's answer; left alone.
+- **13** (`rdx` a stack address, `r8` a heap address, `r9` 2, result 1):
+  `AddPromoItems( pResultHandle, pArrayItemDefs, 2 )`, `GetItemsByID(
+  pResultHandle, pInstanceIDs, 2 )`, `GetItemsWithPrices( pArrayItemDefs,
+  pPrices, 2 )`, or a one- or no-argument call with leftovers
+  (`GrantPromoItems`, `LoadItemDefinitions` and the others of 11).
+  `ExchangeItems` returns false for a generate length other than 1 (the
+  page) and `GenerateItems` would need a pointer at `r9`.
+- **20** (Cave Crawlers: `rdx` 0xf, `r8` a leftover heap address, `r9`
+  small, result 1): `LoadItemDefinitions()` ("always return true",
+  triggers the 4702) fits, but Bongo Cat gets a 4702 without calling 20,
+  so the 4702 after it does not separate it from `GetNumItemsWithPrices`,
+  `StartUpdateProperties`, `SendItemDropHeartbeat`, `GetResultStatus(15)`,
+  `GetItemPrice(15, …)` or `CheckResultSteamID(15, …)`. No separating
+  read; left as a candidate.
+- **2** (Bongo Cat; shape of `GetResultItemProperty( resultHandle,
+  unItemIndex, pchPropertyName, pchValueBuffer, punValueBufferSizeOut )`):
+  not planned. A read of what it writes could hand back an account ID (its
+  `r9` text `accountid`), which is account data. Deferred: the
+  conservative choice, decided by the agent under the maintainer's
+  delegation of 2026-11-23 (ADR 0060); loop iteration 16a first raised it.
+- **1** stays `GetResultItems` or `SerializeResult`; this plan adds
+  nothing for it. 17 and 18 are not in the reference runs and are not
+  planned.
+
+### `STEAMREMOTESTORAGE_INTERFACE_VERSION014` 21 and 22 (Cave Crawlers): no separating experiment
+
+- **Recorded** (15 logs, the same order every time): at about 1.1 s,
+  directly after position 13 (candidate `FileExists`, `FilePersisted` or
+  `FileForget`) with the save name, 21 with `rdx` 0xf, `r8` a heap address
+  and `r9` small, result 1; then 22 with `rdx` 0xf, `r8` the heap address
+  later seen in `r8` of `STEAMINVENTORY_INTERFACE_V003` 6 and 20 (a
+  leftover) and `r9` small, result 1; then 15 (`GetFileSize`) and 1
+  (`FileRead`). `rdx` 0xf also comes in the inventory's 20, so it looks
+  like a leftover too.
+- **Fit:** the page's functions without parameters that return `bool` or
+  `int32`: `IsCloudEnabledForAccount`, `IsCloudEnabledForApp`,
+  `BeginFileWriteBatch`, `EndFileWriteBatch`, `GetFileCount`,
+  `GetLocalFileChangeCount`, `GetCachedUGCCount`; with a small handle or
+  index first and nothing that must point somewhere: `FileWriteStreamClose`,
+  `FileWriteStreamCancel`, `FileWriteStreamWriteChunk` (`r8` a buffer),
+  `UGCRead` (`r8` a buffer), `GetCachedUGCHandle` (a 64-bit handle back).
+  `GetFileNameAndSize` and `GetLocalFileChange` return texts (a result of
+  1 is no address); `GetQuota` needs a pointer at `rdx`; the
+  `SteamAPICall_t` functions return wide values (experiment 23, C);
+  functions with a file name first need a text at `rdx`.
+- Nothing the proxy may read separates them: the results are 1, no
+  argument is an output pointer, and telling the two cloud switches apart
+  would mean changing the account's or the app's cloud setting. Left as
+  not known.
+
+### `STEAMREMOTESTORAGE_INTERFACE_VERSION016` 22 (Cartapli): no separating experiment
+
+- **Recorded** (6 logs): one call at about 95 ms, `rdx` 0x18, `r8` small
+  and not the same in every log, `r9` an address in a module (the same pattern
+  as leftovers in other interfaces), result 0.
+- **Fit:** every no-parameter function above that can return 0 or false
+  (`GetFileCount` is narrowed for position 18, experiment 26, so not this
+  one), and the handle functions with a small first argument returning
+  false or 0. No output pointer to read; left as not known.
+
+### `STEAMUGC_INTERFACE_VERSION016` 67 (HoloCure): no separating experiment
+
+- **Recorded** (4 logs, the same values): one call at about 0.1 s, `rdx`
+  1, `r8` 0x7ffffffffffffffc, `r9` 0x1d, result 0.
+- **Fit:** `GetNumSubscribedItems( bool )` and `GetNumDownloadedItems()`
+  (0 items), `SuspendDownloads( bool )` (void), and the many functions with
+  a query handle, update handle or `PublishedFileId_t` 1 first that return
+  false or 0 for an unknown handle or item (`GetItemState`, `DownloadItem`,
+  `MarkDownloadedItemAsUnused`, `ReleaseQueryUGCRequest`, the `Set…`
+  query functions, and others). `r8` is no pointer in any process (it is
+  not a canonical user address), so no read could add anything. Left as
+  not known.
+
+### Experiment 34 (planned 2026-11-23, before the runs)
+
+**Needs `PAYLOAD_LISTED`** (`crates/shim-observe`, ADR 0050 and 0054),
+added on this plan's branch: 4700 and 4701 (the first 64 bytes of their
+payloads, which are 8 and 4 bytes). Why no candidate can carry a ticket, a
+token, a password or a Steam ID: by size and position these are the
+page's `SteamInventoryResultReady_t` (a result handle and an `EResult`)
+and `SteamInventoryFullUpdate_t` (a result handle). If they were another
+callback, 8 and 4 bytes are too few for a ticket, a token or a password,
+but an 8-byte payload could hold a 64-bit Steam ID (possibly another
+user's) and a 4-byte one an account ID. The listed bytes stay in the
+local log, the script prints only match or mismatch, and `docs/shim/`
+quotes no payload value. Listing them anyway was decided by the agent
+under the maintainer's delegation of 2026-11-23 (ADR 0060). No
+`READS` entry is added; the handle position 6 writes is read since
+experiment 14, and 703 is listed since experiment 22.
+
+**Assumptions:** A1 and A2 as in experiment 32. A3: a pointer a function
+writes through is NULL or an address of at least 0x10000. A4: every
+inventory result a call creates gets a 4700 while the game runs (the page:
+it "is fired whenever an inventory result transitions from
+k_EResultPending to any other completed state"). A5: a call handle in a
+703 is the `SteamAPICall_t` of the call that created it; a leftover `rax`
+of a void function or an update handle is not one, at least when no other
+logged call returned that value. A6: 4701 fires only after `GetAllItems`,
+as the page says of `SteamInventoryFullUpdate_t`. A7: 4700 and 4701 are
+inventory callbacks, 4700 `SteamInventoryResultReady_t` and 4701
+`SteamInventoryFullUpdate_t`. No page gives callback numbers; only the
+sizes and the match of bytes 0..4 with a handle tie them to the
+inventory, and a small handle value could match by chance. Bongo Cat,
+where the 4701 has to pick the handle of 6 out of three live handles, is
+the stronger evidence; Cave Crawlers has only one.
+
+**Predictions** (`tools/shim/experiments/034_inventory_results.py`), by
+group, each decided by its own game's log:
+
+- Both groups (CC: Cave Crawlers, BC: Bongo Cat):
+  - H1: position 6 is called; every call returns 1 and writes a small
+    handle at `rdx`.
+  - H2: at least one 4701; each has size 4, its bytes 0..4 are a handle a
+    call of 6 wrote before it, and the next callback header is a 4700 for
+    the same handle.
+  - H3: every 4700 has size 8, and its bytes 0..4 are a handle the game
+    then passes to position 1 or 3 (low 32 bits of `rdx`).
+- Group CC:
+  - C1: every 4700 is for a handle position 6 wrote.
+  - C2: at least one 4702, each of size 1.
+  - C3: position 21 is called before the first 4702 and after it; every
+    call before returns exactly 0, every call after exactly 1; after the
+    first 4702 a call with `rdx` 0 is followed directly by a call of 21
+    with a non-zero `rdx` and the same `r8`.
+  - C4: every non-zero `rdx` of 21 is wide; some call has a wide `r9`,
+    and some call a non-zero `r9` below 0x10000.
+- Group BC:
+  - B1: position 26 is called; every result is wide and returned by no
+    other logged call.
+  - B2: for each result of 26 exactly one 703 has bytes 0..8 equal to it;
+    all of them have size 8 and one number, which is not 1101.
+
+**What a match confirms:** H1 to H3 matched in both games:
+`STEAMINVENTORY_INTERFACE_V003` 6 `GetAllItems` (experiment 34, under A6),
+callback 4701 `SteamInventoryFullUpdate_t` and 4700
+`SteamInventoryResultReady_t` (under A7; handle at bytes 0..4; bytes 4..8, the
+`EResult`, recorded, not predicted). CC matched: 21
+`GetItemDefinitionIDs` (experiment 34, under A1, A3 and A4), and 4702 as
+a candidate `SteamInventoryDefinitionUpdate_t` (by size only). BC
+matched: 26 `RequestPrices` (experiment 34, under A1, A2 and A5). A group
+that mismatches leaves its candidates as they are; the other group is
+not affected. A mismatch of H2 in one game only is recorded as it is and
+confirms nothing about 6.
+
+Checked before the plan time on earlier logs (script functions called
+directly, plan time and `starts.log` check bypassed): Cave Crawlers
+`observe-58500` and `observe-752`: H1, C2, C3 and C4 match; H2, H3 and C1
+mismatch (no 4700 or 4701 payloads yet, as expected). Bongo Cat
+`observe-42296`: H1, B1 and B2 match, H2 and H3 mismatch (no payloads);
+`observe-51224` and `observe-47280` (from before 703 payloads were
+logged): H1 and B1 match, B2 mismatches. The predictions were written
+from these logs, so they are not the test; only fresh runs after the plan
+commit are.
+
+**Runs:** one run each, started after the plan commit, with the proxy
+built from this branch (`cargo build -p reborn-shim-observe`; a proxy
+built from another branch has no 4700 or 4701 payloads):
+
+- `tools/shim/run.sh 2143030` (Cave Crawlers). Its inventory calls and
+  callbacks come by about 1.7 s.
+- `tools/shim/run.sh 3419430` (Bongo Cat). Its calls and callbacks come by
+  about 1.4 s.
+
+Keep the default wait (40 s after Steam loaded): it is enough, and a
+longer run lets Bongo Cat start its own 17 and 18 at about 60 s. No input in either
+game; both closed on the close request in experiment 14. No inventory
+call is asked for: whatever Bongo Cat's 11 and 13 do at start and, if it
+still runs at about 60 s, its 17 and 18 are the game's own calls,
+recorded in all four earlier runs (red line 4). The script needs one log per game; a game whose run fails
+can be run again later, and only its group waits.
+
+**Result of experiment 34** (agent runs by the main session after the
+plan time 02:31:23, proxy built from the plan branch; logs recorded by
+`run.sh`: `observe-45060` Cave Crawlers, `observe-27548` Bongo Cat; both
+closed normally, no input): **mismatch** overall, checked by the script.
+
+```text
+observe-45060.log (Cave Crawlers) H1: 1 calls of 6, all true with a small handle written: True -> match
+observe-45060.log (Cave Crawlers) H2: 1 of 1 callbacks 4701 with size 4, a handle of 6 and a 4700 for it next -> match
+observe-45060.log (Cave Crawlers) H3: 1 of 2 callbacks 4700 with size 8 and a handle read later by 1 or 3 -> MISMATCH
+observe-45060.log (Cave Crawlers) C1: 1 of 2 callbacks 4700 for a handle of 6 -> MISMATCH
+observe-45060.log (Cave Crawlers) C2: 1 callbacks 4702, all size 1: True -> match
+observe-45060.log (Cave Crawlers) C3: 1 calls of 21 before the first 4702 (all false: True), 2 after (all true: True), NULL-then-buffer pair: True -> match
+observe-45060.log (Cave Crawlers) C4: buffers wide: True, a wide r9: True, a small non-zero r9: True -> match
+observe-45060.log (Cave Crawlers) group CC: MISMATCH
+observe-27548.log (Bongo Cat) H1: 1 calls of 6, all true with a small handle written: True -> match
+observe-27548.log (Bongo Cat) H2: 1 of 1 callbacks 4701 with size 4, a handle of 6 and a 4700 for it next -> match
+observe-27548.log (Bongo Cat) H3: 4 of 4 callbacks 4700 with size 8 and a handle read later by 1 or 3 -> match
+observe-27548.log (Bongo Cat) B1: 1 calls of 26, all with a 64-bit result no other call returned: True -> match
+observe-27548.log (Bongo Cat) B2: 1 callbacks 703 for 1 results of 26 (one each: True), all size 8: True, numbers: 1, not 1101: True -> match
+observe-27548.log (Bongo Cat) group BC: match
+experiment 34: MISMATCH
+```
+
+As fixed beforehand: group BC matched, so `STEAMINVENTORY_INTERFACE_V003`
+26 is confirmed as `RequestPrices` (experiment 34, under A1, A2 and A5).
+Group CC mismatched (H3 and C1: in Cave Crawlers one of two 4700
+callbacks did not carry the handle of 6 and was not read later by 1 or
+3), so 21 stays a candidate (`GetItemDefinitionIDs`) and 4702 stays a
+candidate by size. H3 did not match in both games, so 6 `GetAllItems`
+and the callbacks 4700 and 4701 stay candidates as well. The first of the
+two 4700 callbacks in Cave Crawlers is not explained by this plan; finding its source needs
+a new plan.
+
 ## Achievement names and leaderboards (loop iteration 16a)
 
 `python tools/shim/coverage.py` on the experiment 31 branch

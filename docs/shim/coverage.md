@@ -67,7 +67,7 @@ Positions are listed in the order of their numbers.
 | `SteamGameServer012` | 2 | 0 (GR); 0 7 (DD) | confirmed: 0 InitGameServer (experiment 31, under A3) |
 | `SteamInput001` | 4 | 2 | candidate: 2 narrowed: a RunFrame-like per-frame call (experiment 16) |
 | `SteamInput006` | 16 | 3 (BC, CM, LS, PL, PT, AC, PY, TW, FS, PK, CA, VP, PP); 0 3 6 (BB, CH, HC) | confirmed: 0 Init, 3 RunFrame; candidate: 6 GetConnectedControllers |
-| `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle); confirmed: 3 GetResultTimestamp |
+| `STEAMINVENTORY_INTERFACE_V003` | 2 | 1 6 20 21 (CC); 1 2 3 5 6 11 13 26 (BC) | candidate: 1 GetResultItems or SerializeResult, 5 DestroyResult, SendItemDropHeartbeat or StartUpdateProperties, 6 GetAllItems, GrantPromoItems, TriggerItemDrop or AddPromoItem (writes a result handle) (experiment 34: H3 mismatched in Cave Crawlers), 11 AddPromoItem, TriggerItemDrop, GrantPromoItems or a no-argument call, 13 AddPromoItems, GetItemsByID, GetItemsWithPrices or a call with leftover arguments, 20 LoadItemDefinitions or another call returning 1 (no separating read), 21 GetItemDefinitionIDs (experiment 34: Cave Crawlers group mismatched on H3/C1; C3 and C4 matched); confirmed: 3 GetResultTimestamp, 26 RequestPrices (experiment 34, under A1, A2 and A5) |
 | `SteamMatchMakingServers002` | 1 | 10 | not known |
 | `SteamNetworking005` | 1 | 7 | not known |
 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 1 | 0 1 13 15 21 22 | confirmed: 0 FileWrite, 1 FileRead, 15 GetFileSize; candidate: 13 FileExists, FilePersisted or FileForget |

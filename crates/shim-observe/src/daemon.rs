@@ -38,7 +38,11 @@
 //!   survey of ADR 0061 ([`AchievementSurvey`]): the set counts of the
 //!   official and Reborn's digests, the same for the normalised forms
 //!   ([`normalised`]), and for each official index the Reborn index with
-//!   the same digest. Counts and indices (public schema positions) only.
+//!   the same digest, or one note why there is no survey. Counts and
+//!   indices only. The official indices are public schema positions; the
+//!   Reborn index each maps to may depend on the account while the
+//!   official order is unexplained, so the map stays in the local log
+//!   (ADR 0061).
 //!
 //! Whether an app is owned, the stats, the persona name, file names, file
 //! sizes and file contents are account data (ADR 0055, 0056): the log gets
@@ -801,7 +805,8 @@ pub struct NameDigests {
 
 impl NameDigests {
     /// Both digests of the bytes of a name (without a NUL). The normalised
-    /// copy is zeroed (best effort) once hashed.
+    /// form is zeroed once hashed; what [`normalised`] leaves behind while
+    /// building it is not (see there).
     pub fn of(bytes: &[u8]) -> Self {
         let mut folded = normalised(bytes).into_bytes();
         let digests = Self {
@@ -819,9 +824,21 @@ impl NameDigests {
 /// and lowercased (`str::to_lowercase`, Unicode's lowercase mapping, which
 /// stands in for case folding). It finds names that differ only in letter
 /// case or surrounding white space; other encoding differences (for
-/// example a name in another code page) are not undone.
+/// example a name in another code page) are not undone. Two names that
+/// differ only in this way have the same normalised form.
+///
+/// Copies left behind: for bytes that are not valid UTF-8,
+/// `from_utf8_lossy` makes a repaired copy, which is zeroed here once the
+/// lowercase form is built. `to_lowercase` may grow its buffer while
+/// building, and the buffers it leaves behind are freed without being
+/// zeroed; that is not reached (best effort).
 pub fn normalised(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).trim().to_lowercase()
+    let lossy = String::from_utf8_lossy(bytes);
+    let folded = lossy.trim().to_lowercase();
+    if let std::borrow::Cow::Owned(repaired) = lossy {
+        wipe(&mut repaired.into_bytes());
+    }
+    folded
 }
 
 /// Most entries of Reborn's achievement list kept for the comparison: a
@@ -991,20 +1008,23 @@ impl AchievementQueue {
     }
 }
 
-/// Highest official index the survey keeps, plus one: a bound chosen here,
-/// not a documented limit. The proxy compares only logged calls (the first
-/// 50 of a position, then every 10,000th), so a list longer than 50 never
-/// completes and gets no survey anyway.
-pub const MAX_SURVEYED_NAMES: usize = 1024;
+/// Highest official index the survey keeps, plus one. The proxy shadows
+/// only logged calls, the first 50 of a position (`LOG_FIRST` in
+/// `proxy.rs`, checked by a test there) and then every 10,000th, so a
+/// longer list can never be complete; its survey says so instead.
+pub const MAX_SURVEYED_NAMES: usize = 50;
 
 /// The survey of ADR 0061 over one game's official achievement list: the
 /// official count and, for each index the game asked for below
 /// [`MAX_SURVEYED_NAMES`], the digests of the official name (the first
 /// answer for that index). Once the game has asked for every index below
 /// the latest official count, [`Self::finish`] gives three notes: (a) the
-/// set comparison, (c) the same for the normalised forms, and (b) the
-/// index mapping. Only counts and indices (public schema positions), never
-/// a name or a digest; given once per process.
+/// set comparison, (b) the same for the normalised forms, and (c) the
+/// index mapping. When no survey can be made, one note says why
+/// ([`Self::finish`], [`Self::give_up`]). Counts and indices only, never a
+/// name or a digest; the notes are given once per process. The mapping's
+/// Reborn indices may depend on the account (ADR 0061, "What the mapping
+/// may reveal"), so the map stays in the local log.
 #[derive(Debug, Default)]
 pub struct AchievementSurvey {
     count: Option<u32>,
@@ -1037,28 +1057,49 @@ impl AchievementSurvey {
         }
     }
 
-    /// The three notes once the official list is complete (indices 0 to
-    /// count - 1 all asked for), compared with Reborn's list; `None` before
-    /// that, after the notes were given once, without Reborn's list, or for
-    /// an official count of 0. For a count above [`MAX_SURVEYED_NAMES`] one
-    /// note says so, once.
-    pub fn finish(&mut self, reborn: &RebornAchievements) -> Option<Vec<String>> {
-        let Ok(reborn) = &reborn.names else {
+    /// No survey for this process, for example because an official answer
+    /// was not kept: the note, once; `None` if the notes were given already.
+    pub fn give_up(&mut self, why: &str) -> Option<String> {
+        if self.done {
             return None;
-        };
+        }
+        self.done = true;
+        Some(format!("shadow survey: not surveyed, {why}"))
+    }
+
+    /// The three notes once the official list is complete (indices 0 to
+    /// count - 1 all asked for), compared with Reborn's list. Instead, one
+    /// "not surveyed" note for a count above [`MAX_SURVEYED_NAMES`], or for
+    /// a complete list without Reborn's list. `None` before the list is
+    /// complete, for an official count of 0, and after a note was given.
+    pub fn finish(&mut self, reborn: Result<&RebornAchievements, String>) -> Option<Vec<String>> {
         let count = usize::try_from(self.count?).ok()?;
         if self.done || count == 0 {
             return None;
         }
         if count > MAX_SURVEYED_NAMES {
-            self.done = true;
-            return Some(vec![format!(
-                "shadow set: not surveyed (official count above {MAX_SURVEYED_NAMES})"
-            )]);
+            let why = format!(
+                "official count above {MAX_SURVEYED_NAMES} (the proxy shadows only the first \
+                 {MAX_SURVEYED_NAMES} calls of a position)"
+            );
+            return self.give_up(&why).map(|note| vec![note]);
         }
         let official = (0..count)
             .map(|index| self.names.get(&(index as u32)).copied())
             .collect::<Option<Vec<_>>>()?;
+        let reborn = match reborn.map(|reborn| &reborn.names) {
+            Ok(Ok(names)) => names,
+            Ok(Err(why)) => {
+                return self
+                    .give_up(&format!("no Reborn list ({why})"))
+                    .map(|note| vec![note]);
+            }
+            Err(why) => {
+                return self
+                    .give_up(&format!("no Reborn list ({why})"))
+                    .map(|note| vec![note]);
+            }
+        };
         self.done = true;
         let no_text = official.iter().filter(|name| name.is_none()).count();
         let exact = |names: &[NameDigests]| -> Vec<AchievementDigest> {
@@ -2060,7 +2101,7 @@ mod tests {
         let mut notes = Vec::new();
         for answer in official {
             survey.add(answer);
-            if let Some(more) = survey.finish(reborn) {
+            if let Some(more) = survey.finish(Ok(reborn)) {
                 notes.extend(more);
             }
         }
@@ -2130,13 +2171,13 @@ mod tests {
     fn the_survey_waits_for_every_index_and_reports_once() {
         let reborn = reborn_of(&["ACH_ONE", "ACH_TWO"]);
         let mut survey = AchievementSurvey::new();
-        assert_eq!(survey.finish(&reborn), None, "no count yet");
+        assert_eq!(survey.finish(Ok(&reborn)), None, "no count yet");
         survey.add(&name(1, "ACH_TWO"));
         survey.add(&OfficialAchievement::Count(2));
-        assert_eq!(survey.finish(&reborn), None, "index 0 not asked for");
+        assert_eq!(survey.finish(Ok(&reborn)), None, "index 0 not asked for");
         // An index beyond the count does not complete the list.
         survey.add(&name(5, ""));
-        assert_eq!(survey.finish(&reborn), None);
+        assert_eq!(survey.finish(Ok(&reborn)), None);
         let no_text = OfficialAchievement::Name {
             index: 0,
             text: Err("no text at the result"),
@@ -2145,7 +2186,7 @@ mod tests {
         // A later answer for the same index does not replace the first.
         survey.add(&name(0, "ACH_ONE"));
         assert_eq!(
-            survey.finish(&reborn),
+            survey.finish(Ok(&reborn)),
             Some(vec![
                 "shadow set: official 2 (distinct 1, no text 1), Reborn 2 (distinct 2); \
                  shared 1, official-only 0, Reborn-only 1"
@@ -2155,15 +2196,51 @@ mod tests {
             ])
         );
         survey.add(&name(0, "ACH_ONE"));
-        assert_eq!(survey.finish(&reborn), None, "given once");
+        assert_eq!(survey.finish(Ok(&reborn)), None, "given once");
     }
 
     #[test]
     fn the_survey_needs_reborns_list_and_stays_bounded() {
+        // A complete list without Reborn's list: one note, once.
         let failed = RebornAchievements::from_event(2, Vec::new());
-        assert!(survey(&[OfficialAchievement::Count(1), name(0, "A")], &failed).is_empty());
+        assert_eq!(
+            survey(&[OfficialAchievement::Count(1), name(0, "A")], &failed),
+            ["shadow survey: not surveyed, no Reborn list (Valve's stats result was not OK)"]
+        );
+        let mut offline = AchievementSurvey::new();
+        offline.add(&OfficialAchievement::Count(1));
+        assert_eq!(
+            offline.finish(Err("offline".to_owned())),
+            None,
+            "not complete yet"
+        );
+        offline.add(&name(0, "A"));
+        assert_eq!(
+            offline.finish(Err("offline".to_owned())),
+            Some(vec![
+                "shadow survey: not surveyed, no Reborn list (offline)".to_owned()
+            ])
+        );
+        assert_eq!(offline.finish(Err("offline".to_owned())), None);
         let reborn = reborn_of(&["A"]);
         assert!(survey(&[OfficialAchievement::Count(0)], &reborn).is_empty());
+        // A skipped official answer ends the survey, once.
+        let mut skipped = AchievementSurvey::new();
+        assert_eq!(
+            skipped.give_up("an official answer was skipped (worker busy)"),
+            Some(
+                "shadow survey: not surveyed, an official answer was skipped (worker busy)"
+                    .to_owned()
+            )
+        );
+        assert_eq!(skipped.give_up("again"), None);
+        skipped.add(&OfficialAchievement::Count(1));
+        skipped.add(&name(0, "A"));
+        assert_eq!(
+            skipped.finish(Ok(&reborn)),
+            None,
+            "no survey after giving up"
+        );
         let bound = u32::try_from(MAX_SURVEYED_NAMES).unwrap_or(u32::MAX);
         let mut big = AchievementSurvey::new();
         for index in 0..bound * 2 {
@@ -2177,19 +2254,21 @@ mod tests {
         );
         big.add(&OfficialAchievement::Count(bound + 1));
         assert_eq!(
-            big.finish(&reborn),
-            Some(vec![format!(
-                "shadow set: not surveyed (official count above {MAX_SURVEYED_NAMES})"
-            )])
+            big.finish(Ok(&reborn)),
+            Some(vec![
+                "shadow survey: not surveyed, official count above 50 (the proxy shadows only \
+                 the first 50 calls of a position)"
+                    .to_owned()
+            ])
         );
-        assert_eq!(big.finish(&reborn), None);
+        assert_eq!(big.finish(Ok(&reborn)), None);
         // A complete list of the largest surveyed size.
         big = AchievementSurvey::new();
         big.add(&OfficialAchievement::Count(bound));
         for index in 0..bound {
             big.add(&name(index, "A"));
         }
-        let notes = big.finish(&reborn).unwrap_or_default();
+        let notes = big.finish(Ok(&reborn)).unwrap_or_default();
         assert_eq!(notes.len(), 3);
         assert!(
             notes[2].ends_with(&format!(" {}:0", bound - 1)),

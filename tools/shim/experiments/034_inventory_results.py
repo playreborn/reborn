@@ -89,6 +89,7 @@ callback numbers, item data or account data.
 Usage: python tools/shim/experiments/034_inventory_results.py <log>...
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -103,7 +104,7 @@ COMPLETED = 703
 STATS_RECEIVED = 0x44D  # UserStatsReceived_t, experiments 21 and 22
 READY, FULL, DEFINITIONS = 4700, 4701, 4702
 STEAM_ID_HIGH = 0x01100001  # an individual account in the public universe
-PLAN_COMMITTED = None  # set in a follow-up commit on loop/plan-17a
+PLAN_COMMITTED = datetime(2026, 11, 23, 2, 24, 12)  # commit 161034c on loop/plan-17a
 
 
 def verdict(ok):

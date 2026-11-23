@@ -26,10 +26,10 @@ interprocess.workspace = true
 reborn-platform.workspace = true
 reborn-shim-protocol.workspace = true
 sha1.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-sha2.workspace = true
 windows-sys.workspace = true
 
 [lints]

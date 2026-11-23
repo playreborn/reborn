@@ -42,8 +42,15 @@ if [ -z "$PID_" ]; then
   # Only a log written during this run (process IDs are reused).
   for p in $PIDS; do [ "$D/observe-$p.log" -nt "$MARK" ] && { echo "log observe-$p.log"; echo "$(date '+%F %T') log $APP observe-$p.log" >> "$STARTS"; }; done
   for p in $PIDS; do taskkill //PID "$p" >/dev/null 2>&1; done
-  sleep 10
-  for p in $PIDS; do tasklist //FI "PID eq $p" //NH | grep -q "$p" && echo "pid $p STILL RUNNING; left as it is"; done
+  # Up to two minutes after the close request, as in the normal branch
+  # below (ADR 0044, 0060), before a process counts as still running.
+  for i in $(seq 1 24); do
+    LEFT=""
+    for p in $PIDS; do tasklist //FI "PID eq $p" //NH | grep -q "$p" && LEFT="$LEFT $p"; done
+    [ -z "$LEFT" ] && { echo "exited after ~$((i*5))s"; break; }
+    sleep 5
+  done
+  for p in $PIDS; do tasklist //FI "PID eq $p" //NH | grep -q "$p" && echo "pid $p STILL RUNNING after 2 minutes; left as it is"; done
   ./target/debug/reborn-observe.exe disarm
   exit 1
 fi

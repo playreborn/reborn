@@ -112,7 +112,7 @@ GAMES = {
 COMPLETED = 703
 STATS_RECEIVED = 0x44D  # UserStatsReceived_t, experiments 21 and 22
 READY, FULL, DEFINITIONS = 4700, 4701, 4702
-PLAN_COMMITTED = datetime(2026, 11, 23, 2, 24, 12)  # commit 161034c on loop/plan-17a
+PLAN_COMMITTED = datetime(2026, 11, 23, 2, 31, 23)  # commit ecd7099 on loop/plan-17a (final plan, after review)
 
 
 def verdict(ok):

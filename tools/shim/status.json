@@ -470,8 +470,8 @@
   },
   "SteamFriends017": {
     "0": [
-      "candidate",
-      "GetPersonaName or ClearRichPresence"
+      "confirmed",
+      "GetPersonaName (experiment 33, under A1)"
     ],
     "3": [
       "confirmed",

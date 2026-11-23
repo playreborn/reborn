@@ -4670,3 +4670,38 @@ script's output quoted here and nothing changed in the shim, the proxy or
   given`, `shadow: no worker thread` or a missing shadow line (for example the game exited first)
   means the call was not compared: recorded as "not compared" with the
   kind of note, a MISMATCH of B or C, and no conclusion either way.
+
+**Result of experiment 33** (agent runs by the main session after the
+plan time 01:37:21 with binaries built from the plan branch; `rebornd`
+signed in with the stored login next to the official client, no prompt;
+logs recorded by `run.sh`: `observe-58500` Cave Crawlers, `observe-59752`
+Dark Deception, `observe-16904` A Park Full of Cats, where the maintainer
+clicked once to reach the title screen; every arm said "shadow session
+registered", the Cave Crawlers fill wrote 2 files with none failed, no
+logoff, kick or reconnect line in `rebornd`'s log, `daemon status` signed
+in after every run, no dialog in the official client on the local
+screenshots (deleted afterwards); all three games closed normally):
+**match** in both parts, checked by the script.
+
+```text
+observe-58500.log (Cave Crawlers) A: calls with a result line {'014 #15': 1, '014 #1': 1} -> match
+observe-58500.log (Cave Crawlers) B: 2 of 2 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-58500.log (Cave Crawlers) C: shadow notes [014 #1 match: 1, 014 #15 match: 1] -> match
+observe-58500.log (Cave Crawlers): match
+observe-59752.log (Dark Deception) A: calls with a result line {'017 #0': 2} -> match
+observe-59752.log (Dark Deception) B: 2 of 2 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-59752.log (Dark Deception) C: shadow notes [017 #0 match: 2] -> match
+observe-59752.log (Dark Deception): match
+observe-16904.log (A Park Full of Cats) A: calls with a result line {'017 #0': 1} -> match
+observe-16904.log (A Park Full of Cats) B: 1 of 1 calls with exactly one shadow line after the result on the same thread, 0 shadow lines without a call, 0 calls without a result line -> match
+observe-16904.log (A Park Full of Cats) C: shadow notes [017 #0 match: 1] -> match
+observe-16904.log (A Park Full of Cats): match
+cloud part: match
+persona part: match
+experiment 33: match
+```
+
+As fixed beforehand: the cloud part shows Reborn's answers for `014` 15
+and 1 agree with the official client in Cave Crawlers (one game; answer
+mode stays out of reach). The persona part confirms `SteamFriends017` 0
+as "`GetPersonaName` (experiment 33, under A1)".

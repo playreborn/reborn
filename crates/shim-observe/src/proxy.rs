@@ -111,7 +111,12 @@
 //! worker compares them once Reborn's list is there. The call lines of
 //! these positions leave out register texts, position 15 is no longer a
 //! `READS` result text (experiment 32 is done), and the log says only
-//! match, mismatch or why.
+//! match, mismatch or why. ADR 0061 adds a second digest of each name, of
+//! its trimmed and lowercased form, and, once the game has asked for every
+//! index below the official count, three survey lines after the call that
+//! completed the list: set counts, the same for the normalised forms, and
+//! the index mapping (`crate::daemon::AchievementSurvey`). Counts and
+//! indices only.
 //!
 //! Answer mode (ADR 0046): for calls in `ANSWERS` (shadow mode matched in
 //! three games, maintainer's OK) and an app ID given by `reborn-observe arm
@@ -617,11 +622,12 @@ fn achievement_shadow(prefix: String, official: crate::daemon::OfficialAchieveme
 }
 
 /// The official text of a `GetAchievementName` call: the SHA-256 of the
-/// NUL-terminated bytes at `address` (at most [`MAX_NAME_BYTES`], one
+/// NUL-terminated bytes at `address` and of their normalised form (ADR
+/// 0061) (at most [`MAX_NAME_BYTES`], one
 /// readable region), read in place; the copy is zeroed when dropped.
-fn achievement_digest_at(address: u64) -> Result<crate::daemon::AchievementDigest, &'static str> {
+fn achievement_digest_at(address: u64) -> Result<crate::daemon::NameDigests, &'static str> {
     let text = c_text_at(address, MAX_NAME_BYTES).ok_or("no text at the result")?;
-    Ok(crate::daemon::AchievementDigest::of(text.bytes()))
+    Ok(crate::daemon::NameDigests::of(text.bytes()))
 }
 
 /// The worker: one shadow session with `rebornd` for this process, for the
@@ -638,6 +644,7 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
         compare_stats_received, compare_subscribed, connect_with_waits,
     };
     let mut link = crate::daemon::ShadowLink::default();
+    let mut survey = crate::daemon::AchievementSurvey::new();
     let pid = std::process::id();
     for ask in asks {
         if matches!(ask.official, Official::Achievements) {
@@ -655,6 +662,17 @@ fn answer_asks(asks: std::sync::mpsc::Receiver<Ask>) {
                     Ok(reborn) => compare_achievement(&official, reborn.clone()),
                 };
                 log(&format!("{prefix} {note}"));
+                // ADR 0061: once the official list is complete, the set
+                // counts and the index mapping, after the call that
+                // completed it.
+                survey.add(&official);
+                if let Ok(Ok(reborn)) = &reborn
+                    && let Some(notes) = survey.finish(reborn)
+                {
+                    for note in notes {
+                        log(&format!("{prefix} {note}"));
+                    }
+                }
             }
             continue;
         }
@@ -2898,10 +2916,13 @@ mod tests {
 
     #[test]
     fn an_achievement_name_is_hashed_in_place_and_never_printed() {
-        use crate::daemon::{AchievementDigest, OfficialAchievement, compare_achievement};
+        use crate::daemon::{
+            AchievementDigest, NameDigests, OfficialAchievement, compare_achievement,
+        };
         let address = ACHIEVEMENT.as_ptr() as u64;
         let digest = achievement_digest_at(address).unwrap_or_else(|why| panic!("{why}"));
-        assert_eq!(digest, AchievementDigest::of(ACHIEVEMENT.to_bytes()));
+        assert_eq!(digest, NameDigests::of(ACHIEVEMENT.to_bytes()));
+        assert_eq!(digest.exact, AchievementDigest::of(ACHIEVEMENT.to_bytes()));
         assert_eq!(
             achievement_digest_at(0).map(|_| ()),
             Err("no text at the result")
@@ -2909,7 +2930,7 @@ mod tests {
         // The empty text an invalid index gets has a digest too.
         assert_eq!(
             achievement_digest_at(c"".as_ptr() as u64),
-            Ok(AchievementDigest::of(b""))
+            Ok(NameDigests::of(b""))
         );
 
         // Every line the proxy writes for these calls: the call line (a

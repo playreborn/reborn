@@ -69,6 +69,7 @@ Usage: python tools/shim/experiments/035_achievement_name_shadow.py <log> <log> 
 import re
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -89,7 +90,7 @@ GAMES = {
     444930: ("Zaccaria Pinball", CANDIDATE, None),
     2093940: ("vivid/stasis", CANDIDATE, None),
 }
-PLAN_COMMITTED = None  # set in a follow-up commit to the final plan commit's time
+PLAN_COMMITTED = datetime(2026, 11, 23, 3, 39, 3)  # commit 25d8fa4 on loop/plan-17b (local committer time)
 
 LINE = re.compile(r"^(\d+) ms ThreadId\((\d+)\) (\S+?)#(\d+) (call|return) (\d+) (.*)$")
 

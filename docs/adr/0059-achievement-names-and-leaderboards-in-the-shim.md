@@ -3,6 +3,8 @@
 - **Status:** Accepted (decided by the agent under the maintainer's
   delegation of 2026-11-23, ADR 0060)
 - **Date:** 2026-11-23
+- **Amended by:** ADR 0061 (decision 2: set counts and index mapping in
+  the shadow log)
 - **Amends:** ADR 0055 (when the achievement list is fetched; new shim
   protocol messages; new shadow comparisons)
 - **Touches:** red lines 3, 4 and 8, the public API of

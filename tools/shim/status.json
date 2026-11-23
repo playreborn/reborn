@@ -510,6 +510,30 @@
     "3": [
       "confirmed",
       "GetResultTimestamp"
+    ],
+    "21": [
+      "candidate",
+      "GetItemDefinitionIDs (experiment 34 planned)"
+    ],
+    "26": [
+      "candidate",
+      "RequestPrices (experiment 34 planned)"
+    ],
+    "5": [
+      "candidate",
+      "DestroyResult, SendItemDropHeartbeat or StartUpdateProperties"
+    ],
+    "11": [
+      "candidate",
+      "AddPromoItem, TriggerItemDrop, GrantPromoItems or a no-argument call"
+    ],
+    "13": [
+      "candidate",
+      "AddPromoItems, GetItemsByID, GetItemsWithPrices or a call with leftover arguments"
+    ],
+    "20": [
+      "candidate",
+      "LoadItemDefinitions or another call returning 1 (no separating read)"
     ]
   },
   "STEAMREMOTESTORAGE_INTERFACE_VERSION016": {

@@ -18,12 +18,6 @@ Of these, called by the M4 games: 205; confirmed: 140; open: 65.
 | not known | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 1 |  |
 | not known | 2 | `SteamClient023` | 21 |  |
 | not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 2 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 5 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 11 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 13 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 20 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 21 |  |
-| not known | 1 | `STEAMINVENTORY_INTERFACE_V003` | 26 |  |
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 21 |  |
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 22 |  |
 | not known | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 22 |  |
@@ -61,6 +55,12 @@ Of these, called by the M4 games: 205; confirmed: 140; open: 65.
 | candidate | 2 | `STEAMUSERSTATS_INTERFACE_VERSION013` | 37 | narrowed: RequestGlobalStats, RequestGlobalAchievementPercentages or AttachLeaderboardUGC (recorded call results; no experiment yet) |
 | candidate | 2 | `SteamUser020` | 12 | narrowed: GetVoiceOptimalSampleRate (experiment 18) |
 | candidate | 1 | `STEAMAPPS_INTERFACE_VERSION008` | 6 | BIsSubscribedApp or BIsAppInstalled |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 5 | DestroyResult, SendItemDropHeartbeat or StartUpdateProperties |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 11 | AddPromoItem, TriggerItemDrop, GrantPromoItems or a no-argument call |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 13 | AddPromoItems, GetItemsByID, GetItemsWithPrices or a call with leftover arguments |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 20 | LoadItemDefinitions or another call returning 1 (no separating read) |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 21 | GetItemDefinitionIDs (experiment 34 planned) |
+| candidate | 1 | `STEAMINVENTORY_INTERFACE_V003` | 26 | RequestPrices (experiment 34 planned) |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION014` | 13 | FileExists, FilePersisted or FileForget |
 | candidate | 1 | `STEAMREMOTESTORAGE_INTERFACE_VERSION016` | 18 | narrowed: GetFileCount (experiment 26) |
 | candidate | 1 | `STEAMUGC_INTERFACE_VERSION020` | 77 | narrowed: GetItemInstallInfo, GetItemDownloadInfo, GetItemState or another item-ID function returning false or 0 (experiment 26) |

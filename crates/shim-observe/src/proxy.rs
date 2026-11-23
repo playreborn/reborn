@@ -172,6 +172,11 @@ const PAYLOAD_LISTED: &[u32] = &[
     // `SteamAPICallCompleted_t` (a call handle, a callback number and a
     // size; no account identifier on the page).
     0x2bf,
+    // `docs/shim/meanings.md`, experiment 34: candidates
+    // `SteamInventoryResultReady_t` (a result handle and an `EResult`) and
+    // `SteamInventoryFullUpdate_t` (a result handle), from the
+    // `ISteamInventory` page; no ticket, token, password or Steam ID.
+    4700, 4701,
 ];
 
 /// What is read after a listed call returns (step 4c, ADR 0043).

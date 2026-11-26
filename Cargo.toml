@@ -28,7 +28,7 @@ anyhow = "1"
 # aes 0.8 matches steam-vent's crypto and our MSRV.
 aes = "0.8"
 base64 = "0.22"
-cbc = { version = "0.1", features = ["alloc"] }
+cbc = { version = "0.2", features = ["alloc"] }
 ecb = { version = "0.1", features = ["alloc"] }
 lzma-rs = "0.3"
 # HTTP for content servers; same major version as steam-vent uses.

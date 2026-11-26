@@ -27,7 +27,7 @@ anyhow = "1"
 # Content engine (ADR 0013): AES-256 ECB/CBC for depot chunks and file names.
 # aes 0.8 matches steam-vent's crypto and our MSRV.
 aes = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 cbc = { version = "0.1", features = ["alloc"] }
 ecb = { version = "0.1", features = ["alloc"] }
 lzma-rs = "0.3"

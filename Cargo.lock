@@ -3778,7 +3778,7 @@ dependencies = [
  "futures-util",
  "lzma-rs",
  "reqwest",
- "sha1",
+ "sha1 0.11.0",
  "steam-vent-proto-common",
  "steam-vent-proto-steam",
  "thiserror 2.0.21",
@@ -3798,7 +3798,7 @@ dependencies = [
  "reborn-platform",
  "serde",
  "serde_json",
- "sha1",
+ "sha1 0.11.0",
  "thiserror 2.0.21",
  "tokio",
  "toml",
@@ -3861,7 +3861,7 @@ dependencies = [
  "interprocess",
  "reborn-platform",
  "reborn-shim-protocol",
- "sha1",
+ "sha1 0.11.0",
  "sha2",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
@@ -4387,6 +4387,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -5228,7 +5239,7 @@ dependencies = [
  "rand 0.9.5",
  "rustls",
  "rustls-pki-types",
- "sha1",
+ "sha1 0.10.7",
  "thiserror 2.0.21",
 ]
 
